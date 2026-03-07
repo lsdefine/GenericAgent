@@ -52,7 +52,7 @@ class GeneraticAgent:
                 )]
                 if 'xai' in k: llm_sessions += [XaiSession(cfg, mykeys.get('proxy', ''))]
                 if 'sider' in k: llm_sessions += [SiderLLMSession(cfg, default_model=x) for x in \
-                                    ["gemini-3.0-flash", "claude-haiku-4.5"]]
+                                    ["gemini-3.0-flash", "gpt-5.4"]]
             except: pass
         if len(llm_sessions) > 0: self.llmclient = ToolClient(llm_sessions, auto_save_tokens=True)
         else: self.llmclient = None

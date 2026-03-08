@@ -43,7 +43,7 @@ def handle_message(data):
     def run_agent():
         user_tasks[open_id] = {'running': True}
         try:
-            msg_id, dq, last_text = send_message(open_id, "思考中...", use_card=True), agent.put_task(text), ""
+            msg_id, dq, last_text = send_message(open_id, "思考中...", use_card=True), agent.put_task(text, source='feishu'), ""
             while user_tasks.get(open_id, {}).get('running', False):
                 time.sleep(3)
                 item = None

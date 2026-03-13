@@ -1,4 +1,4 @@
-# pc-agent-loop — 非商业许可证
+# GenericAgent — 非商业许可证
 
 版本 1.0 — 生效日期：2026年3月13日
 
@@ -12,8 +12,8 @@
 
 版权所有 (c) 2024 **复旦大学知识工场实验室**。保留所有权利。
 
-- **项目名称**：pc-agent-loop
-- **仓库地址**：<https://github.com/lsdefine/pc-agent-loop>
+- **项目名称**：GenericAgent
+- **仓库地址**：<https://github.com/lsdefine/GenericAgent>
 
 ---
 
@@ -61,7 +61,7 @@
 
 ```
 Required Notice: Copyright (c) 2024 复旦大学知识工场实验室（Fudan University Knowledge Works Laboratory）
-Required Notice: Repository: https://github.com/lsdefine/pc-agent-loop
+Required Notice: Repository: https://github.com/lsdefine/GenericAgent
 ```
 
 ### 修改与衍生作品许可
@@ -107,7 +107,7 @@ Required Notice: Repository: https://github.com/lsdefine/pc-agent-loop
 
 1. **来源署名**：您必须在任何使用或衍生自本软件的作品中显著展示以下署名：
 
-   > *基于 / Powered by [pc-agent-loop](https://github.com/lsdefine/pc-agent-loop) — 复旦大学知识工场实验室*
+   > *基于 / Powered by [GenericAgent](https://github.com/lsdefine/GenericAgent) — 复旦大学知识工场实验室*
 
 2. **保留声明**：您必须在本软件的所有副本或实质性部分中保留所有版权声明、本许可证及上述署名。
 
@@ -131,6 +131,6 @@ Required Notice: Repository: https://github.com/lsdefine/pc-agent-loop
 
 如您希望将本软件用于商业目的，须另行获取商业许可。请通过在 GitHub 上提交 Issue 与我们联系：
 
-> <https://github.com/lsdefine/pc-agent-loop/issues>
+> <https://github.com/lsdefine/GenericAgent/issues>
 
 我们欢迎商业合作，并将及时回复许可咨询。

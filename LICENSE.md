@@ -1,4 +1,4 @@
-# pc-agent-loop — Non-Commercial License
+# GenericAgent — Non-Commercial License
 
 Version 1.0 — Effective: March 13, 2026
 
@@ -12,8 +12,8 @@ Version 1.0 — Effective: March 13, 2026
 
 Copyright (c) 2024 **Fudan University Knowledge Works Laboratory**. All rights reserved.
 
-- **Project**: pc-agent-loop
-- **Repository**: <https://github.com/lsdefine/pc-agent-loop>
+- **Project**: GenericAgent
+- **Repository**: <https://github.com/lsdefine/GenericAgent>
 
 ---
 
@@ -61,7 +61,7 @@ You must ensure that anyone who gets a copy of any part of the software from you
 
 ```
 Required Notice: Copyright (c) 2024 Fudan University Knowledge Works Laboratory
-Required Notice: Repository: https://github.com/lsdefine/pc-agent-loop
+Required Notice: Repository: https://github.com/lsdefine/GenericAgent
 ```
 
 ### Changes and New Works License
@@ -107,7 +107,7 @@ In addition to the notice requirements above, any use, citation, or derivative w
 
 1. **Source Attribution**: You must prominently display the following attribution in any work that uses or derives from the Software:
 
-   > *Based on / Powered by [pc-agent-loop](https://github.com/lsdefine/pc-agent-loop) — Fudan University Knowledge Works Laboratory*
+   > *Based on / Powered by [GenericAgent](https://github.com/lsdefine/GenericAgent) — Fudan University Knowledge Works Laboratory*
 
 2. **Preserve Notices**: You must retain all copyright notices, this license, and the above attribution in all copies or substantial portions of the Software.
 
@@ -131,6 +131,6 @@ The Software is licensed for **noncommercial use only** under the terms above.
 
 If you wish to use the Software for commercial purposes, you must obtain a separate commercial license. Please contact us by opening an Issue on GitHub:
 
-> <https://github.com/lsdefine/pc-agent-loop/issues>
+> <https://github.com/lsdefine/GenericAgent/issues>
 
 We welcome commercial collaboration and will respond to licensing inquiries promptly.

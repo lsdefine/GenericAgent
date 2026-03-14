@@ -60,6 +60,10 @@ memory/*
 # Plan SOP
 !memory/plan_sop.md
 
+
+# Moonshot API SOP
+!memory/moonshot_api_sop.md
+
 # Skill Search SOP
 !memory/skill_search/
 !memory/skill_search/**

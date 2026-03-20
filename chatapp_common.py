@@ -1,4 +1,4 @@
-import asyncio, glob, os, queue as Q, re, socket, sys, time
+import asyncio, os, queue as Q, re, socket, sys, time
 
 HELP_TEXT = "📖 命令列表:\n/help - 显示帮助\n/status - 查看状态\n/stop - 停止当前任务\n/new - 清空当前上下文\n/restore - 恢复上次对话历史\n/llm [n] - 查看或切换模型"
 FILE_HINT = "If you need to show files to user, use [FILE:filepath] in your response."
@@ -30,23 +30,12 @@ def split_text(text, limit):
     return parts + ([text] if text else []) or ["..."]
 
 
-def format_restore():
-    files = glob.glob("./temp/model_responses_*.txt")
-    if not files:
-        return None, "❌ 没有找到历史记录"
-    latest = max(files, key=os.path.getmtime)
-    with open(latest, "r", encoding="utf-8") as f:
-        content = f.read()
-    users = re.findall(r"=== USER ===\n(.+?)(?==== |$)", content, re.DOTALL)
-    resps = re.findall(r"=== Response ===.*?\n(.+?)(?==== Prompt|$)", content, re.DOTALL)
-    restored = []
-    for u, r in zip(users, resps):
-        u, r = u.strip(), r.strip()[:500]
-        if u and r:
-            restored.extend([f"[USER]: {u}", f"[Agent] {r}"])
-    if not restored:
-        return None, "❌ 历史记录里没有可恢复内容"
-    return (restored, os.path.basename(latest), len(restored) // 2), None
+def format_restore(agent):
+    restored_info, err = agent.restore_latest_history()
+    if err:
+        return None, err
+    fname, count = restored_info
+    return (fname, count), None
 
 
 def build_done_text(raw_text):
@@ -142,18 +131,17 @@ class AgentChatMixin:
             return await self.send_text(chat_id, "LLMs:\n" + "\n".join(lines), **ctx)
         if op == "/restore":
             try:
-                restored_info, err = format_restore()
+                restored_info, err = format_restore(self.agent)
                 if err:
                     return await self.send_text(chat_id, err, **ctx)
-                restored, fname, count = restored_info
                 self.agent.abort()
-                self.agent.history.extend(restored)
+                fname, count = restored_info
                 return await self.send_text(chat_id, f"✅ 已恢复 {count} 轮对话\n来源: {fname}\n(仅恢复上下文，请输入新问题继续)", **ctx)
             except Exception as e:
                 return await self.send_text(chat_id, f"❌ 恢复失败: {e}", **ctx)
         if op == "/new":
             self.agent.abort()
-            self.agent.history = []
+            self.agent.clear_history()
             return await self.send_text(chat_id, "🆕 已清空当前共享上下文", **ctx)
         return await self.send_text(chat_id, HELP_TEXT, **ctx)
 

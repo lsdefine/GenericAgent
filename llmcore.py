@@ -421,10 +421,18 @@ class ToolClient:
         self.auto_save_tokens = auto_save_tokens
         self.last_tools = ''
         self.total_cd_tokens = 0
+        self.session_store = None
+        self.current_session = None
+
+    def set_session_context(self, session_store, session):
+        self.session_store = session_store
+        self.current_session = session
+
+    def clear_session_context(self):
+        self.session_store = None
+        self.current_session = None
 
     def chat(self, messages, tools=None):
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        log_path = os.path.join(script_dir, f'./temp/model_responses_{os.getpid()}.txt')
         if self._should_use_structured_messages(messages):
             backend_messages = self._build_backend_messages(messages, tools)
             print("Structured prompt length:", sum(self._estimate_content_len(m.get("content")) for m in backend_messages), 'chars')
@@ -435,8 +443,13 @@ class ToolClient:
             print("Full prompt length:", len(full_prompt), 'chars')
             prompt_log = full_prompt
             gen = self.backend.ask(full_prompt, stream=True)
-        with open(log_path, 'a', encoding='utf-8', errors="replace") as f:
-            f.write(f"=== Prompt === {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n{prompt_log}\n")
+        if self.session_store is not None and self.current_session is not None:
+            self.session_store.append_prompt(self.current_session, prompt_log)
+        else:
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            log_path = os.path.join(script_dir, f'./temp/model_responses_{os.getpid()}.txt')
+            with open(log_path, 'a', encoding='utf-8', errors="replace") as f:
+                f.write(f"=== Prompt === {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n{prompt_log}\n")
         raw_text = ''; summarytag = '[NextWillSummary]'
         for chunk in gen:
             raw_text += chunk
@@ -444,8 +457,11 @@ class ToolClient:
         print('Complete response received.')
         if raw_text.endswith(summarytag):
             self.last_tools = ''; raw_text = raw_text[:-len(summarytag)]
-        with open(log_path, 'a', encoding='utf-8', errors="replace") as f:
-            f.write(f"=== Response === {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n{raw_text}\n\n")
+        if self.session_store is not None and self.current_session is not None:
+            self.session_store.append_response(self.current_session, raw_text)
+        else:
+            with open(log_path, 'a', encoding='utf-8', errors="replace") as f:
+                f.write(f"=== Response === {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n{raw_text}\n\n")
         return self._parse_mixed_response(raw_text)
 
     def _should_use_structured_messages(self, messages):

@@ -1,8 +1,6 @@
-import glob
 import json
 import os
 import queue as Q
-import re
 import sys
 import threading
 import time
@@ -516,7 +514,7 @@ def handle_command(open_id, cmd, chat_id=None):
         _send_cmd_response("正在停止...")
     elif cmd == "/new":
         agent.abort()
-        agent.history = []
+        agent.clear_history()
         _send_cmd_response("已清空当前共享上下文")
     elif cmd == "/help":
         _send_cmd_response("命令列表:\n/stop - 停止当前任务\n/status - 查看状态\n/restore - 恢复上次对话历史\n/new - 开启新对话\n/help - 显示帮助")
@@ -524,22 +522,12 @@ def handle_command(open_id, cmd, chat_id=None):
         _send_cmd_response(f"状态: {'空闲' if not agent.is_running else '运行中'}")
     elif cmd == "/restore":
         try:
-            files = glob.glob("./temp/model_responses_*.txt")
-            if not files:
-                return _send_cmd_response("没有找到历史记录")
-            latest = max(files, key=os.path.getmtime)
-            with open(latest, "r", encoding="utf-8") as f:
-                content = f.read()
-            users = re.findall(r"=== USER ===\n(.+?)(?==== |$)", content, re.DOTALL)
-            resps = re.findall(r"=== Response ===.*?\n(.+?)(?==== Prompt|$)", content, re.DOTALL)
-            count = 0
-            for u, r in zip(users, resps):
-                u, r = u.strip(), r.strip()[:500]
-                if u and r:
-                    agent.history.extend([f"[USER]: {u}", f"[Agent] {r}"])
-                    count += 1
             agent.abort()
-            _send_cmd_response(f"已恢复 {count} 轮对话\n来源: {os.path.basename(latest)}\n(仅恢复上下文，请输入新问题继续)")
+            restored_info, err = agent.restore_latest_history()
+            if err:
+                return _send_cmd_response(err.replace("❌ ", ""))
+            fname, count = restored_info
+            _send_cmd_response(f"已恢复 {count} 轮对话\n来源: {fname}\n(仅恢复上下文，请输入新问题继续)")
         except Exception as e:
             _send_cmd_response(f"恢复失败: {e}")
     else:

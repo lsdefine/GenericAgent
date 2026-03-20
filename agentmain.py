@@ -8,6 +8,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from llmcore import SiderLLMSession, LLMSession, ToolClient, ClaudeSession, XaiSession, build_multimodal_content
 from agent_loop import agent_runner_loop, StepOutcome, BaseHandler
 from ga import GenericAgentHandler, smart_format, get_global_memory, format_error
+from session_store import SessionStore
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 with open(os.path.join(script_dir, 'assets/tools_schema.json'), 'r', encoding='utf-8') as f:
@@ -53,7 +54,9 @@ class GeneraticAgent:
         if len(llm_sessions) > 0: self.llmclient = ToolClient(llm_sessions, auto_save_tokens=True)
         else: self.llmclient = None
         self.lock = threading.Lock()
-        self.history = []               
+        self.history = []
+        self.session_store = SessionStore(script_dir)
+        self.current_session = None
         self.task_queue = queue.Queue() 
         self.is_running, self.stop_sig = False, False
         self.llm_no = 0;  self.inc_out = False
@@ -72,6 +75,20 @@ class GeneraticAgent:
         if not self.is_running: return
         self.stop_sig = True
         if self.handler is not None: self.handler.code_stop_signal.append(1)
+
+    def clear_history(self):
+        self.history = []
+        self.current_session = None
+        self.session_store.clear_current()
+
+    def restore_latest_history(self):
+        restored_info, err = self.session_store.restore_latest_history()
+        if err:
+            return None, err
+        restored, fname, count, session = restored_info
+        self.current_session = session
+        self.history.extend(restored)
+        return (fname, count), None
             
     def put_task(self, query, source="user", images=None):
         display_queue = queue.Queue()
@@ -83,11 +100,18 @@ class GeneraticAgent:
             task = self.task_queue.get()
             self.is_running = True
             raw_query, source, images, display_queue = task["query"], task["source"], task.get("images") or [], task["output"]
+            script_dir = os.path.dirname(os.path.abspath(__file__))
             rquery = smart_format(raw_query.replace('\n', ' '), max_str_len=200)
+            if self.current_session is None:
+                self.current_session = self.session_store.start_session(
+                    title=raw_query,
+                    source=source,
+                    model=self.get_llm_name() if self.llmclient else "",
+                    cwd=script_dir,
+                )
             self.history.append(f"[USER]: {rquery}")
             
             sys_prompt = get_system_prompt()
-            script_dir = os.path.dirname(os.path.abspath(__file__))
             handler = GenericAgentHandler(None, self.history, os.path.join(script_dir, 'temp'))
             if self.handler and 'key_info' in self.handler.working: 
                 ki = re.sub(r'\n\[SYSTEM\] 此为.*?工作记忆[。\n]*', '', self.handler.working['key_info'])  # 去旧
@@ -104,6 +128,7 @@ class GeneraticAgent:
                 initial_user_content = build_multimodal_content(user_input, images)
             elif images:
                 print(f"[INFO] backend {type(self.llmclient.backend).__name__} does not support direct multimodal input, fallback to text attachment hints.")
+            self.llmclient.set_session_context(self.session_store, self.current_session)
             gen = agent_runner_loop(self.llmclient, sys_prompt, user_input, 
                                 handler, TOOLS_SCHEMA, max_turns=40, verbose=self.verbose,
                                 initial_user_content=initial_user_content)
@@ -126,6 +151,7 @@ class GeneraticAgent:
             finally:
                 self.is_running = self.stop_sig = False
                 self.task_queue.task_done()
+                self.llmclient.clear_session_context()
                 if self.handler is not None: self.handler.code_stop_signal.append(1)
 
     

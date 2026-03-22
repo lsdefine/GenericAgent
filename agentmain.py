@@ -5,8 +5,8 @@ if sys.stderr is None: sys.stderr = open(os.devnull, "w")
 elif hasattr(sys.stderr, 'reconfigure'): sys.stderr.reconfigure(errors='replace')
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from llmcore import SiderLLMSession, LLMSession, ToolClient, ClaudeSession, XaiSession, build_multimodal_content
-from agent_loop import agent_runner_loop, StepOutcome, BaseHandler
+from llmcore import SiderLLMSession, LLMSession, ToolClient, ClaudeSession, XaiSession, NativeToolClient, NativeClaudeSession, build_multimodal_content
+from agent_loop import agent_runner_loop
 from ga import GenericAgentHandler, smart_format, get_global_memory, format_error
 from session_store import SessionStore
 
@@ -45,30 +45,32 @@ class GeneraticAgent:
         for k, cfg in mykeys.items():
             if not any(x in k for x in ['api', 'config', 'cookie']): continue
             try:
-                if 'claude' in k: llm_sessions += [ClaudeSession(cfg=cfg)]
-                if 'oai' in k: llm_sessions += [LLMSession(cfg=cfg)]
-                if 'xai' in k: llm_sessions += [XaiSession(cfg=cfg)]
-                if 'sider' in k: llm_sessions += [SiderLLMSession(cfg={'apikey': cfg, 'model': x}) for x in \
+                if 'native' in k and 'claude' in k: llm_sessions += [NativeToolClient(NativeClaudeSession(cfg=cfg))]
+                elif 'claude' in k: llm_sessions += [ToolClient(ClaudeSession(cfg=cfg))]
+                elif 'oai' in k: llm_sessions += [ToolClient(LLMSession(cfg=cfg))]
+                elif 'xai' in k: llm_sessions += [ToolClient(XaiSession(cfg=cfg))]
+                elif 'sider' in k: llm_sessions += [ToolClient(SiderLLMSession(cfg={'apikey': cfg, 'model': x})) for x in \
                                     ["gemini-3.0-flash", "gpt-5.4"]]
             except: pass
-        if len(llm_sessions) > 0: self.llmclient = ToolClient(llm_sessions, auto_save_tokens=True)
-        else: self.llmclient = None
+        self.llmclients = llm_sessions
         self.lock = threading.Lock()
         self.history = []
         self.session_store = SessionStore(script_dir)
         self.current_session = None
         self.task_queue = queue.Queue() 
-        self.is_running, self.stop_sig = False, False
+        self.is_running = False; self.stop_sig = False
         self.llm_no = 0;  self.inc_out = False
         self.handler = None; self.verbose = True
+        self.llmclient = self.llmclients[self.llm_no]
 
     def next_llm(self, n=-1):
-        self.llm_no = ((self.llm_no + 1) if n < 0 else n) % len(self.llmclient.backends)
+        self.llm_no = ((self.llm_no + 1) if n < 0 else n) % len(self.llmclients)
+        self.llmclient = self.llmclients[self.llm_no]
         self.llmclient.last_tools = ''
-    def list_llms(self): return [(i, f"{type(b).__name__}/{b.default_model}", i == self.llm_no) for i, b in enumerate(self.llmclient.backends)]
+    def list_llms(self): return [(i, f"{type(b.backend).__name__}/{b.backend.default_model}", i == self.llm_no) for i, b in enumerate(self.llmclients)]
     def get_llm_name(self):
-        b = self.llmclient.backends[self.llm_no]
-        return f"{type(b).__name__}/{b.default_model}"
+        b = self.llmclient
+        return f"{type(b.backend).__name__}/{b.backend.default_model}"
 
     def abort(self):
         print('Abort current task...')
@@ -119,7 +121,6 @@ class GeneraticAgent:
                 handler.working['passed_sessions'] = ps = self.handler.working.get('passed_sessions', 0) + 1
                 if ps > 0: handler.working['key_info'] += f'\n[SYSTEM] 此为 {ps} 个对话前设置的key_info，若已在新任务，先更新或清除工作记忆。\n'
             self.handler = handler
-            self.llmclient.backend = self.llmclient.backends[self.llm_no]
             user_input = raw_query
             if source == 'feishu' and len(self.history) > 1:   # 如果有历史记录且来自飞书，注入到首轮 user_input 中（支持/restore恢复上下文）
                 user_input = handler._get_anchor_prompt() + f"\n\n### 用户当前消息\n{raw_query}"
@@ -166,7 +167,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     agent = GeneraticAgent()
-    agent.llm_no = args.llm_no
+    agent.next_llm(args.llm_no)
     agent.verbose = False
     threading.Thread(target=agent.run, daemon=True).start()
 

@@ -256,6 +256,7 @@ class GenericAgentHandler(BaseHandler):
         return os.path.abspath(os.path.join(self.cwd, path))
     
     def tool_after_callback(self, tool_name, args, response, ret):
+        if args.get('_index', 0) > 0: return 
         rsumm = re.search(r"<summary>(.*?)</summary>", response.content, re.DOTALL)
         if rsumm: summary = rsumm.group(1).strip()[:200]
         else:
@@ -268,6 +269,7 @@ class GenericAgentHandler(BaseHandler):
     def do_code_run(self, args, response):
         '''执行代码片段，有长度限制，不允许代码中放大量数据，如有需要应当通过文件读取进行。
         '''
+        if args.get('_index', 0) > 0: return StepOutcome("[BLANK]", next_prompt="no multi code_run in one round!") 
         code_type = args.get("type", "python")
         # 从 response.content 中提取代码块, 匹配 ```python ... ``` 或 ```powershell ... ```
         pattern = rf"```{code_type}\n(.*?)\n```"

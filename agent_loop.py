@@ -17,9 +17,10 @@ class BaseHandler:
     def tool_before_callback(self, tool_name, args, response): pass
     def tool_after_callback(self, tool_name, args, response, ret): pass
     def next_prompt_patcher(self, next_prompt, outcome, turn): return next_prompt
-    def dispatch(self, tool_name, args, response):
+    def dispatch(self, tool_name, args, response, index=0):
         method_name = f"do_{tool_name}"
         if hasattr(self, method_name):
+            args['_index'] = index
             prer = yield from try_call_generator(self.tool_before_callback, tool_name, args, response)
             ret = yield from try_call_generator(getattr(self, method_name), args, response)
             _ = yield from try_call_generator(self.tool_after_callback, tool_name, args, response, ret)
@@ -61,36 +62,34 @@ def agent_runner_loop(client, system_prompt, user_input, handler, tools_schema, 
             response = exhaust(response_gen)
             yield response.content
 
-        if not response.tool_calls:
-            tool_name, args = 'no_tool', {}
-        else:
-            tool_call = response.tool_calls[0] 
-            tool_name = tool_call.function.name
-            args = json.loads(tool_call.function.arguments)
-
-        if tool_name == 'no_tool': pass
-        else: 
-            showarg = get_pretty_json(args)
-            if not verbose and len(showarg) > 200: showarg = showarg[:200] + ' ...'
-            yield f"🛠️ **正在调用工具:** `{tool_name}`  📥**参数:**\n````text\n{showarg}\n````\n" 
-        handler.current_turn = turn + 1
-        gen = handler.dispatch(tool_name, args, response)
-        if verbose:
-            yield '`````\n'
-            outcome = yield from gen
-            yield '`````\n'
-        else:
-            outcome = exhaust(gen)
-
-        if outcome.next_prompt is None: return {'result': 'CURRENT_TASK_DONE', 'data': outcome.data}
-        if outcome.should_exit: return {'result': 'EXITED', 'data': outcome.data}
-        if outcome.next_prompt.startswith('未知工具'): client.last_tools = ''
-
+        if not response.tool_calls: tool_calls = [{'tool_name': 'no_tool', 'args': {}}]
+        else: tool_calls = [{'tool_name': tc.function.name, 'args': json.loads(tc.function.arguments)}
+                          for tc in response.tool_calls]
+       
         next_prompt = ""
-        if outcome.data is not None: 
-            datastr = json.dumps(outcome.data, ensure_ascii=False, default=json_default) if type(outcome.data) in [dict, list] else str(outcome.data) 
-            next_prompt += f"<tool_result>\n{datastr}\n</tool_result>\n\n"
-        next_prompt += outcome.next_prompt
-        next_prompt = handler.next_prompt_patcher(next_prompt, outcome, turn+1)
+        for ii, tc in enumerate(tool_calls):
+            tool_name, args = tc['tool_name'], tc['args']
+            if tool_name == 'no_tool': pass
+            else: 
+                showarg = get_pretty_json(args)
+                if not verbose and len(showarg) > 200: showarg = showarg[:200] + ' ...'
+                yield f"🛠️ **正在调用工具:** `{tool_name}`  📥**参数:**\n````text\n{showarg}\n````\n" 
+            handler.current_turn = turn + 1
+            gen = handler.dispatch(tool_name, args, response, index=ii)
+            if verbose:
+                yield '`````\n'
+                outcome = yield from gen
+                yield '`````\n'
+            else: outcome = exhaust(gen)
+
+            if outcome.next_prompt is None: return {'result': 'CURRENT_TASK_DONE', 'data': outcome.data}
+            if outcome.should_exit: return {'result': 'EXITED', 'data': outcome.data}
+            if outcome.next_prompt.startswith('未知工具'): client.last_tools = ''
+
+            if outcome.data is not None: 
+                datastr = json.dumps(outcome.data, ensure_ascii=False, default=json_default) if type(outcome.data) in [dict, list] else str(outcome.data) 
+                next_prompt += f"<tool_result>\n{datastr}\n</tool_result>\n\n"
+            next_prompt += outcome.next_prompt
+        next_prompt = handler.next_prompt_patcher(next_prompt, None, turn+1)
         messages = [{"role": "user", "content": next_prompt}]
     return {'result': 'MAX_TURNS_EXCEEDED'}

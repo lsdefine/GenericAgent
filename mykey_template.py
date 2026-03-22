@@ -1,33 +1,64 @@
 
+# ══════════════════════════════════════════════════════════════════════════════
+# apibase 填写规则（自动拼接端点路径）：
+#   填到端口        'http://host:2001'                → 自动补 /v1/chat/completions
+#   填到版本号      'http://host:2001/v1'             → 自动补 /chat/completions
+#   填完整路径      'http://host:2001/v1/chat/completions'  → 直接使用，不再拼接
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ── OpenAI-compatible (chat/completions or responses API) ──────────────────────
+# key命名含 'oai' 触发 LLMSession
 oai_config = {
-    'apikey':'sk-uklURcj',
-    'apibase':"http://243.55.19.137:2001",
-    'model':"openai/gpt-5.1",
-    'api_mode':"chat_completions",  # optional: "chat_completions" | "responses"
-    # 'reasoning_effort': "low",    # optional: none | low | medium | high | xhigh;  
-    # Only OPENAI models support this parameter, and it may not be supported by all models. It is used to control the amount of reasoning effort the model should use when generating a response. Higher values may result in more accurate and detailed responses, but may also take longer to generate.
-    'max_retries': 2,               # optional: retries for 429/timeout/5xx
-    'connect_timeout': 10,          # optional: seconds
-    'read_timeout': 120             # optional: seconds (stream read)
+    'apikey': 'sk-...',
+    'apibase': 'http://your-proxy:2001',
+    'model': 'openai/gpt-5.1',
+    'api_mode': 'chat_completions',  # 'chat_completions' | 'responses'
+    # 'reasoning_effort': 'low',     # none|low|medium|high|xhigh (OpenAI o系列)
+    # 'prompt_cache': False,
+    'max_retries': 2,                # 429/timeout/5xx 重试次数
+    'connect_timeout': 10,           # 秒
+    'read_timeout': 120,             # 秒（流式读取）
+    # 'proxy': 'http://127.0.0.1:2082',  # 单独代理，不填则不走代理
+    # 'context_win': 16000,          # token估算上限，超出自动截断历史
 }
 
-# or
-
-sider_cookie = 'token=Bearer%20eyJhbGciOiJIUz...'
-
-# feel free to add more ~
+# 可以定义多个，命名含 'oai' 即可
 oai_config2 = {
-    'apikey':'sk-uklURcj...',
-    'apibase':"http://243.55.19.137:2001",
-    'model':"claude-opus-4-6-20260206"
+    'apikey': 'sk-...',
+    'apibase': 'http://your-proxy:2001',
+    'model': 'claude-opus-4-6-20260206',
 }
 
-
+# ── Claude via OpenAI-compatible proxy ─────────────────────────────────────────
+# key命名含 'claude'（不含'native'）触发 ClaudeSession（走OpenAI兼容层）
 claude_config = {
-    'apikey':'klURcj...',
-    'apibase':"http://233.85.13.149:2001",
-    'model':"claude-opus"
+    'apikey': 'sk-...',
+    'apibase': 'http://your-proxy:2001',
+    'model': 'claude-opus',
+    # 'context_win': 12000,
+    # 'prompt_cache': False,
 }
+
+# ── Claude Native API ───────────────────────────────────────────────────────────
+# key命名同时含 'native' 和 'claude' 触发 NativeClaudeSession（原生Anthropic协议）
+native_claude_config = {
+    'apikey': 'sk-ant-...',          # Anthropic原生apikey
+    'apibase': 'https://api.anthropic.com',
+    'model': 'claude-opus-4-5',
+    # 'context_win': 24000,
+}
+
+# ── Sider ───────────────────────────────────────────────────────────────────────
+# key命名含 'sider' 触发 SiderLLMSession（需安装 sider_ai_api 包）
+#sider_cookie = 'token=Bearer%20eyJhbGciOiJIUz...'
+
+# ── xAI Grok ────────────────────────────────────────────────────────────────────
+# key命名含 'xai' 触发 XaiSession（需安装 xai_sdk 包）
+# xai_config = {
+#     'apikey': 'xai-...',
+#     'model': 'grok-4-1-fast-non-reasoning',
+#     'proxy': 'http://127.0.0.1:2082',
+# }
 
 # If you need them
 # tg_bot_token = '84102K2gYZ...'

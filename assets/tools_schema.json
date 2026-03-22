@@ -1,7 +1,7 @@
 [
   {"type": "function", "function": {
     "name": "code_run",
-    "description": "代码执行器。优先使用python，仅在必要系统操作时使用 powershell。注意：执行的代码必须放在在回复正文中，以 ```python 或 ```powershell 代码块的形式。严禁在代码中硬编码大量数据，如有需要应通过文件读取。",
+    "description": "代码执行器。优先使用python，仅在必要系统操作时使用 powershell。注意：不能同时调用多个，执行的代码放在回复正文中，以 ```python 或 ```powershell 代码块的形式。严禁在代码中硬编码大量数据，如有需要应通过文件读取。",
     "parameters": {"type": "object", "properties": {
       "type": {"type": "string", "enum": ["python", "powershell"], "description": "执行环境类型，默认为 python。", "default": "python"},
       "timeout": {"type": "integer", "description": "执行超时时间（秒），默认 60。", "default": 60},

@@ -403,6 +403,8 @@ class NativeOAISession:
         self.api_key = cfg['apikey']; self.api_base = cfg['apibase'].rstrip('/')
         self.default_model = cfg.get('model', 'gpt-4o')
         self.context_win = cfg.get('context_win', 24000)
+        proxy = cfg.get('proxy')
+        self.proxies = {"http": proxy, "https": proxy} if proxy else None
         self.history = []; self.system = None; self.lock = threading.Lock()
     def set_system(self, system_text): self.system = system_text
 
@@ -414,7 +416,7 @@ class NativeOAISession:
         payload = {"model": model, "messages": msgs, "temperature": temperature, "max_tokens": max_tokens, "stream": True}
         if tools: payload["tools"] = tools
         try:
-            resp = requests.post(auto_make_url(self.api_base, "chat/completions"), headers=headers, json=payload, stream=True, timeout=120)
+            resp = requests.post(auto_make_url(self.api_base, "chat/completions"), headers=headers, json=payload, stream=True, timeout=120, proxies=self.proxies)
             if resp.status_code != 200:
                 err = f"Error: HTTP {resp.status_code} {resp.text[:500]}"; yield err; return [{"type": "text", "text": err}]
         except Exception as e:

@@ -160,6 +160,33 @@ class WxBotClient:
             except KeyboardInterrupt: print('[Bot] 退出'); break
             except Exception as e: print(f'[Bot] 异常: {e}，5s重试'); time.sleep(5)
 
+# ── Unified media download (IMAGE/VIDEO/FILE/VOICE) ──
+_MEDIA_KEYS = {'image_item': '.jpg', 'video_item': '.mp4', 'file_item': '', 'voice_item': '.silk'}
+
+def _dl_media(items):
+    """Download & decrypt all media items → list of local file paths."""
+    paths = []
+    for item in items:
+        for key, ext in _MEDIA_KEYS.items():
+            sub = item.get(key)
+            if not sub: continue
+            eq = (sub.get('media') or {}).get('encrypt_query_param')
+            if not eq: continue
+            ak = (sub.get('media') or {}).get('aes_key', '') or sub.get('aeskey', '')
+            if not ak: continue
+            try:
+                aes_key = (bytes.fromhex(base64.b64decode(ak).decode())
+                           if sub.get('media', {}).get('aes_key') else bytes.fromhex(ak))
+                ct = requests.get(f'{CDN_BASE}/download?encrypted_query_param={quote(eq)}', timeout=60).content
+                pt = AES.new(aes_key, AES.MODE_ECB).decrypt(ct); pt = pt[:-pt[-1]]
+                fname = sub.get('file_name') or f'{uuid.uuid4().hex[:8]}{ext or ".bin"}'
+                p = os.path.join(_TEMP_DIR, fname); open(p, 'wb').write(pt)
+                paths.append(p); print(f'[WX] media saved: {fname}', file=sys.__stdout__)
+            except Exception as e:
+                print(f'[WX] media dl err ({key}): {e}', file=sys.__stdout__)
+            break  # one media per item
+    return paths
+
 agent = GeneraticAgent()
 agent.verbose = False
 
@@ -200,8 +227,11 @@ def on_message(bot, msg):
     text = bot.extract_text(msg).strip()
     uid = msg.get('from_user_id', '')
     ctx = msg.get('context_token', '')
-    if not text: return
-    print(f'[WX] 收到: {text[:60]}', file=sys.__stdout__)
+    media_paths = _dl_media(msg.get('item_list', []))
+    if not text and not media_paths: return
+    if media_paths:
+        text = (text + '\n' if text else '') + '\n'.join(f'[用户发送文件: {p}]' for p in media_paths)
+    print(f'[WX] 收到: {text[:80]}', file=sys.__stdout__)
 
     # Commands
     if text in ('/stop', '/abort'):
@@ -232,16 +262,15 @@ def on_message(bot, msg):
             while True:
                 item = dq.get(timeout=300)
                 if 'done' in item: result = item['done']; break
-        except queue.Empty:
-            result = '[超时]'
-        # Extract files BEFORE _clean (which strips underscores via markdown removal)
+        except queue.Empty: result = '[超时]'
         files = re.findall(r'\[FILE:([^\]]+)\]', result)
+        files = [f for f in files if (f if os.path.isabs(f) else os.path.join(_TEMP_DIR, f)) not in media_paths]
         show = _clean(result)
         for chunk in _split(show):
             try: bot.send_text(uid, chunk, context_token=ctx)
             except Exception as e: print(f'[WX] send err: {e}', file=sys.__stdout__)
             time.sleep(0.3)
-        for fpath in files:
+        for fpath in set(files):
             if not os.path.isabs(fpath): fpath = os.path.join(_TEMP_DIR, fpath)
             try:
                 if not os.path.exists(fpath): raise FileNotFoundError(f"文件不存在: {fpath}")
@@ -252,10 +281,8 @@ def on_message(bot, msg):
     threading.Thread(target=_handle, daemon=True).start()
 
 if __name__ == '__main__':
-    try:
-        _lock = socket.socket(socket.AF_INET, socket.SOCK_STREAM); _lock.bind(('127.0.0.1', 19528))
-    except OSError:
-        print('[WeChat] Another instance running, exiting.'); sys.exit(1)
+    try: _lock = socket.socket(socket.AF_INET, socket.SOCK_STREAM); _lock.bind(('127.0.0.1', 19528))
+    except OSError: print('[WeChat] Another instance running, exiting.'); sys.exit(1)
     _logf = open(os.path.join(os.path.dirname(os.path.dirname(__file__)), 'temp', 'wechatapp.log'), 'a', encoding='utf-8', buffering=1)
     sys.stdout = sys.stderr = _logf
     print(f'[NEW] Process starting {time.strftime("%m-%d %H:%M")}')

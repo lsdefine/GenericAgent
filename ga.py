@@ -179,13 +179,26 @@ def web_execute_js(script, switch_tab_id=None, no_monitor=False):
     global driver
     try:
         if driver is None: first_init_driver()
-        if len(driver.get_all_sessions()) == 0:
-            return {"status": "error", "msg": "没有可用的浏览器标签页，查L3记忆分析原因。"}
+        if len(driver.get_all_sessions()) == 0: return {"status": "error", "msg": "没有可用的浏览器标签页，查L3记忆分析原因。"}
         if switch_tab_id: driver.default_session_id = switch_tab_id
         result = execute_js_rich(script, driver, no_monitor=no_monitor)
         return result
     except Exception as e:
         return {"status": "error", "msg": format_error(e)}
+
+def expand_file_refs(text, base_dir=None):
+    """展开文本中的 {{file:路径:起始行:结束行}} 引用为实际文件内容。
+    可与普通文本混排。展开失败抛 ValueError。
+    base_dir: 相对路径的基准目录，默认为进程 cwd。"""
+    pattern = r'\{\{file:(.+?):(\d+):(\d+)\}\}'
+    def replacer(match):
+        path, start, end = match.group(1), int(match.group(2)), int(match.group(3))
+        path = os.path.abspath(os.path.join(base_dir or '.', path))
+        if not os.path.isfile(path): raise ValueError(f"引用文件不存在: {path}")
+        with open(path, 'r', encoding='utf-8') as f: lines = f.readlines()
+        if start < 1 or end > len(lines) or start > end: raise ValueError(f"行号越界: {path} 共{len(lines)}行, 请求{start}-{end}")
+        return ''.join(lines[start-1:end])
+    return re.sub(pattern, replacer, text)
     
 def file_patch(path: str, old_content: str, new_content: str):
     """在文件中寻找唯一的 old_content 块并替换为 new_content。
@@ -343,6 +356,10 @@ class GenericAgentHandler(BaseHandler):
         yield f"[Action] Patching file: {path}\n"
         old_content = args.get("old_content", "")
         new_content = args.get("new_content", "")
+        try: new_content = expand_file_refs(new_content, base_dir=self.cwd)
+        except ValueError as e:
+            yield f"[Status] ❌ 引用展开失败: {e}\n"
+            return StepOutcome({"status": "error", "msg": str(e)}, next_prompt="\n")
         result = file_patch(path, old_content, new_content)
         yield f"\n{smart_format(result)}\n"
         next_prompt = self._get_anchor_prompt()
@@ -368,8 +385,8 @@ class GenericAgentHandler(BaseHandler):
         if not blocks:
             yield f"[Status] ❌ 失败: 未在回复中找到代码块内容\n"
             return StepOutcome({"status": "error", "msg": "No content found, if you want a blank, you should use code_run"}, next_prompt="\n")
-        new_content = blocks
         try:
+            new_content = expand_file_refs(blocks, base_dir=self.cwd)
             if mode == "prepend":
                 old = open(path, 'r', encoding="utf-8").read() if os.path.exists(path) else ""
                 open(path, 'w', encoding="utf-8").write(new_content + old)

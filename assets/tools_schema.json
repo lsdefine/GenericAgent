@@ -23,11 +23,11 @@
     "parameters": {"type": "object", "properties": {
       "path": {"type": "string", "description": "文件路径。"},
       "old_content": {"type": "string", "description": "文件中需要被替换的原始文本块（需确保唯一性）。"},
-      "new_content": {"type": "string", "description": "替换后的新文本内容。"}}, "required": ["path", "old_content", "new_content"]}
+      "new_content": {"type": "string", "description": "替换后的新文本内容。支持 {{file:路径:起始行:结束行}} 语法引用文件内容，写入前自动展开。"}}, "required": ["path", "old_content", "new_content"]}
   }},
   {"type": "function", "function": {
     "name": "file_write",
-    "description": "用于文件的新建、全量覆盖或追加写入。对于精细的代码修改，应优先使用 file_patch。注意：要写入的内容必须放在回复正文的 <file_content> 标签或代码块中。",
+    "description": "用于文件的新建、全量覆盖或追加写入。对于精细的代码修改，应优先使用 file_patch。注意：要写入的内容必须放在回复正文的 <file_content> 标签或代码块中。写入内容支持 {{file:路径:起始行:结束行}} 语法引用文件片段，写入前自动展开。",
     "parameters": {"type": "object", "properties": {
       "path": {"type": "string", "description": "文件路径。"},
       "mode": {"type": "string", "enum": ["overwrite", "append", "prepend"], "description": "写入模式覆盖、追加或在开头追加。", "default": "overwrite"}}, "required": ["path"]}
@@ -44,7 +44,7 @@
     "name": "web_execute_js",
     "description": "万能网页操控工具。通过执行 JavaScript 脚本实现对浏览器的完全控制（如点击、滚动、提取特定数据）。鼓励在有把握情况下（记忆中有selector/做法等）精准使用以减少web_scan调用。执行结果可选择保存到本地文件进行后续分析。",
     "parameters": {"type": "object", "properties": {
-      "script": {"type": "string", "description": "要执行的 JavaScript 代码或JS文件路径。"},
+      "script": {"type": "string", "description": "要执行的代码或JS文件路径。"},
       "save_to_file": {"type": "string", "description": "结果存文件，适合返回值较长时。不支持await。", "default": ""},
       "no_monitor": {"type": "boolean", "description": "跳过页面变更监控，省2-3秒。仅在纯读取信息时设置，页面操作时不要设置。", "default": false}}, "required": ["script"]}
   }},

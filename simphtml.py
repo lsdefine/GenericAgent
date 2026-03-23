@@ -99,7 +99,18 @@ function createEnhancedDOMCopy() {
   };  
 }  
 const { domCopy, getNodeInfo, isVisible } = createEnhancedDOMCopy();
-if (text_only) return domCopy.innerText;  
+if (text_only) {
+  const blocks = new Set(['DIV','P','H1','H2','H3','H4','H5','H6','LI','TR','SECTION','ARTICLE','HEADER','FOOTER','NAV','BLOCKQUOTE','PRE','HR','BR','DT','DD','FIGCAPTION','DETAILS','SUMMARY']);
+  domCopy.querySelectorAll('*').forEach(el => {
+    if (blocks.has(el.tagName)) el.insertAdjacentText('beforebegin', '\n');
+  });
+  domCopy.querySelectorAll('input:not([type=hidden]),textarea,select').forEach(el=>{
+    const p=[el.tagName,el.id&&'#'+el.id,el.getAttribute('name')&&'name='+el.getAttribute('name'),el.tagName==='INPUT'&&'type='+(el.getAttribute('type')||'text'),el.getAttribute('placeholder')&&'"'+el.getAttribute('placeholder')+'"',el.getAttribute('data-autofilled')&&'autofilled',el.disabled&&'disabled',el.tagName==='SELECT'&&el.getAttribute('data-selected')&&'="'+el.getAttribute('data-selected')+'"'].filter(Boolean).join(' ');
+    el.insertAdjacentText('beforebegin','\n['+p+']\n');
+  });
+  domCopy.querySelectorAll('button[disabled]').forEach(el=>el.insertAdjacentText('beforebegin','[DISABLED] '));
+  return domCopy.textContent;
+}
 const viewportArea = window.innerWidth * window.innerHeight; 
 
 function analyzeNode(node, pPathType='main') {  
@@ -768,9 +779,15 @@ def get_temp_texts(driver):
         print(e)
         return []
     
-import time
+import time, re
 def get_main_block(driver, extra_js="", text_only=False): 
-    return driver.execute_js(f"{extra_js}\n{js_optHTML}\nreturn optHTML({str(text_only).lower()});").get('data', '')
+    page = driver.execute_js(f"{extra_js}\n{js_optHTML}\nreturn optHTML({str(text_only).lower()});").get('data', '')
+    if text_only:
+        page = re.sub(r' {2,}', ' ', page)           # 连续空格→单空格
+        page = re.sub(r'^ +', '', page, flags=re.M)   # 去行首空格
+        page = re.sub(r'(\n\s*){3,}', '\n\n', page)   # 3+空行→1空行
+        return page.strip()
+    return page
 
 def find_changed_elements(before_html, after_html):
     before_soup = BeautifulSoup(before_html, 'html.parser')

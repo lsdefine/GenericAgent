@@ -1,7 +1,10 @@
-import os, sys, re, threading, queue, time, socket, json, struct, base64, uuid, webbrowser
+import os, sys, re, threading, queue, time, socket, json, struct, base64, uuid, webbrowser, hashlib, math
 from pathlib import Path
+from urllib.parse import quote
 import requests, qrcode
+from Crypto.Cipher import AES
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_TEMP_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'temp')
 from agentmain import GeneraticAgent
 
 # ── WxBotClient (inline from wx_bot_client.py) ──
@@ -9,6 +12,8 @@ API = 'https://ilinkai.weixin.qq.com'
 TOKEN_FILE = Path.home() / '.wxbot' / 'token.json'
 TOKEN_FILE.parent.mkdir(exist_ok=True)
 VER, MSG_USER, MSG_BOT, ITEM_TEXT, STATE_FINISH = '0.2.5', 1, 2, 1, 2
+ITEM_FILE = 4
+CDN_BASE = 'https://novac2c.cdn.weixin.qq.com/c2c'
 
 def _uin():
     return base64.b64encode(str(struct.unpack('>I', os.urandom(4))[0]).encode()).decode()
@@ -32,8 +37,7 @@ class WxBotClient:
         self._tf.write_text(json.dumps(d, ensure_ascii=False, indent=2), 'utf-8')
 
     def _post(self, ep, body, timeout=15):
-        h = {'Content-Type': 'application/json', 'AuthorizationType': 'ilink_bot_token',
-             'X-WECHAT-UIN': _uin()}
+        h = {'Content-Type': 'application/json', 'AuthorizationType': 'ilink_bot_token', 'X-WECHAT-UIN': _uin()}
         if self.token: h['Authorization'] = f'Bearer {self.token}'
         r = requests.post(f'{API}/{ep}', json=body, headers=h, timeout=timeout)
         r.raise_for_status()
@@ -51,11 +55,8 @@ class WxBotClient:
         last = ''
         while True:
             time.sleep(poll_interval)
-            try:
-                s = requests.get(f'{API}/ilink/bot/get_qrcode_status',
-                                 params={'qrcode': qr_id}, timeout=60).json()
-            except requests.exceptions.ReadTimeout:
-                continue
+            try: s = requests.get(f'{API}/ilink/bot/get_qrcode_status', params={'qrcode': qr_id}, timeout=60).json()
+            except requests.exceptions.ReadTimeout: continue
             st = s.get('status', '')
             if st != last: print(f'  状态: {st}'); last = st
             if st == 'confirmed':
@@ -93,6 +94,48 @@ class WxBotClient:
             'to_user_id': to_user_id, 'typing_ticket': typing_ticket,
             'typing_status': 2 if cancel else 1, 'base_info': {'channel_version': VER}})
 
+    def send_file(self, to_user_id, file_path, context_token=''):
+        """Send a file to user via CDN upload."""
+        fp = Path(file_path)
+        raw = fp.read_bytes()
+        rawsize = len(raw)
+        rawfilemd5 = hashlib.md5(raw).hexdigest()
+        aes_key = os.urandom(16)
+        filekey = uuid.uuid4().hex
+        ciphertext_size = ((rawsize // 16) + 1) * 16
+        # 1. get upload url
+        resp = self._post('ilink/bot/getuploadurl', {
+            'filekey': filekey, 'media_type': 3, 'to_user_id': to_user_id,
+            'rawsize': rawsize, 'rawfilemd5': rawfilemd5,
+            'filesize': ciphertext_size, 'no_need_thumb': True,
+            'aeskey': aes_key.hex(),
+            'base_info': {'channel_version': VER}})
+        upload_param = resp.get('upload_param', '')
+        if not upload_param:
+            raise RuntimeError(f'getuploadurl failed: {resp}')
+        # 2. AES-128-ECB encrypt (PKCS7)
+        cipher = AES.new(aes_key, AES.MODE_ECB)
+        pad_len = 16 - (rawsize % 16)
+        ciphertext = cipher.encrypt(raw + bytes([pad_len] * pad_len))
+        # 3. upload to CDN
+        upload_url = (f'{CDN_BASE}/upload?encrypted_query_param='
+                      f'{quote(upload_param)}&filekey={filekey}')
+        r = requests.post(upload_url, data=ciphertext, headers={'Content-Type': 'application/octet-stream'}, timeout=120)
+        r.raise_for_status()
+        download_param = r.headers.get('x-encrypted-param', '')
+        if not download_param:
+            raise RuntimeError(f'CDN upload: no x-encrypted-param. status={r.status_code}')
+        # 4. send message with file attachment
+        msg = {'from_user_id': '', 'to_user_id': to_user_id,
+               'client_id': f'pyclient-{uuid.uuid4().hex[:16]}',
+               'message_type': MSG_BOT, 'message_state': STATE_FINISH,
+               'item_list': [{'type': ITEM_FILE, 'file_item': {
+                   'media': {'encrypt_query_param': download_param,
+                             'aes_key': base64.b64encode(aes_key.hex().encode()).decode(), 'encrypt_type': 1},
+                   'file_name': fp.name, 'len': str(rawsize)}}]}
+        if context_token: msg['context_token'] = context_token
+        return self._post('ilink/bot/sendmessage', {'msg': msg, 'base_info': {'channel_version': VER}})
+
     @staticmethod
     def extract_text(msg):
         return '\n'.join(it['text_item'].get('text', '')
@@ -124,12 +167,12 @@ _TAG_PATS = [r'<' + t + r'>.*?</' + t + r'>' for t in ('thinking', 'summary', 't
 _TAG_PATS.append(r'<file_content>.*?</file_content>')
 
 def _strip_md(t):
-    t = re.sub(r'```[\s\S]*?```', lambda m: m.group().strip('`').split('\n',1)[-1] if '\n' in m.group() else m.group().strip('`'), t)
+    t = re.sub(r'(`{3,})[\s\S]*?\1', lambda m: m.group().strip('`').split('\n',1)[-1] if '\n' in m.group() else m.group().strip('`'), t)
     t = re.sub(r'`([^`]+)`', r'\1', t)
     t = re.sub(r'!\[.*?\]\(.*?\)', '', t)
     t = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', t)
     t = re.sub(r'^#{1,6}\s+', '', t, flags=re.M)
-    t = re.sub(r'(\*{1,3}|_{1,3})(.*?)\1', r'\2', t)
+    t = re.sub(r'(\*{1,3})(.*?)\1', r'\2', t)
     t = re.sub(r'^\s*[-*+]\s+', '• ', t, flags=re.M)
     t = re.sub(r'^\s*\d+\.\s+', '', t, flags=re.M)
     t = re.sub(r'^\s*>\s?', '', t, flags=re.M)
@@ -191,12 +234,20 @@ def on_message(bot, msg):
                 if 'done' in item: result = item['done']; break
         except queue.Empty:
             result = '[超时]'
+        # Extract files BEFORE _clean (which strips underscores via markdown removal)
+        files = re.findall(r'\[FILE:([^\]]+)\]', result)
         show = _clean(result)
-        show = re.sub(r'\[FILE:[^\]]+\]', '', show).strip() or '...'
         for chunk in _split(show):
             try: bot.send_text(uid, chunk, context_token=ctx)
-            except Exception as e: print(f'[WX] send err: {e}')
+            except Exception as e: print(f'[WX] send err: {e}', file=sys.__stdout__)
             time.sleep(0.3)
+        for fpath in files:
+            if not os.path.isabs(fpath): fpath = os.path.join(_TEMP_DIR, fpath)
+            try:
+                if not os.path.exists(fpath): raise FileNotFoundError(f"文件不存在: {fpath}")
+                bot.send_file(uid, fpath, context_token=ctx)
+                print(f'[WX] sent file: {fpath}', file=sys.__stdout__)
+            except Exception as e: print(f'[WX] send_file err: {e}', file=sys.__stdout__)
 
     threading.Thread(target=_handle, daemon=True).start()
 

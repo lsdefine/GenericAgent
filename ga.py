@@ -430,8 +430,6 @@ class GenericAgentHandler(BaseHandler):
         if "related_sop" in args: self.working['related_sop'] = related_sop
         self.working['passed_sessions'] = 0
         yield f"[Info] Updated key_info and related_sop.\n"
-        yield f"key_info:\n{self.working.get('key_info', '')}\n\n"
-        yield f"related_sop:\n{self.working.get('related_sop', '')}\n\n"
         next_prompt = self._get_anchor_prompt()
         #next_prompt += '\n[SYSTEM TIPS] 此函数一般在任务开始或中间时调用，如果任务已成功完成应该是start_long_term_update用于结算长期记忆。\n'
         return StepOutcome({"status": "success"}, next_prompt=next_prompt)

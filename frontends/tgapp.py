@@ -1,5 +1,6 @@
 import os, sys, re, threading, asyncio, queue as Q, socket, time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_TEMP_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'temp')
 from agentmain import GeneraticAgent
 try:
     from telegram import Update
@@ -65,6 +66,7 @@ async def _stream(dq, msg):
         if done:
             files = re.findall(r'\[FILE:([^\]]+)\]', show[-1000:])
             for fpath in files:
+                if not os.path.isabs(fpath): fpath = os.path.join(_TEMP_DIR, fpath)
                 if os.path.exists(fpath):
                     if fpath.lower().endswith(('.png','.jpg','.jpeg','.gif','.webp')):
                         try: await msg.reply_photo(open(fpath,'rb'))

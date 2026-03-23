@@ -717,7 +717,7 @@ class ToolClient:
             remaining_text = re.sub(think_pattern, "", remaining_text, flags=re.DOTALL)
         
         tool_calls = []; json_strs = []; errors = []
-        tool_pattern = r"<tool_use>(.{15,}?)</tool_use>"
+        tool_pattern = r"<tool_use>((?:(?!<tool_use>).){15,}?)</tool_use>"
         tool_all = re.findall(tool_pattern, remaining_text, re.DOTALL)
         
         if tool_all:

@@ -20,7 +20,8 @@ def code_run(code, code_type="python", timeout=60, cwd=None, code_cwd=None, stop
     cwd = cwd or os.path.join(script_dir, 'temp'); tmp_path = None
     if code_type == "python":
         tmp_file = tempfile.NamedTemporaryFile(suffix=".ai.py", delete=False, mode='w', encoding='utf-8', dir=code_cwd)
-        tmp_file.write(code)
+        _mem = os.path.join(script_dir, 'memory')
+        tmp_file.write(f"import sys, os, json, re, time; sys.path.append(r'{_mem}')\n" + code)
         tmp_path = tmp_file.name
         tmp_file.close()
         cmd = [sys.executable, "-X", "utf8", "-u", tmp_path]   

@@ -20,8 +20,9 @@ def code_run(code, code_type="python", timeout=60, cwd=None, code_cwd=None, stop
     cwd = cwd or os.path.join(script_dir, 'temp'); tmp_path = None
     if code_type == "python":
         tmp_file = tempfile.NamedTemporaryFile(suffix=".ai.py", delete=False, mode='w', encoding='utf-8', dir=code_cwd)
-        _mem = os.path.join(script_dir, 'memory')
-        tmp_file.write(f"import sys, os, json, re, time; sys.path.append(r'{_mem}')\n" + code)
+        cr_header = os.path.join(script_dir, 'assets', 'code_run_header.py')
+        if os.path.exists(cr_header): tmp_file.write(open(cr_header, encoding='utf-8').read())
+        tmp_file.write(code)
         tmp_path = tmp_file.name
         tmp_file.close()
         cmd = [sys.executable, "-X", "utf8", "-u", tmp_path]   

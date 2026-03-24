@@ -166,12 +166,13 @@ if __name__ == '__main__':
         import importlib.util
         spec = importlib.util.spec_from_file_location('reflect_script', args.reflect)
         mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
-        interval = getattr(mod, 'INTERVAL', 5)
-        once = getattr(mod, 'ONCE', False)
-        on_done = getattr(mod, 'on_done', None)
-        print(f'[Reflect] loaded {args.reflect}, interval={interval}s, once={once}')
+        _mt = os.path.getmtime(args.reflect)
+        print(f'[Reflect] loaded {args.reflect}')
         while True:
-            time.sleep(interval)
+            if os.path.getmtime(args.reflect) != _mt:
+                try: spec.loader.exec_module(mod); _mt = os.path.getmtime(args.reflect); print('[Reflect] reloaded')
+                except Exception as e: print(f'[Reflect] reload error: {e}')
+            time.sleep(getattr(mod, 'INTERVAL', 5))
             try: task = mod.check()
             except Exception as e: 
                 print(f'[Reflect] check() error: {e}'); continue
@@ -183,17 +184,16 @@ if __name__ == '__main__':
                 result = item['done']
                 print(result)
             except Exception as e:
-                if once: raise
+                if getattr(mod, 'ONCE', False): raise
                 print(f'[Reflect] drain error: {e}'); result = f'[ERROR] {e}'
             log_dir = os.path.join(script_dir, 'temp/reflect_logs'); os.makedirs(log_dir, exist_ok=True)
             script_name = os.path.splitext(os.path.basename(args.reflect))[0]
             open(os.path.join(log_dir, f'{script_name}_{datetime.now():%Y-%m-%d}.log'), 'a', encoding='utf-8').write(f'[{datetime.now():%m-%d %H:%M}]\n{result}\n\n')
-            if on_done:
+            if (on_done := getattr(mod, 'on_done', None)):
                 try: on_done(result)
                 except Exception as e: print(f'[Reflect] on_done error: {e}')
-            if once: print('[Reflect] ONCE=True, exiting.'); break
-    elif args.scheduled: 
-        print('moved to reflect mode')
+            if getattr(mod, 'ONCE', False): print('[Reflect] ONCE=True, exiting.'); break
+    elif args.scheduled: print('moved to reflect mode')
     else:
         agent.inc_out = True
         while True:

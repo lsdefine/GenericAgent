@@ -484,10 +484,14 @@ class NativeClaudeSession:
     def raw_ask(self, messages, tools=None, system=None, model=None, temperature=0.5, max_tokens=6144):
         """底层API调用。yields text chunks，generator return = list[content_block]"""
         model = model or self.default_model
-        headers = {"x-api-key": self.api_key, "Content-Type": "application/json", "anthropic-version": "2023-06-01"}
+        headers = {"x-api-key": self.api_key, "Content-Type": "application/json", "anthropic-version": "2023-06-01", "anthropic-beta": "prompt-caching-2024-07-31"}
         payload = {"model": model, "messages": messages, "temperature": temperature, "max_tokens": max_tokens, "stream": True}
-        if tools: payload["tools"] = tools
-        if system: payload["system"] = system
+        if tools:
+            tools = [dict(t) for t in tools]
+            tools[-1]["cache_control"] = {"type": "ephemeral"}
+            payload["tools"] = tools
+        if system:
+            payload["system"] = [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
         try:
             resp = requests.post(auto_make_url(self.api_base, "messages"), headers=headers, json=payload, stream=True, timeout=120)
             if resp.status_code != 200:

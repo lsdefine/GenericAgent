@@ -790,6 +790,7 @@ class NativeToolClient:
         self.backend = backend
         self.backend.system = self.THINKING_PROMPT
         self.tools = {}
+        self._pending_tool_ids = []
     def set_system(self, extra_system):
         combined = f"{extra_system}\n\n{self.THINKING_PROMPT}" if extra_system else self.THINKING_PROMPT
         self.backend.system = combined
@@ -800,6 +801,10 @@ class NativeToolClient:
             c = msg.get('content', '')
             if isinstance(c, str): combined_content.append({"type": "text", "text": c})
             elif isinstance(c, list) or isinstance(c, dict): combined_content.extend(c)
+        if self._pending_tool_ids and isinstance(self.backend, NativeClaudeSession):
+            tool_result_blocks = [{"type": "tool_result", "tool_use_id": tid, "content": ""} for tid in self._pending_tool_ids]
+            combined_content = tool_result_blocks + combined_content
+            self._pending_tool_ids = []
         merged = {"role": "user", "content": combined_content}
         _write_llm_log('Prompt', json.dumps(merged, ensure_ascii=False, indent=2))
         gen = self.backend.ask(merged, self.tools); 
@@ -816,4 +821,6 @@ class NativeToolClient:
                 resp.thinking = think_match.group(1).strip()
                 text = re.sub(r'<thinking>.*?</thinking>', '', text, flags=re.DOTALL)
             resp.content = text.strip()
+        if resp and hasattr(resp, 'tool_calls') and resp.tool_calls and isinstance(self.backend, NativeClaudeSession):
+            self._pending_tool_ids = [tc.id for tc in resp.tool_calls]
         return resp

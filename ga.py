@@ -278,7 +278,7 @@ class GenericAgentHandler(BaseHandler):
             summary = f"调用工具{tool_name}, args: {args}"
             if tool_name == 'no_tool': summary = "直接回答了用户问题"
             if type(ret.next_prompt) is str:
-                ret.next_prompt += "\nPROTOCOL_VIOLATION: 上一轮遗漏了<summary>。 我已根据物理动作自动补全。请务必在下次回复中记得<summary>协议。" 
+                ret.next_prompt += "\nPROTOCOL_VIOLATION: 上一轮遗漏了<summary>。 已根据物理动作自动补全。请务必在下次回复中记得<summary>协议。" 
         self.history_info.append('[Agent] ' + smart_format(summary, max_str_len=100))
 
     def do_code_run(self, args, response):

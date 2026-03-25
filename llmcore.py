@@ -419,7 +419,7 @@ class NativeOAISession:
     def __init__(self, cfg):
         self.api_key = cfg['apikey']; self.api_base = cfg['apibase'].rstrip('/')
         self.default_model = cfg.get('model', 'gpt-4o')
-        self.context_win = cfg.get('context_win', 24000)
+        self.context_win = cfg.get('context_win', 28000)
         proxy = cfg.get('proxy')
         self.proxies = {"http": proxy, "https": proxy} if proxy else None
         self.history = []; self.system = None; self.lock = threading.Lock()
@@ -470,10 +470,13 @@ class NativeOAISession:
         elif isinstance(msg, list): msg = {"role": "user", "content": msg}
         with self.lock:
             self.history.append(msg)
-            while len(self.history) > 2:
-                cost = sum(len(json.dumps(m, ensure_ascii=False)) for m in self.history) + len(self.system or '')
-                if cost <= self.context_win * 4: break
-                self.history.pop(0); self.history.pop(0)
+            compress_history_tags(self.history)
+            cost = sum(len(json.dumps(m, ensure_ascii=False)) for m in self.history) 
+            if cost > self.context_win * 3: 
+                target = self.context_win * 3 * 0.6
+                while len(self.history) > 2 and cost > target:
+                    self.history.pop(0); self.history.pop(0)
+                    cost = sum(len(json.dumps(m, ensure_ascii=False)) for m in self.history)
             messages = list(self.history)
         content_blocks = None
         gen = self.raw_ask(messages, tools, self.system, model)

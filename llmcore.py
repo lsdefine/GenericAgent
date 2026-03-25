@@ -120,10 +120,10 @@ class ClaudeSession:
         except Exception as e: yield f"Error: {str(e)}"
     def make_messages(self, raw_list):
         trimmed = self._trim_messages(raw_list)
-        msgs = [{"role": m['role'], "content": m['prompt']} for m in trimmed]
+        msgs = [{"role": m['role'], "content": [{"type": "text", "text": m['prompt']}] if m['role'] == "assistant" else m['prompt']} for m in trimmed]
         for i in range(len(msgs)-1, -1, -1):
             if msgs[i]["role"] == "assistant":
-                msgs[i]["content"] = [{"type": "text", "text": msgs[i]["content"], "cache_control": {"type": "ephemeral"}}]
+                msgs[i]["content"][-1]["cache_control"] = {"type": "ephemeral"}
                 break
         return msgs
     def ask(self, prompt, model=None, stream=False):

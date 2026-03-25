@@ -14,7 +14,7 @@ mykeys = _load_mykeys()
 proxy = mykeys.get("proxy", 'http://127.0.0.1:2082')
 proxies = {"http": proxy, "https": proxy} if proxy else None
 
-def compress_history_tags(messages, keep_recent=12, max_len=1000):
+def compress_history_tags(messages, keep_recent=10, max_len=1000):
     """Compress <thinking>/<tool_use>/<tool_result> tags in older messages to save tokens.
     Supports both prompt-style (ClaudeSession/LLMSession) and content-style (NativeClaudeSession) messages."""
     compress_history_tags._cd = getattr(compress_history_tags, '_cd', 0) + 1
@@ -83,7 +83,7 @@ class ClaudeSession:
         self.raw_msgs, self.lock = [], threading.Lock()
         self.prompt_cache = cfg.get('prompt_cache', False)
     def _trim_messages(self, messages):
-        if not self.prompt_cache: compress_history_tags(messages)
+        compress_history_tags(messages)
         total = sum(len(m['prompt']) for m in messages)
         if total <= self.context_win * 3: return messages
         target, current, result = self.context_win * 3 * 0.6, 0, []
@@ -288,7 +288,7 @@ class LLMSession:
                 return
 
     def make_messages(self, raw_list, omit_images=True):
-        if not self.prompt_cache: compress_history_tags(raw_list)
+        compress_history_tags(raw_list)
         messages = []
         for i, msg in enumerate(raw_list):
             prompt = msg['prompt']
@@ -563,8 +563,8 @@ class NativeClaudeSession:
             self.history.append(msg)
             compress_history_tags(self.history)
             cost = sum(len(json.dumps(m, ensure_ascii=False)) for m in self.history) 
-            if cost > self.context_win * 4: 
-                target = self.context_win * 4 * 0.6
+            if cost > self.context_win * 3: 
+                target = self.context_win * 3 * 0.6
                 while len(self.history) > 2 and cost > target:
                     self.history.pop(0); self.history.pop(0)
                     cost = sum(len(json.dumps(m, ensure_ascii=False)) for m in self.history)

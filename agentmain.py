@@ -71,8 +71,8 @@ class GeneraticAgent:
         return f"{type(b.backend).__name__}/{b.backend.default_model}"
 
     def abort(self):
-        print('Abort current task...')
         if not self.is_running: return
+        print('Abort current task...')
         self.stop_sig = True
         if self.handler is not None: self.handler.code_stop_signal.append(1)
             

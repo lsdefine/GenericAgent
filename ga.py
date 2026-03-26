@@ -275,7 +275,8 @@ class GenericAgentHandler(BaseHandler):
         rsumm = re.search(r"<summary>(.*?)</summary>", response.content, re.DOTALL)
         if rsumm: summary = rsumm.group(1).strip()[:200]
         else:
-            summary = f"调用工具{tool_name}, args: {args}"
+            clean_args = {k: v for k, v in args.items() if not k.startswith('_')}
+            summary = f"调用工具{tool_name}, args: {clean_args}"
             if tool_name == 'no_tool': summary = "直接回答了用户问题"
             if type(ret.next_prompt) is str:
                 ret.next_prompt += "\nPROTOCOL_VIOLATION: 上一轮遗漏了<summary>。 已根据物理动作自动补全。请务必在下次回复中记得<summary>协议。" 
@@ -284,7 +285,8 @@ class GenericAgentHandler(BaseHandler):
     def do_code_run(self, args, response):
         '''执行代码片段，有长度限制，不允许代码中放大量数据，如有需要应当通过文件读取进行。
         '''
-        if args.get('_index', 0) > 0: return StepOutcome("[BLANK]", next_prompt="no multi code_run in one round!") 
+        if response.tool_calls and sum(1 for tc in response.tool_calls[:args.get('_index', 0)] if tc.function.name == 'code_run') > 0:
+            return StepOutcome("[BLANK]", next_prompt="no multi code_run in one round!") 
         code_type = args.get("type", "python")
         # 从 response.content 中提取代码块, 匹配 ```python ... ``` 或 ```powershell ... ```
         pattern = rf"```{code_type}\n(.*?)\n```"

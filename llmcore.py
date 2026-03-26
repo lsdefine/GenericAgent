@@ -530,7 +530,7 @@ class NativeOAISession:
     def __init__(self, cfg):
         self.api_key = cfg['apikey']; self.api_base = cfg['apibase'].rstrip('/')
         self.default_model = cfg.get('model', 'gpt-4o')
-        self.context_win = cfg.get('context_win', 28000)
+        self.context_win = cfg.get('context_win', 24000)
         proxy = cfg.get('proxy')
         self.proxies = {"http": proxy, "https": proxy} if proxy else None
         self.history = []; self.system = ''; self.lock = threading.Lock()
@@ -598,7 +598,7 @@ class NativeClaudeSession:
     def __init__(self, cfg):
         self.api_key = cfg['apikey']; self.api_base = cfg['apibase'].rstrip('/')
         self.default_model = cfg.get('model', 'claude-opus')
-        self.context_win = cfg.get('context_win', 30000)
+        self.context_win = cfg.get('context_win', 24000)
         self.history = []; self.system = ''; self.lock = threading.Lock()
 
     def raw_ask(self, messages, tools=None, system=None, model=None, temperature=0.5, max_tokens=6144):
@@ -612,7 +612,7 @@ class NativeClaudeSession:
         messages[-1] = {**messages[-1], "content": list(messages[-1]["content"])}
         messages[-1]["content"][-1] = dict(messages[-1]["content"][-1], cache_control={"type": "ephemeral"})
         try:
-            resp = requests.post(auto_make_url(self.api_base, "messages"), headers=headers, json=payload, stream=True, timeout=120)
+            resp = requests.post(auto_make_url(self.api_base, "messages"), headers=headers, json=payload, stream=True, timeout=60)
             if resp.status_code != 200:
                 error_msg = f"Error: HTTP {resp.status_code} {resp.text[:500]}"
                 yield error_msg
@@ -707,7 +707,6 @@ class ToolClient:
         for chunk in gen:
             raw_text += chunk
             if chunk != summarytag: yield chunk
-        print('Complete response received.')
         if raw_text.endswith(summarytag):
             self.last_tools = ''; raw_text = raw_text[:-len(summarytag)]
         _write_llm_log('Response', raw_text)
@@ -876,6 +875,7 @@ class NativeToolClient:
 每次回复请遵循：
 1. 在 <thinking></thinking> 标签中先分析现状和策略
 2. 在 <summary></summary> 中输出极简单行（<30字）物理快照：上次结果新信息+本次意图。此内容进入长期工作记忆。
+3. 然后才能输出工具调用
 """.strip()
     def __init__(self, backend):
         self.backend = backend
@@ -884,6 +884,7 @@ class NativeToolClient:
         self._pending_tool_ids = []
     def set_system(self, extra_system):
         combined = f"{extra_system}\n\n{self.THINKING_PROMPT}" if extra_system else self.THINKING_PROMPT
+        if combined != self.backend.system: print(f"[Debug] Updated system prompt, length {len(combined)} chars.")
         self.backend.system = combined
     def chat(self, messages, tools=None):
         if tools: self.tools = openai_tools_to_claude(tools) if isinstance(self.backend, NativeClaudeSession) else tools
@@ -905,7 +906,6 @@ class NativeToolClient:
             while True: 
                 chunk = next(gen); yield chunk
         except StopIteration as e: resp = e.value
-        print('Complete response received.')
         if resp:
             _write_llm_log('Response', resp.raw)
             text = resp.content

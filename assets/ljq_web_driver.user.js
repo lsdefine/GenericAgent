@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ljq_web_driver
 // @namespace    http://tampermonkey.net/
-// @version      0.32
+// @version      0.33
 // @description  Execute JS via ljq_web_driver
 // @require      https://code.jquery.com/jquery-3.6.0.min.js
 // @author       You
@@ -20,6 +20,7 @@
     'use strict';
     const log_prefix = "ljq_driver: ";
     if (document.querySelector('[data-testid="stApp"],.stApp')) return;
+    if (/<title>\s*Streamlit\s*<\/title>|window\.prerenderReady=!1|You need to enable JavaScript to run this app\./i.test(document.documentElement?.outerHTML || '')) return;
     
     if (window.self !== window.top) {
         window.addEventListener('message',e=>{if(e.data?.type==='ljq_exec'){try{let r=eval(e.data.code);parent.postMessage({type:'ljq_result',id:e.data.id,result:String(r)},'*')}catch(err){parent.postMessage({type:'ljq_result',id:e.data.id,error:err.message},'*')}}});

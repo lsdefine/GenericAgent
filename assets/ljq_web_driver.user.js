@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ljq_web_driver
 // @namespace    http://tampermonkey.net/
-// @version      0.33
+// @version      0.40
 // @description  Execute JS via ljq_web_driver
 // @require      https://code.jquery.com/jquery-3.6.0.min.js
 // @author       You
@@ -405,22 +405,22 @@
         }
     }
 
-    // 监控DOM变化
-    const observer = new MutationObserver(() => getIndicator());
+    // 监控DOM变化 (改为10秒定时器以优化性能)
+    let indicatorTimer = null;
 
     if (document.readyState !== 'loading') {
         init();
-        observer.observe(document.body, { childList: true, subtree: true });
+        indicatorTimer = setInterval(() => getIndicator(), 10000);
     } else {
         document.addEventListener('DOMContentLoaded', () => {
             init();
-            observer.observe(document.body, { childList: true, subtree: true });
+            indicatorTimer = setInterval(() => getIndicator(), 10000);
         });
     }
 
     // 清理
     window.addEventListener('beforeunload', () => {
-        observer.disconnect();
+        if (indicatorTimer) clearInterval(indicatorTimer);
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.close();
         }

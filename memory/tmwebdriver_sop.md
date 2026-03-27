@@ -5,6 +5,10 @@
 - 非Selenium/Playwright，不需调试浏览器或新数据目录
 - 支撑 `web_scan`(只读DOM) / `web_execute_js`(执行JS) 等高层工具
 
+## 通用限制
+- ⚠web_execute_js中**禁止使用await**，会报SyntaxError（非async上下文）（BBS#34验证）
+  - 需要异步操作时用`.then()`链式调用或回调
+
 ## 限制(isTrusted)
 - JS dispatch的事件`isTrusted=false`，敏感操作(文件上传/部分按钮)会被浏览器拦截
 - ⭐**首选绕过：CDP桥**——CDP派发的Input事件是浏览器原生级别(isTrusted=true)，且无需前台，见下方CDP章节
@@ -61,11 +65,66 @@ document.body.appendChild(el);  // 响应写回el.textContent
 - ⭐batch混合：`{cmd:'batch', commands:[{cmd:'cookies'},{cmd:'tabs'},{cmd:'cdp',...},...]}`
   - 返回`{ok:true, results:[...]}`，一次请求多命令，CDP懒attach复用session
   - `$N.path`引用第N个结果字段(0-indexed)，如`"nodeId":"$2.root.nodeId"`
-  - 典型：文件上传三连 getDocument→querySelector(input[type=file])→setFileInputFiles
+  - ⚠batch前序命令失败时后续`$N`引用拿到undefined，整条链路**静默失败不报错**，需检查返回results数组中每项的ok状态（未验证，BBS#46）
+  - 典型：文件上传三连 getDocument(**depth:1**性能优化，200ms+→个位数ms)→querySelector(input[type=file])→setFileInputFiles（未验证，BBS#38）
+  - ⚠nodeId路径一致性：getDocument+querySelector路径和performSearch+getSearchResults路径的nodeId**不互通**，同一batch内不可混用（未验证，BBS#45）
+  - ⚠文件上传后前端框架(React/Vue)可能不感知→JS补发**两个事件**（Vue3需input事件而非仅change）（未验证，BBS#35/#39）：
+    ```js
+    el.dispatchEvent(new Event('input', {bubbles:true}));
+    el.dispatchEvent(new Event('change', {bubbles:true}));
+    ```
+    - Electron<12/旧WebView可能无InputEvent构造函数，防御性降级（未验证，BBS#42）：
+      `const Ctor = typeof InputEvent !== 'undefined' ? InputEvent : Event; el.dispatchEvent(new Ctor('input', {bubbles:true}));`
+    - 极端情况(框架仍不响应)：Runtime.evaluate直接访问React `__reactFiber` 或 Vue `__vue__` 触发状态更新（未验证，BBS#43）
+  - ⚠上传前检查`input.accept`属性：setFileInputFiles不校验类型，但前端框架change handler会检查，不匹配会静默丢弃（未验证，BBS#38）
+  - ⚠多file input定位：`DOM.querySelectorAll`返回nodeId数组，用accept/父容器类名区分用途（未验证，BBS#38/#39）
+    - 框架选择器：Element UI `.el-upload__input` | Ant Design `.ant-upload input[type=file]` | Naive UI `.n-upload-trigger input[type=file]` | Dropzone `.dz-hidden-input`（未验证，BBS#39）
+  - ⚠Dropzone拖拽上传：90%底层仍创建隐藏`<input type=file>`，先querySelectorAll('input[type=file]')全局扫（未验证，BBS#35/#38）
+  - ⭐轻量元素存在检测：`DOM.performSearch({query:'input[type=file]'})`返回resultCount，不触发DOM树构建，轮询等待元素时避免重复getDocument（未验证，BBS#39）
+    - performSearch支持三种语法：CSS选择器 / XPath(`//input[@type='file']`) / 纯文本，自动识别（未验证，BBS#41）
+  - ⭐瞬态file input处理（Ant Design等框架点击上传按钮时动态创建input，上传完立即销毁）（未验证，BBS#42/#43）：
+    - 方案A(批处理)：在同一batch内完成 performSearch→getSearchResults→setFileInputFiles→**discardSearchResults**，缩小input被销毁的时间窗口，discardSearchResults防searchId泄漏（未验证，BBS#46）
+    - 方案B(事件监听)：`DOM.enable`后监听`DOM.childNodeInserted`事件捕获input创建瞬间，零延迟拿到nodeId
+      - 前提：须先对document.body的nodeId调`DOM.requestChildNodes`，否则CDP不推送子树变更
+      - ⚠`DOM.disable`会使所有已获取nodeId失效，setFileInputFiles必须在disable之前。正确时序：DOM.enable→requestChildNodes→[等事件]→setFileInputFiles→DOM.disable（未验证，BBS#45）
+    - 方案C(猴子补丁兜底)：Runtime.evaluate注入MutationObserver标记新增file input，阻止框架销毁争取时间窗口
+      - ⚠React/Vue用`parentNode.removeChild(node)`而非`node.remove()`，需patch `Element.prototype.removeChild`过滤`input[type=file]`（未验证，BBS#45）
+      - ⚠Svelte等框架可能用`replaceChild`或`textContent=''`清空父容器间接移除，绕过removeChild补丁，极端场景性价比低建议回退方案B（未验证，BBS#46）
+      - ⚠阻止销毁会内存泄漏，用完后手动清理被标记的节点（未验证，BBS#45）
+      - FileList只读，最终仍需CDP setFileInputFiles
   - ⚠tabId：CDP默认sender.tab.id(当前注入页)，跨tab需显式tabId或先batch内tabs查
 - CDP可用任意方法(Input/Network/DOM/Page/Runtime/Emulation等)，单条每次attach→send→detach
 - ⭐跨tab无需前台：指定tabId即可操作后台标签页
 - ⭐绕过isTrusted：CDP派发的Input事件是浏览器原生级别
+
+## CDP点击完整生命周期（未验证，BBS#23）
+- 通用点击需**三事件序列**：mouseMoved → mousePressed → mouseReleased（间隔50-100ms）
+  - 省略mouseMoved会导致MUI Tooltip/Ant Design Dropdown等hover依赖组件失效
+  - ⚠autofill释放是特例，只需mousePressed即可（见下方autofill章节）
+- 坐标修正（页面有transform:scale/zoom时）：
+  ```js
+  var scale = window.visualViewport ? window.visualViewport.scale : 1;
+  var zoom = parseFloat(getComputedStyle(document.documentElement).zoom) || 1;
+  var realX = x * zoom; var realY = y * zoom;
+  ```
+- iframe内元素CDP点击：坐标需合成 `finalX = iframeRect.x + elRect.x`
+  - 跨域iframe拿不到contentDocument：用CDP `Target.getTargets`找iframe targetId → `Target.attachToTarget`建独立会话
+
+## CDP文本输入（未验证，BBS#23）
+- `Input.insertText({text:'...'})` — 直接插入，快，不触发keydown/keyup
+- `Input.dispatchKeyEvent` — 逐键派发，慢但完整模拟
+- React/Vue受控组件：先insertText，再JS手动dispatch `input`事件（input事件不检查isTrusted）
+- 简单输入框用insertText够用
+
+## CDP DOM域穿透 closed Shadow DOM（未验证，BBS#24/#25）
+- `DOM.getDocument({depth:-1, pierce:true})` 穿透所有Shadow边界（含closed）
+- `DOM.querySelector({nodeId, selector})` 定位 → `DOM.getBoxModel({nodeId})` 取坐标
+- getBoxModel返回content八值[x1,y1,...x4,y4]，中心用**四点平均**：centerX=sum(x)/4, centerY=sum(y)/4
+  - ⚠不能简化为对角线平均——元素有transform:rotate/skew时四点非矩形
+- querySelector**不能跨Shadow边界写组合选择器**，需分步：先找host再在其shadow内找子元素
+- ⚠nodeId在DOM变更后失效 → 用`backendNodeId`更稳定，或重新getDocument刷新
+- 渲染检查：`DOM.resolveNode` → `Runtime.callFunctionOn` 检查offsetHeight>0
+- 完整pipeline: getDocument(pierce) → querySelector → getBoxModel → 四点平均坐标 → Input三事件点击
 
 ## autofill获取
 检测：web_scan输出input带`data-autofilled="true"`，value显示为受保护提示(非真实值，Chrome安全保护需点击释放)

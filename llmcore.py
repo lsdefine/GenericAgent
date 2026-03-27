@@ -19,7 +19,7 @@ def compress_history_tags(messages, keep_recent=10, max_len=800):
     Supports both prompt-style (ClaudeSession/LLMSession) and content-style (NativeClaudeSession) messages."""
     compress_history_tags._cd = getattr(compress_history_tags, '_cd', 0) + 1
     if compress_history_tags._cd % 5 != 0: return messages
-    _before = sum(len(json.dumps(m)) for m in messages)
+    _before = sum(len(json.dumps(m, ensure_ascii=False)) for m in messages)
     _pats = {tag: re.compile(rf'(<{tag}>)([\s\S]*?)(</{tag}>)') for tag in ('thinking', 'tool_use', 'tool_result')}
     def _trunc(text):
         for pat in _pats.values(): text = pat.sub(lambda m: m.group(1) + m.group(2)[:max_len] + '...' + m.group(3) if len(m.group(2)) > max_len else m.group(0), text)
@@ -34,7 +34,7 @@ def compress_history_tags(messages, keep_recent=10, max_len=800):
                 for block in c:
                     if isinstance(block, dict) and block.get('type') == 'text' and isinstance(block.get('text'), str):
                         block['text'] = _trunc(block['text'])
-    print(f"[Cut] {_before} -> {sum(len(json.dumps(m)) for m in messages)}")
+    print(f"[Cut] {_before} -> {sum(len(json.dumps(m, ensure_ascii=False)) for m in messages)}")
     return messages
 
 def auto_make_url(base, path):

@@ -109,13 +109,9 @@ if __name__ == '__main__':
     else: print('[Launch] DingTalk Bot not enabled (use --dingtalk to start)')
     
     if not args.no_sched:
-        try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM); sock.bind(('127.0.0.1', 45762)); sock.listen(1)
-            scheduler_proc = subprocess.Popen([sys.executable, os.path.join(script_dir, "agentmain.py"), "--reflect", os.path.join(script_dir, "reflect", "scheduler.py"), "--llm_no", str(args.llm_no)], creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0); 
-            atexit.register(lambda: (scheduler_proc.kill(), sock.close()))
-            print('[Launch] Task Scheduler started')
-        except OSError:
-            print('[Launch] Task Scheduler already running (port occupied)')
+        scheduler_proc = subprocess.Popen([sys.executable, os.path.join(script_dir, "agentmain.py"), "--reflect", os.path.join(script_dir, "reflect", "scheduler.py"), "--llm_no", str(args.llm_no)], creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
+        atexit.register(scheduler_proc.kill)
+        print('[Launch] Task Scheduler started (duplicate prevented by scheduler port lock)')
     else: print('[Launch] Task Scheduler disabled (--no-sched)')
 
     monitor_thread = threading.Thread(target=idle_monitor, daemon=True)

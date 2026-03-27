@@ -83,94 +83,11 @@ cp mykey_template.py mykey.py
 python launch.pyw
 ```
 
-#### Method 2: Windows Portable Version (Recommended for beginners)
+Full guide: [GETTING_STARTED.md](GETTING_STARTED.md)
 
-[Download portable version](http://kw.fudan.edu.cn/resources/PC-Agent-Portable.zip) (19MB, unzip and run)
-
-Full guide: [WELCOME_NEW_USER.md](WELCOME_NEW_USER.md)
-
-#### Method 3: Android (Termux)
-
-```bash
-cd /sdcard/ga
-python agentmain.py
-```
 ---
 
-## 🤖 Bot Interfaces (Optional)
-
-### QQ Bot
-
-Uses `qq-botpy` WebSocket long connection — **no public webhook required**:
-
-```bash
-pip install qq-botpy
-```
-
-Add to `mykey.py`:
-
-```python
-qq_app_id = "YOUR_APP_ID"
-qq_app_secret = "YOUR_APP_SECRET"
-qq_allowed_users = ["YOUR_USER_OPENID"]  # or ['*'] for public access
-```
-
-```bash
-python frontends/qqapp.py
-# or launch together with the desktop floating window
-python launch.pyw --qq
-```
-
-> Create a bot at the [QQ Open Platform](https://q.qq.com) to get AppID / AppSecret. After the first message, user openid is logged in `temp/qqapp.log`.
-
-
-### Lark (Feishu)
-
-```bash
-pip install lark-oapi
-python frontends/fsapp.py          # or python launch.pyw --feishu
-```
-
-```python
-fs_app_id = "cli_xxx"
-fs_app_secret = "xxx"
-fs_allowed_users = ["ou_xxx"]  # or ['*']
-```
-
-**Inbound support**: text, rich text post, images, files, audio, media, interactive cards / share cards
-**Outbound support**: streaming progress cards, image replies, file / media replies
-**Vision model**: Images are sent as true multimodal input to OpenAI Vision-compatible backends on the first turn
-
-Full setup: [assets/SETUP_FEISHU.md](assets/SETUP_FEISHU.md)
-
-
-### WeCom (Enterprise WeChat)
-
-```bash
-pip install wecom_aibot_sdk
-python frontends/wecomapp.py       # or python launch.pyw --wecom
-```
-
-```python
-wecom_bot_id = "your_bot_id"
-wecom_secret = "your_bot_secret"
-wecom_allowed_users = ["your_user_id"]
-wecom_welcome_message = "Hello, I'm online."
-```
-
-### DingTalk
-
-```bash
-pip install dingtalk-stream
-python frontends/dingtalkapp.py    # or python launch.pyw --dingtalk
-```
-
-```python
-dingtalk_client_id = "your_app_key"
-dingtalk_client_secret = "your_app_secret"
-dingtalk_allowed_users = ["your_staff_id"]  # or ['*']
-```
-
+## 🤖 Bot Interface (Optional)
 
 ### Telegram Bot
 
@@ -335,22 +252,22 @@ cp mykey_template.py mykey.py
 python launch.pyw
 ```
 
-#### 方法二：Windows 便携版（推荐新手）
-
-[下载便携版](http://kw.fudan.edu.cn/resources/PC-Agent-Portable.zip)（19MB，解压即用）
-
-完整引导流程见 [WELCOME_NEW_USER.md](WELCOME_NEW_USER.md)。
-
-#### 方法三：Android（Termux）
-
-```bash
-cd /sdcard/ga
-python agentmain.py
-```
+完整引导流程见 [GETTING_STARTED.md](GETTING_STARTED.md)。
 
 ---
 
 ## 🤖 Bot 接口（可选）
+
+### 微信 Bot（个人微信）
+
+无需额外配置，扫码登录即可：
+
+```bash
+pip install pycryptodome qrcode requests
+python frontends/wechatapp.py
+```
+
+> 首次启动会弹出二维码，用微信扫码完成绑定。之后通过微信消息与 Agent 交互。
 
 ### QQ Bot
 
@@ -370,8 +287,6 @@ qq_allowed_users = ["YOUR_USER_OPENID"]  # 或 ['*'] 公开访问
 
 ```bash
 python frontends/qqapp.py
-# 或与桌面悬浮窗一起启动
-python launch.pyw --qq
 ```
 
 > 在 [QQ 开放平台](https://q.qq.com) 创建机器人获取 AppID / AppSecret。首次消息后，用户 openid 记录于 `temp/qqapp.log`。
@@ -380,7 +295,7 @@ python launch.pyw --qq
 
 ```bash
 pip install lark-oapi
-python frontends/fsapp.py          # 或 python launch.pyw --feishu
+python frontends/fsapp.py
 ```
 
 ```python
@@ -400,7 +315,7 @@ fs_allowed_users = ["ou_xxx"]  # 或 ['*']
 
 ```bash
 pip install wecom_aibot_sdk
-python frontends/wecomapp.py       # 或 python launch.pyw --wecom
+python frontends/wecomapp.py
 ```
 
 ```python
@@ -414,26 +329,13 @@ wecom_welcome_message = "你好，我在线上。"
 
 ```bash
 pip install dingtalk-stream
-python frontends/dingtalkapp.py    # 或 python launch.pyw --dingtalk
+python frontends/dingtalkapp.py
 ```
 
 ```python
 dingtalk_client_id = "your_app_key"
 dingtalk_client_secret = "your_app_secret"
 dingtalk_allowed_users = ["your_staff_id"]  # 或 ['*']
-```
-
-
-### Telegram Bot
-
-```python
-# mykey.py
-tg_bot_token = 'YOUR_BOT_TOKEN'
-tg_allowed_users = [YOUR_USER_ID]
-```
-
-```bash
-python frontends/tgapp.py
 ```
 
 

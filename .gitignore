@@ -73,7 +73,11 @@ memory/skill_search/**/__pycache__/
 restore_commit.txt
 
 sche_tasks/
-QUICK_START.md
 # CDP Bridge 密钥配置（首次运行自动生成）
 assets/tmwd_cdp_bridge/config.js
 **log.*
+
+# Reflect (ignore new files, whitelist existing)
+reflect/*
+!reflect/autonomous.py
+!reflect/scheduler.py

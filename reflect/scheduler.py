@@ -1,5 +1,12 @@
-import os, json
+import os, json, socket as _socket
 from datetime import datetime, timedelta
+
+# 端口锁：防止重复启动，bind失败时agentmain会直接崩溃退出
+# reload时mod.__dict__保留_lock，跳过重复绑定
+try: _lock
+except NameError:
+    _lock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+    _lock.bind(('127.0.0.1', 45762)); _lock.listen(1)
 
 INTERVAL = 60
 ONCE = False

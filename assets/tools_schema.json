@@ -1,10 +1,11 @@
 [
   {"type": "function", "function": {
     "name": "code_run",
-    "description": "代码执行器。优先使用python，仅在必要系统操作时使用 powershell。注意：不能同时调用多个，执行的代码放在回复正文中，以 ```python 或 ```powershell 代码块的形式。严禁在代码中硬编码大量数据，如有需要应通过文件读取",
+    "description": "代码执行器。优先python，系统操作用powershell。禁同时调用多个。为免转义问题，代码放正文 ```python/powershell 块中。禁硬编码大量数据",
     "parameters": {"type": "object", "properties": {
-      "type": {"type": "string", "enum": ["python", "powershell"], "description": "执行环境类型，默认为 python", "default": "python"},
-      "timeout": {"type": "integer", "description": "执行超时时间（秒），默认 60", "default": 60},
+      "script": {"type": "string", "description": "[Optional] 要执行的代码。为免转义建议留空，改用正文代码块（与此参数互斥）"},
+      "type": {"type": "string", "enum": ["python", "powershell"], "description": "代码类型", "default": "python"},
+      "timeout": {"type": "integer", "description": "执行超时时间（秒）", "default": 60},
       "cwd": {"type": "string", "description": "工作目录，默认为当前工作目录"}}}
   }},
   {"type": "function", "function": {
@@ -42,11 +43,11 @@
   }},
   {"type": "function", "function": {
     "name": "web_execute_js",
-    "description": "万能网页操控工具。通过执行 JavaScript 脚本实现对浏览器的完全控制（如点击、滚动、提取特定数据）。鼓励在有把握情况下（记忆中有selector/做法等）精准使用以减少web_scan调用。执行结果可选择保存到本地文件进行后续分析",
+    "description": "执行 JS 控制浏览器。建议精准使用减少 web_scan。为免转义问题，代码优先考虑放回复正文 ```javascript 块",
     "parameters": {"type": "object", "properties": {
-      "script": {"type": "string", "description": "要执行的代码或JS文件路径"},
-      "save_to_file": {"type": "string", "description": "结果存文件，适合返回值较长时。不支持await", "default": ""},
-      "no_monitor": {"type": "boolean", "description": "跳过页面变更监控，省2-3秒。仅在纯读取信息时设置，页面操作时不要设置", "default": false}}, "required": ["script"]}
+      "script": {"type": "string", "description": "[Optional] JS代码或路径。为免转义建议留空，改用正文代码块（与此参数互斥）"},
+      "save_to_file": {"type": "string", "description": "结果存文件，适合返回值较长时", "default": ""},
+      "no_monitor": {"type": "boolean", "description": "跳过页面变更监控，省2-3秒。仅在纯读取信息时设置，页面操作时不要设置", "default": false}}}
   }},
   {"type": "function", "function": {
     "name": "update_working_checkpoint",

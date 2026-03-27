@@ -126,17 +126,16 @@ document.body.appendChild(el);  // 响应写回el.textContent
 - 渲染检查：`DOM.resolveNode` → `Runtime.callFunctionOn` 检查offsetHeight>0
 - 完整pipeline: getDocument(pierce) → querySelector → getBoxModel → 四点平均坐标 → Input三事件点击
 
-## autofill获取
+## autofill获取与登录 (需 v0.4+ 脚本支持 await)
 检测：web_scan输出input带`data-autofilled="true"`，value显示为受保护提示(非真实值，Chrome安全保护需点击释放)
-- ⭐首选CDP单次点击：JS取任一autofill输入框坐标→CDP `Input.dispatchMouseEvent` mousePressed一次即可释放→JS读`.value`
-  - ⚠点击一个autofill字段会释放页面上**所有**autofill字段的值，无需逐个点击
-  - ⚠只需mousePressed，不需要mouseReleased配对
-  - ⚠tabId：当前注入页无需指定(默认sender.tab.id)，跨tab才需显式tabId(整数)
-  - 示例(当前页)：`{cmd:'cdp',method:'Input.dispatchMouseEvent',params:{type:'mousePressed',x:X,y:Y,button:'left',clickCount:1}}`
-  - 示例(跨tab)：先`{cmd:'tabs'}`获取tabId(整数)，再`{cmd:'cdp',tabId:N,method:'Input.dispatchMouseEvent',params:{...}}`
-  - ⚠batch的`$N.path`引用会将整数tabId转为字符串导致类型错误，跨tab时建议分两次命令而非batch
-- 备选PostMessage物理点击(仅Windows/需前台)：枚举Chrome窗口标题匹配→rect*dpr→WM_LBUTTONDOWN/UP到Chrome_RenderWidgetHostHWND子窗口
-  - 坑：多RenderWidgetHostHWND共存，必须按父窗口标题匹配再取子窗口
+- ⭐**一键释放与登录**：利用 v0.4 脚本的顶层 `await`，在单次 `web_execute_js` 中连贯完成：
+  1. JS获取输入框坐标。
+  2. CDP发送 `Input.dispatchMouseEvent` (mousePressed) 物理点击释放autofill。
+  3. `await new Promise(r => setTimeout(r, 500))` 等待释放。
+  4. 派发 `input`/`change` 事件唤醒前端框架（解禁登录按钮）。
+  5. 触发登录点击。
+- ⚠只需 `mousePressed`，无需 `mouseReleased`。点击一个字段即释放全页。
+- ⚠已淘汰旧版跨 tab 查 tabId 或 Python 轮询的繁琐流程，直接在当前页异步完成。
 
 ## 验证码/页面视觉截图
 - ⭐首选CDP截图：`Page.captureScreenshot`(format:'png')→返回base64，无需前台/后台tab也行，全页高清

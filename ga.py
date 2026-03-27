@@ -282,27 +282,26 @@ class GenericAgentHandler(BaseHandler):
                 ret.next_prompt += "\nPROTOCOL_VIOLATION: 上一轮遗漏了<summary>。 已根据物理动作自动补全。请务必在下次回复中记得<summary>协议。" 
         self.history_info.append('[Agent] ' + smart_format(summary, max_str_len=100))
 
+    def _extract_code_block(self, response, code_type):
+        matches = re.findall(rf"```{code_type}\n(.*?)\n```", response.content, re.DOTALL)
+        return matches[-1].strip() if matches else None
+
     def do_code_run(self, args, response):
         '''执行代码片段，有长度限制，不允许代码中放大量数据，如有需要应当通过文件读取进行。
         '''
         if response.tool_calls and sum(1 for tc in response.tool_calls[:args.get('_index', 0)] if tc.function.name == 'code_run') > 0:
             return StepOutcome("[BLANK]", next_prompt="no multi code_run in one round!") 
         code_type = args.get("type", "python")
-        # 从 response.content 中提取代码块, 匹配 ```python ... ``` 或 ```powershell ... ```
-        pattern = rf"```{code_type}\n(.*?)\n```"
-        matches = re.findall(pattern, response.content, re.DOTALL)
-        warning = ""
-        if not matches:
-            code = args.get("code") or args.get("script")
-            if not code: return StepOutcome(None, next_prompt=f"【系统错误】：你调用了 code_run，但未在先在回复正文中提供 ```{code_type} 代码块。请重新输出代码并附带工具调用。")
-            warning = "\n下次要记得先在回复正文中提供代码块，而不是放在参数中"
-        else: code = matches[-1].strip()   # 提取最后一个代码块（通常是模型修正后的最终逻辑）
+        code = args.get("code") or args.get("script")
+        if not code:
+            code = self._extract_code_block(response, code_type)
+            if not code: return StepOutcome(None, next_prompt=f"[Error] Code missing. Use ```{code_type} block or 'script' arg.")
         timeout = args.get("timeout", 60)
         raw_path = os.path.join(self.cwd, args.get("cwd", './'))
         cwd = os.path.normpath(os.path.abspath(raw_path))
         code_cwd = os.path.normpath(self.cwd)
         result = yield from code_run(code, code_type, timeout, cwd, code_cwd=code_cwd, stop_signal=self.code_stop_signal)
-        next_prompt = self._get_anchor_prompt() + warning
+        next_prompt = self._get_anchor_prompt()
         return StepOutcome(result, next_prompt=next_prompt)
     
     def do_ask_user(self, args, response):
@@ -328,11 +327,9 @@ class GenericAgentHandler(BaseHandler):
         return StepOutcome(result, next_prompt=next_prompt)
     
     def do_web_execute_js(self, args, response):
-        '''web情况下的优先使用工具，执行任何js达成对浏览器的*完全*控制。
-        支持将结果保存到文件供后续读取分析，但保存功能仅限即时读取，与await等异步操作不兼容。
-        '''
-        script = args.get("script", "")
-        if not script: return StepOutcome(None, next_prompt="[Error] Empty script param. Check your tool call arguments.")
+        '''web情况下的优先使用工具，执行任何js达成对浏览器的*完全*控制。支持将结果保存到文件供后续读取分析。'''
+        script = args.get("script", "") or self._extract_code_block(response, "javascript")
+        if not script: return StepOutcome(None, next_prompt="[Error] Script missing. Use ```javascript block or 'script' arg.")
         abs_path = self._get_abs_path(script.strip())
         if os.path.isfile(abs_path):
             with open(abs_path, 'r', encoding='utf-8') as f: script = f.read()

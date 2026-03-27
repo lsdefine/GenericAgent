@@ -241,13 +241,13 @@
                 url: location.href,
                 sessionId: sid
             }),
-            onload: function(resp) {
+            onload: async function(resp) {
                 if (resp.status === 200) {
                     let data = JSON.parse(resp.responseText);
                     console.log(log_prefix + '接收到数据:', data);
                     if (data.id === "" && data.ret === "use ws") return;
                     if (data.id === "") return setTimeout(connecthttp, 100);
-                    const response = executeCode(data);
+                    const response = await executeCode(data);
 
                     if (response.error) {
                         handleError(data.id, response.error, '执行代码');
@@ -283,7 +283,7 @@
         });
     }
 
-    function executeCode(data) {
+    async function executeCode(data) {
         let id = data.id || 'unknown'; // 获取 ID
         let result;
 
@@ -301,32 +301,26 @@
             const jsCode = data.code.trim();
             const lines = jsCode.split(/\r?\n/).filter(l => l.trim());
             const lastLine = lines.length > 0 ? lines[lines.length - 1].trim() : '';
+            const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
+            
             if (lastLine.startsWith('return')) {
-                result = (new Function(jsCode))();
+                result = await (new AsyncFunction(jsCode))();
             } else {
                 try {
                     result = eval(jsCode);
+                    if (result instanceof Promise) result = await result;
                 } catch (e) {
-                    if (isIllegalReturnError(e)) {
-                        result = (new Function(jsCode))();
-                    } else if (isAwaitError(e)) {
-                        result = (async function() { return eval(jsCode); })();
-                        result = 'Promise is running, cannot get return value. Suggest avoiding await next time, or use global variables (e.g., window.myVar) to store async results.';
+                    if (isIllegalReturnError(e) || isAwaitError(e)) {
+                        result = await (new AsyncFunction(jsCode))();
                     } else throw e; 
                 }
             }
             const processedResult = smartProcessResult(result);
-            if (result instanceof Promise) {
-                result.finally(() => window.open = _open);
-                return { result: processedResult };
-            }
             return { result: processedResult }; 
         } catch (execError) {
             return { error: execError }; 
         } finally {
-            if (!(result instanceof Promise)) {
-                setTimeout(() => window.open = _open, 100);
-            }   
+            setTimeout(() => window.open = _open, 100);
         }
     }
 
@@ -375,7 +369,7 @@
             try {
                 let data = JSON.parse(e.data);
                 ws.send(JSON.stringify({type: 'ack',id: data.id}));
-                const response = executeCode(data);
+                const response = await executeCode(data);
              
                 if (response.error) {
                     handleError(data.id, response.error, '执行代码');

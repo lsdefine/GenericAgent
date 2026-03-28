@@ -12,12 +12,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 def acquire_singleton():
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        s.bind(('127.0.0.1', LOCK_PORT))
-        s.listen(1)
-        return s
-    except OSError:
-        return None
-
+        s.bind(('127.0.0.1', LOCK_PORT)); s.listen(1);return s
+    except OSError: return None
 
 def discover_services():
     services = []
@@ -32,12 +28,9 @@ def discover_services():
     frontends_dir = os.path.join(BASE_DIR, 'frontends')
     if os.path.isdir(frontends_dir):
         for f in sorted(os.listdir(frontends_dir)):
-            if f.endswith('app.py') and f != 'chatapp_common.py':
-                if f == 'stapp.py':
-                    cmd = [sys.executable, '-m', 'streamlit', 'run',
-                           'frontends/' + f, '--server.headless=true']
-                else:
-                    cmd = [sys.executable, 'frontends/' + f]
+            if 'app' in f and f.endswith('.py') and f != 'chatapp_common.py':
+                if 'stapp' in f: cmd = [sys.executable, '-m', 'streamlit', 'run', 'frontends/' + f, '--server.headless=true']
+                else: cmd = [sys.executable, 'frontends/' + f]
                 services.append({'name': 'frontends/' + f, 'cmd': cmd})
     return services
 
@@ -213,11 +206,12 @@ class LauncherApp:
         if not self.selected:
             return
         lines = self.mgr.get_output(self.selected)
+        at_bottom = self.output_text.yview()[1] >= 0.99
         self.output_text.configure(state='normal')
         self.output_text.delete('1.0', 'end')
         self.output_text.insert('end', ''.join(lines[-200:]))
         self.output_text.configure(state='disabled')
-        self.output_text.see('end')
+        if at_bottom: self.output_text.see('end')
 
     def _poll(self):
         for svc in self.services:

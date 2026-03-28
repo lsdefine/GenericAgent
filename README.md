@@ -101,6 +101,15 @@ tg_allowed_users = [YOUR_USER_ID]
 python frontends/tgapp.py
 ```
 
+### Alternative App Frontends
+
+Besides the default Streamlit web UI, you can also try other frontend styles:
+
+```bash
+python frontends/qtapp.py                # Qt-based desktop app
+streamlit run frontends/stapp2.py        # Alternative Streamlit UI
+```
+
 
 ## 📊 Comparison with Similar Tools
 
@@ -336,6 +345,15 @@ python frontends/dingtalkapp.py
 dingtalk_client_id = "your_app_key"
 dingtalk_client_secret = "your_app_secret"
 dingtalk_allowed_users = ["your_staff_id"]  # 或 ['*']
+```
+
+### 其他 App 前端
+
+除默认的 Streamlit Web UI 外，还可以尝试不同风格的前端：
+
+```bash
+python frontends/qtapp.py                # 基于 Qt 的桌面应用
+streamlit run frontends/stapp2.py        # 另一种 Streamlit 风格 UI
 ```
 
 

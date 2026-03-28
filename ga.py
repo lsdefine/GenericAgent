@@ -441,11 +441,13 @@ class GenericAgentHandler(BaseHandler):
         二次确认仅在回复几乎只包含<thinking>/<summary>和一段大代码块时触发。
         '''
         content = getattr(response, 'content', '') or ""
-        # 1. 空回复保护：要求模型重新生成内容或调用工具
         if not response or not content.strip():
             yield "[Warn] LLM returned an empty response. Retrying...\n"
-            next_prompt = "[System] 回复为空，请重新生成内容或调用工具。"
-            return StepOutcome({}, next_prompt=next_prompt, should_exit=False)
+            return StepOutcome({}, next_prompt="[System] Blank response, regenerate and tooluse", should_exit=False)
+        if '流异常中断，未收到完整响应 !!!]' in content:
+            return StepOutcome({}, next_prompt="[System] Incomplete response. Regenerate and tooluse.", should_exit=False)
+        if 'max_tokens !!!]' in content:
+            return StepOutcome({}, next_prompt="[System] max_tokens limit reached. Use multi small steps to do it.", should_exit=False)
         # 2. 检测“包含较大代码块但未调用工具”的情况
         # 这里通过三引号代码块 + 最少字符数的方式粗略判断“大段代码”
         code_block_pattern = r"```[a-zA-Z0-9_]*\n[\s\S]{100,}?```"

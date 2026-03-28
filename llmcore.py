@@ -456,75 +456,6 @@ class LLMSession:
         if stream: return _ask_gen()
         return ''.join(list(_ask_gen())) 
         
-  
-class GeminiSession:
-    def __init__(self, cfg):
-        self.api_key = cfg.get('apikey')
-        if not self.api_key: raise ValueError("google_api_key 未配置或为空，请在 mykey.py 中设置")
-        self.default_model = cfg.get('model', 'gemini-2.0-flash-001')
-        p = cfg.get('proxy', proxy)
-        self.proxies = {"http":p, "https":p} if p else None
-    def ask(self, prompt, model=None, stream=False):
-        if model is None: model = self.default_model
-        url = f"https://generativelanguage.googleapis.com/v1/models/{model}:generateContent?key={self.api_key}"
-        headers = {"Content-Type":"application/json"}
-        data = {"contents":[{"role":"user","parts":[{"text":prompt}]}]}
-        try:
-            kw = {"headers":headers, "json":data, "timeout":60, 'proxies': self.proxies}
-            r = requests.post(url, **kw)
-        except Exception as e:
-            return f"[GeminiError] request failed: {e}"
-        if r.status_code != 200:
-            body = r.text[:500].replace("\n"," ")
-            return f"[GeminiError] HTTP {r.status_code}: {body}"
-        try:
-            obj = r.json(); cands = obj.get("candidates") or []
-            if not cands: return "[GeminiError] empty candidates"
-            parts = (cands[0].get("content") or {}).get("parts") or []
-            full_text = "".join(p.get("text","") for p in parts)
-        except Exception as e:
-            return f"[GeminiError] invalid response format: {e}"
-        return iter([full_text]) if stream else full_text
-
-class XaiSession:
-    def __init__(self, cfg):
-        import xai_sdk
-        from xai_sdk.chat import user, system
-        self._user, self._system = user, system
-        self.default_model = cfg.get('model', 'grok-4-1-fast-non-reasoning')
-        self._last_response_id = None  # 多轮对话链
-        os.environ["XAI_API_KEY"] = cfg['apikey']
-        proxy = cfg.get('proxy', 'http://127.0.0.1:2082')
-        if not proxy.startswith("http"): proxy = f"http://{proxy}"
-        os.environ.setdefault("grpc_proxy", proxy)
-        self._client = xai_sdk.Client()
-    def ask(self, prompt, model=None, system_prompt=None, stream=False):
-        """发送消息，自动串联多轮对话；stream=True返回生成器"""
-        mdl = model or self.default_model
-        try:
-            kw = dict(model=mdl, store_messages=True)
-            if self._last_response_id: kw["previous_response_id"] = self._last_response_id
-            chat = self._client.chat.create(**kw)
-            if system_prompt: chat.append(self._system(system_prompt))
-            chat.append(self._user(prompt))
-            if stream: return self._stream(chat)
-            resp = chat.sample()
-            self._last_response_id = resp.id
-            return resp.content
-        except Exception as e:
-            err = f"[XaiError] {e}"
-            return iter([err]) if stream else err
-    def _stream(self, chat):
-        try:
-            last_resp = None
-            for resp, chunk in chat.stream():
-                last_resp = resp
-                if chunk and chunk.content: yield chunk.content
-            if last_resp and hasattr(last_resp, 'id'): self._last_response_id = last_resp.id
-        except Exception as e:
-            yield f"[XaiError] {e}"
-    def reset(self): self._last_response_id = None
-
 
 class NativeOAISession:
     def __init__(self, cfg):
@@ -867,6 +798,41 @@ def tryparse(json_str):
     except: pass
     if '}' in json_str: json_str = json_str[:json_str.rfind('}') + 1]
     return json.loads(json_str)
+
+
+class MixinSession:
+    """Multi-session fallback with exponential backoff on Error: detection."""
+    def __init__(self, all_sessions, cfg):
+        self._retries, self._base_delay = cfg.get('max_retries', 3), cfg.get('base_delay', 1.5)
+        self._sessions = [all_sessions[i].backend for i in cfg.get('llm_nos', [])]
+        assert 'Native' not in self._sessions[0].__class__.__name__
+        assert len(set(type(s) for s in self._sessions)) == 1, f'MixinSession: all sessions must be same type, got {[type(s).__name__ for s in self._sessions]}'
+        self._orig_raw_asks = [s.raw_ask for s in self._sessions]
+        self._sessions[0].raw_ask = self._raw_ask
+        self.default_model = getattr(self._sessions[0], 'default_model', None)
+    def __getattr__(self, name): return getattr(self._sessions[0], name)
+    @property
+    def primary(self): return self._sessions[0]
+    def _raw_ask(self, *args, **kwargs):
+        last_err = None
+        for attempt in range(self._retries + 1):
+            gen = self._orig_raw_asks[attempt % len(self._sessions)](*args, **kwargs)
+            try: first = next(gen)
+            except StopIteration as e: return e.value or []
+            if isinstance(first, str) and first.startswith('Error:'):
+                last_err = first
+                for _ in gen: pass  # drain
+                if attempt < self._retries:
+                    delay = min(30, self._base_delay * (2 ** attempt))
+                    print(f'[MixinSession] {first[:80]}, retry {attempt+1}/{self._retries} in {delay:.1f}s')
+                    time.sleep(delay); continue
+            else:
+                yield first
+                try:
+                    while True: yield next(gen)
+                except StopIteration as e: return e.value or []
+        yield last_err or 'Error: all retries exhausted'
+        return [{'type': 'text', 'text': last_err}]
 
 
 class NativeToolClient:

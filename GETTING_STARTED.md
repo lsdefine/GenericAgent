@@ -91,7 +91,7 @@ native_claude_config = {
 }
 ```
 
-> 💡 还支持 `native_oai_config`（OpenAI 标准工具调用）、`xai_config`（Grok）、`sider_cookie`（Sider）等，详见 `mykey_template.py` 中的注释。
+> 💡 还支持 `native_oai_config`（OpenAI 标准工具调用）、`sider_cookie`（Sider）等，详见 `mykey_template.py` 中的注释。
 
 ### 关键规则
 

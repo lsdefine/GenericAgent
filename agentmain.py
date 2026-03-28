@@ -5,7 +5,7 @@ if sys.stderr is None: sys.stderr = open(os.devnull, "w")
 elif hasattr(sys.stderr, 'reconfigure'): sys.stderr.reconfigure(errors='replace')
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from llmcore import SiderLLMSession, LLMSession, ToolClient, ClaudeSession, XaiSession, NativeToolClient, NativeClaudeSession, build_multimodal_content, NativeOAISession
+from llmcore import SiderLLMSession, LLMSession, ToolClient, ClaudeSession, MixinSession, NativeToolClient, NativeClaudeSession, build_multimodal_content, NativeOAISession
 from agent_loop import agent_runner_loop
 from ga import GenericAgentHandler, smart_format, get_global_memory, format_error
 
@@ -48,10 +48,14 @@ class GeneraticAgent:
                 elif 'native' in k and 'oai' in k: llm_sessions += [NativeToolClient(NativeOAISession(cfg=cfg))]
                 elif 'claude' in k: llm_sessions += [ToolClient(ClaudeSession(cfg=cfg))]
                 elif 'oai' in k: llm_sessions += [ToolClient(LLMSession(cfg=cfg))]
-                elif 'xai' in k: llm_sessions += [ToolClient(XaiSession(cfg=cfg))]
                 elif 'sider' in k: llm_sessions += [ToolClient(SiderLLMSession(cfg={'apikey': cfg, 'model': x})) for x in \
                                     ["gemini-3.0-flash", "gpt-5.4"]]
+                elif 'mixin' in k: llm_sessions += [{'mixin_cfg': cfg}]
             except: pass
+        for i, s in enumerate(llm_sessions):
+            if isinstance(s, dict) and 'mixin_cfg' in s:
+                try: llm_sessions[i] = ToolClient(MixinSession(llm_sessions, s['mixin_cfg']))
+                except Exception as e: print(f'[WARN] Failed to init MixinSession with cfg {s["mixin_cfg"]}: {e}')
         self.llmclients = llm_sessions
         self.lock = threading.Lock()
         self.history = []               

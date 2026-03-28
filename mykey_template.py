@@ -6,6 +6,11 @@
 #   填完整路径      'http://host:2001/v1/chat/completions'  → 直接使用，不再拼接
 # ══════════════════════════════════════════════════════════════════════════════
 
+# ── Mixin (实验性) ───────────────────────────────────────────────────────────────
+# key命名含 'mixin' 触发 MixinSession：多key/endpoint自动fallback + 指数退避重试
+# 约束：引用的session须同类型，不支持Native
+# mixin_config = {'llm_nos': [1, 2], 'max_retries': 3, 'base_delay': 1.5}  # 序号含自身（此处mixin=0）
+
 # ── OpenAI-compatible (chat/completions or responses API) ──────────────────────
 # key命名含 'oai' 触发 LLMSession
 oai_config = {
@@ -63,13 +68,6 @@ native_oai_config = {
 # key命名含 'sider' 触发 SiderLLMSession（需安装 sider_ai_api 包）
 #sider_cookie = 'token=Bearer%20eyJhbGciOiJIUz...'
 
-# ── xAI Grok ────────────────────────────────────────────────────────────────────
-# key命名含 'xai' 触发 XaiSession（需安装 xai_sdk 包）
-# xai_config = {
-#     'apikey': 'xai-...',
-#     'model': 'grok-4-1-fast-non-reasoning',
-#     'proxy': 'http://127.0.0.1:2082',
-# }
 
 # If you need them
 # tg_bot_token = '84102K2gYZ...'

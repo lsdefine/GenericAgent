@@ -14,6 +14,7 @@ from llmcore import (
     GeminiSession,
     NativeToolClient,
     NativeClaudeSession,
+    NativeOAISession,
     build_multimodal_content,
     refresh_mykeys,
 )
@@ -70,6 +71,8 @@ class GeneraticAgent:
     def _make_llm_clients(self, key, cfg):
         if 'native' in key and 'claude' in key:
             return [NativeToolClient(NativeClaudeSession(cfg=cfg))]
+        if 'native' in key and 'oai' in key:
+            return [NativeToolClient(NativeOAISession(cfg=cfg))]
         if 'claude' in key:
             return [ToolClient(ClaudeSession(cfg=cfg))]
         if 'oai' in key:

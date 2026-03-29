@@ -40,11 +40,22 @@ claude_config = {
 }
 
 # ── Claude Native API ───────────────────────────────────────────────────────────
-# key命名同时含 'native' 和 'claude' 触发 NativeClaudeSession（原生Anthropic协议）
+# key命名同时含 'native' 和 'claude' 触发 NativeClaudeSession
+# 原生工具调用格式，缓解弱模型指令遵循问题，但更耗token
 native_claude_config = {
     'apikey': 'sk-ant-...',          # Anthropic原生apikey
     'apibase': 'https://api.anthropic.com',
     'model': 'claude-opus-4-5',
+    # 'context_win': 24000,
+}
+
+# ── OpenAI-compatible Native API ─────────────────────────────────────────────
+# key命名同时含 'native' 和 'oai' 触发 NativeOAISession
+# 原生工具调用格式，缓解弱模型指令遵循问题，但更耗token
+native_oai_config = {
+    'apikey': 'sk-...',
+    'apibase': 'http://your-proxy:2001',
+    'model': 'gpt-4o',
     # 'context_win': 24000,
 }
 

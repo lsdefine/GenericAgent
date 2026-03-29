@@ -814,26 +814,20 @@ class MixinSession:
     @property
     def primary(self): return self._sessions[0]
     def _raw_ask(self, *args, **kwargs):
-        last_err = None
         for attempt in range(self._retries + 1):
             gen = self._orig_raw_asks[attempt % len(self._sessions)](*args, **kwargs)
-            try: first = next(gen)
-            except StopIteration as e: return e.value or []
-            if isinstance(first, str) and first.startswith('Error:'):
-                last_err = first
-                for _ in gen: pass  # drain
-                if attempt < self._retries:
-                    delay = min(30, self._base_delay * (2 ** attempt))
-                    print(f'[MixinSession] {first[:80]}, retry {attempt+1}/{self._retries} in {delay:.1f}s')
-                    time.sleep(delay); continue
-            else:
-                yield first
-                try:
-                    while True: yield next(gen)
-                except StopIteration as e: return e.value or []
-        yield last_err or 'Error: all retries exhausted'
-        return [{'type': 'text', 'text': last_err}]
-
+            last_chunk, return_val, yielded = None, [], False
+            try:
+                while True:
+                    chunk = next(gen); last_chunk = chunk
+                    if not yielded and isinstance(chunk, str) and chunk.startswith('Error:'): continue
+                    yield chunk; yielded = True
+            except StopIteration as e: return_val = e.value or []
+            if isinstance(last_chunk, str) and last_chunk.startswith('Error:') and attempt < self._retries:
+                delay = min(30, self._base_delay * (2 ** attempt))
+                print(f'[MixinSession] {last_chunk[:80]}, retry {attempt+1}/{self._retries} in {delay:.1f}s')
+                time.sleep(delay); continue
+            return return_val
 
 class NativeToolClient:
     THINKING_PROMPT = """

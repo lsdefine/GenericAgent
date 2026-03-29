@@ -1,7 +1,7 @@
 [
   {"type": "function", "function": {
     "name": "code_run",
-    "description": "代码执行器。优先python，系统操作用powershell。禁同时调用多个。为免转义问题，代码放正文 ```python/powershell 块中。禁硬编码大量数据",
+    "description": "代码执行器。优先使用python。禁同时调用多个。为免转义问题，代码放正文 ```python/powershell 块中。禁硬编码大量数据",
     "parameters": {"type": "object", "properties": {
       "script": {"type": "string", "description": "[Optional] 要执行的代码。为免转义建议留空，改用正文代码块（与此参数互斥）"},
       "type": {"type": "string", "enum": ["python", "powershell"], "description": "代码类型", "default": "python"},

@@ -91,5 +91,5 @@ def agent_runner_loop(client, system_prompt, user_input, handler, tools_schema, 
                 next_prompt += f"<tool_result>\n{datastr}\n</tool_result>\n\n"
             next_prompt += outcome.next_prompt
         next_prompt = handler.next_prompt_patcher(next_prompt, None, turn+1)
-        messages = [{"role": "user", "content": next_prompt}]
+        messages = [{"role": "user", "content": next_prompt}]   # just new message, history is kept in *Session
     return {'result': 'MAX_TURNS_EXCEEDED'}

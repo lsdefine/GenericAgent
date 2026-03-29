@@ -276,7 +276,7 @@ class GenericAgentHandler(BaseHandler):
         matches = re.findall(pattern, response.content, re.DOTALL)
         warning = ""
         if not matches:
-            code = args.get("code")
+            code = args.get("code") or args.get("script")
             if not code: return StepOutcome(None, next_prompt=f"【系统错误】：你调用了 code_run，但未在先在回复正文中提供 ```{code_type} 代码块。请重新输出代码并附带工具调用。")
             warning = "\n下次要记得先在回复正文中提供代码块，而不是放在参数中"
         else: code = matches[-1].strip()   # 提取最后一个代码块（通常是模型修正后的最终逻辑）

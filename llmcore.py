@@ -410,6 +410,75 @@ class XaiSession:
     def reset(self): self._last_response_id = None
 
 
+class NativeOAISession:
+    def __init__(self, cfg):
+        self.api_key = cfg['apikey']; self.api_base = cfg['apibase'].rstrip('/')
+        self.default_model = cfg.get('model', 'gpt-4o')
+        self.context_win = cfg.get('context_win', 24000)
+        self.history = []; self.system = None; self.lock = threading.Lock()
+    def set_system(self, system_text): self.system = system_text
+
+    def raw_ask(self, messages, tools=None, system=None, model=None, temperature=0.5, max_tokens=6144, **kw):
+        """OpenAI streaming. yields text chunks, generator return = list[content_block]"""
+        model = model or self.default_model
+        headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+        msgs = ([{"role": "system", "content": system}] if system else []) + messages
+        payload = {"model": model, "messages": msgs, "temperature": temperature, "max_tokens": max_tokens, "stream": True}
+        if tools: payload["tools"] = tools
+        try:
+            resp = requests.post(auto_make_url(self.api_base, "chat/completions"), headers=headers, json=payload, stream=True, timeout=120)
+            if resp.status_code != 200:
+                err = f"Error: HTTP {resp.status_code} {resp.text[:500]}"; yield err; return [{"type": "text", "text": err}]
+        except Exception as e:
+            err = f"Error: {e}"; yield err; return [{"type": "text", "text": err}]
+        content_text = ""; tc_buf = {}  # index -> {id, name, args_str}
+        for line in resp.iter_lines():
+            if not line: continue
+            line = line.decode('utf-8', errors='replace') if isinstance(line, bytes) else line
+            if not line.startswith("data: "): continue
+            data_str = line[6:]
+            if data_str.strip() == "[DONE]": break
+            try: evt = json.loads(data_str)
+            except: continue
+            delta = evt.get("choices", [{}])[0].get("delta", {})
+            if delta.get("content"):
+                text = delta["content"]; content_text += text; yield text
+            for tc in delta.get("tool_calls", []):
+                idx = tc.get("index", 0)
+                if idx not in tc_buf: tc_buf[idx] = {"id": tc.get("id", ""), "name": "", "args": ""}
+                if tc.get("function", {}).get("name"): tc_buf[idx]["name"] = tc["function"]["name"]
+                if tc.get("function", {}).get("arguments"): tc_buf[idx]["args"] += tc["function"]["arguments"]
+        blocks = []
+        if content_text: blocks.append({"type": "text", "text": content_text})
+        for idx in sorted(tc_buf):
+            tc = tc_buf[idx]
+            try: inp = json.loads(tc["args"]) if tc["args"] else {}
+            except: inp = {"_raw": tc["args"]}
+            blocks.append({"type": "tool_use", "id": tc["id"], "name": tc["name"], "input": inp})
+        return blocks
+
+    def ask(self, msg, tools=None, model=None, **kw):
+        """Managed ask with history. yields text chunks, return MockResponse"""
+        if isinstance(msg, str): msg = {"role": "user", "content": msg}
+        elif isinstance(msg, list): msg = {"role": "user", "content": msg}
+        with self.lock:
+            self.history.append(msg)
+            while len(self.history) > 2:
+                cost = sum(len(json.dumps(m, ensure_ascii=False)) for m in self.history) + len(self.system or '')
+                if cost <= self.context_win * 4: break
+                self.history.pop(0); self.history.pop(0)
+            messages = list(self.history)
+        content_blocks = None
+        gen = self.raw_ask(messages, tools, self.system, model)
+        try:
+            while True: yield next(gen)
+        except StopIteration as e: content_blocks = e.value or []
+        if content_blocks and not (len(content_blocks) == 1 and content_blocks[0].get("text", "").startswith("Error:")):
+            self.history.append({"role": "assistant", "content": content_blocks})
+        text_parts = [b["text"] for b in content_blocks if b.get("type") == "text"]
+        content = "\n".join(text_parts).strip()
+        tool_calls = [MockToolCall(b["name"], b.get("input", {}), id=b.get("id", "")) for b in content_blocks if b.get("type") == "tool_use"]
+        return MockResponse("", content, tool_calls, str(content_blocks))
 
 
 class NativeClaudeSession:
@@ -723,8 +792,8 @@ class NativeToolClient:
     THINKING_PROMPT = """
 ### 行动规范（持续有效）
 每次回复请遵循：
-1. 在 <thinking> 标签中先分析现状和策略
-2. 在 <summary> 中输出极简单行（<30字）物理快照：上次结果新信息+本次意图。此内容进入长期工作记忆。
+1. 在 <thinking></thinking> 标签中先分析现状和策略
+2. 在 <summary></summary> 中输出极简单行（<30字）物理快照：上次结果新信息+本次意图。此内容进入长期工作记忆。
 3. 如需调用工具，直接使用工具调用能力，然后结束回复。
 """.strip()
     def __init__(self, backend):

@@ -7,7 +7,13 @@ def _d(b):
     try: return b.decode()
     except: return b.decode('gbk', 'replace')
 def _run(*a, **k):
-    t = k.pop('text', 0) | k.pop('universal_newlines', 0); r = _r(*a, **k)
+    t = k.pop('text', 0) | k.pop('universal_newlines', 0)
+    enc = k.pop('encoding', None)
+    k.pop('errors', None)
+    if enc: t = 1
+    if t and isinstance(k.get('input'), str):
+        k['input'] = k['input'].encode()
+    r = _r(*a, **k)
     if t:
         if r.stdout is not None: r.stdout = _d(r.stdout)
         if r.stderr is not None: r.stderr = _d(r.stderr)

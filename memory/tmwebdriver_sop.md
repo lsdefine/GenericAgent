@@ -1,13 +1,15 @@
 # TMWebDriver SOP
 
 - 禁止import，直接用web_scan/web_execute_js工具。本文件只记录特性和坑。
-- 底层：`../TMWebDriver.py`通过Tampermonkey脚本接管用户浏览器（保留登录态/Cookie）
+- 底层：`../TMWebDriver.py`通过Chrome扩展(非Tampermonkey)接管用户浏览器（保留登录态/Cookie）
 - 非Selenium/Playwright，不需调试浏览器或新数据目录
 - 支撑 `web_scan`(只读DOM) / `web_execute_js`(执行JS) 等高层工具
+- ⚠扩展更新后，已打开的旧tab不会自动加载新版脚本→scan/execute_js无ACK→需刷新页面或切到新tab
 
-## 通用限制
-- ⚠web_execute_js中**禁止使用await**，会报SyntaxError（非async上下文）（BBS#34验证）
-  - 需要异步操作时用`.then()`链式调用或回调
+## 通用特性
+- ✅web_execute_js**完美支持顶层await**（v0.4+），可直接`await fetch()`/`await new Promise()`等
+  - ⚠使用await时需**显式`return`**才能拿到返回值（底层async包裹，不写return则返回null）
+- ✅web_scan**自动穿透同源iframe**：无需手动操作，scan直接递归输出iframe内部DOM。跨域iframe则需CDP或postMessage（见下方章节）
 
 ## 限制(isTrusted)
 - JS dispatch的事件`isTrusted=false`，敏感操作(文件上传/部分按钮)会被浏览器拦截
@@ -44,26 +46,27 @@ fetch('PDF_URL').then(r=>r.blob()).then(b=>{
 
 ## Chrome后台标签节流
 - 后台标签中`setTimeout`被Chrome intensive throttling延迟到≥1min/次
-- TM脚本中detect_newtab的轮询(`setTimeout 150ms × 10`)会超时
-- 已修复：移除TM脚本内轮询，改由Python侧`get_session_dict()`前后对比检测新标签
-- 同理：TM脚本中任何后台逻辑都应避免依赖setTimeout轮询
+- 扩展content script中detect_newtab的轮询(`setTimeout 150ms × 10`)会超时
+- 已修复：移除脚本内轮询，改由Python侧`get_session_dict()`前后对比检测新标签
+- 同理：扩展脚本中任何后台逻辑都应避免依赖setTimeout轮询
 
 ## CDP桥(tmwd_cdp_bridge扩展) ⭐首选
 扩展路径：`assets/tmwd_cdp_bridge/`(需安装，含debugger权限)
 ⚠TID密钥：首次运行自动生成到`assets/tmwd_cdp_bridge/config.js`(已gitignore)，扩展通过manifest引用
-调用：MutationObserver监听addedNodes(id=TID)，⚠每次必须remove旧→createElement新→设textContent JSON→appendChild
+调用：`web_execute_js` script直传JSON字符串（工具层自动识别对象格式，走WS→background.js cmd路由）
 ```js
-// TID从assets/tmwd_cdp_bridge/config.js读取，示例用'__ljq_ctrl'占位
-const old = document.getElementById(TID);
-if (old) old.remove();
-const el = document.createElement('div');
-el.id = TID; el.style.display = 'none';
-el.textContent = JSON.stringify({cmd:'...', ...});
-document.body.appendChild(el);  // 响应写回el.textContent
+// 直接传JSON字符串作为script参数，无需DOM操作
+web_execute_js script='{"cmd": "cookies"}'
+web_execute_js script='{"cmd": "tabs"}'
+web_execute_js script='{"cmd": "cdp", "tabId": N, "method": "...", "params": {...}}'
+web_execute_js script='{"cmd": "batch", "commands": [...]}'
+// 返回值直接是JSON结果
 ```
+⚠旧DOM方式(TID元素+MutationObserver)仍可用但已不推荐
 单命令：`{cmd:'tabs'}` | `{cmd:'cookies'}` | `{cmd:'cdp', tabId:N, method:'...', params:{...}}`
 - ⭐batch混合：`{cmd:'batch', commands:[{cmd:'cookies'},{cmd:'tabs'},{cmd:'cdp',...},...]}`
   - 返回`{ok:true, results:[...]}`，一次请求多命令，CDP懒attach复用session
+  - 子命令会自动继承外层batch的tabId（如cookies命令可正确获取当前页面URL）
   - `$N.path`引用第N个结果字段(0-indexed)，如`"nodeId":"$2.root.nodeId"`
   - ⚠batch前序命令失败时后续`$N`引用拿到undefined，整条链路**静默失败不报错**，需检查返回results数组中每项的ok状态（未验证，BBS#46）
   - 典型：文件上传三连 getDocument(**depth:1**性能优化，200ms+→个位数ms)→querySelector(input[type=file])→setFileInputFiles（未验证，BBS#38）
@@ -108,7 +111,11 @@ document.body.appendChild(el);  // 响应写回el.textContent
   var realX = x * zoom; var realY = y * zoom;
   ```
 - iframe内元素CDP点击：坐标需合成 `finalX = iframeRect.x + elRect.x`
-  - 跨域iframe拿不到contentDocument：用CDP `Target.getTargets`找iframe targetId → `Target.attachToTarget`建独立会话
+  - 跨域iframe拿不到contentDocument：
+  - ⚠`Target.getTargets`/`Target.attachToTarget`在CDP桥中返回"Not allowed"(chrome.debugger权限限制)
+  - ⭐**已验证方案**：`Page.getFrameTree`找iframe frameId → `Page.createIsolatedWorld({frameId})`获取contextId → `Runtime.evaluate({expression, contextId})`在iframe中执行JS
+  - batch链式引用：`$0.frameTree.childFrames`遍历找url匹配的frame，`$1.executionContextId`传给evaluate
+  - postMessage中继方案仅在content script已注入iframe时有效，第三方支付iframe通常无注入
 
 ## CDP文本输入（未验证，BBS#23）
 - `Input.insertText({text:'...'})` — 直接插入，快，不触发keydown/keyup
@@ -128,20 +135,21 @@ document.body.appendChild(el);  // 响应写回el.textContent
 
 ## autofill获取与登录 (需 v0.4+ 脚本支持 await)
 检测：web_scan输出input带`data-autofilled="true"`，value显示为受保护提示(非真实值，Chrome安全保护需点击释放)
-- ⭐**一键释放与登录**：利用 v0.4 脚本的顶层 `await`，在单次 `web_execute_js` 中连贯完成：
-  1. JS获取输入框坐标。
-  2. CDP发送 `Input.dispatchMouseEvent` (mousePressed) 物理点击释放autofill。
-  3. `await new Promise(r => setTimeout(r, 500))` 等待释放。
-  4. 派发 `input`/`change` 事件唤醒前端框架（解禁登录按钮）。
-  5. 触发登录点击。
+- ⚠**前置条件：必须先CDP `Page.bringToFront` 切tab到前台**，Chrome仅在前台tab释放autofill保护值，后台tab物理点击无效
+- ⭐**一键释放与登录**：利用顶层 `await`，在单次 `web_execute_js` 中连贯完成：
+  1. CDP batch发送 `Page.bringToFront` 切到前台。
+  2. JS获取输入框坐标。
+  3. CDP发送 `Input.dispatchMouseEvent` (mousePressed) 物理点击释放autofill。
+  4. `await new Promise(r => setTimeout(r, 500))` 等待释放。
+  5. 派发 `input`/`change` 事件唤醒前端框架（解禁登录按钮）。
+  6. 触发登录点击。
 - ⚠只需 `mousePressed`，无需 `mouseReleased`。点击一个字段即释放全页。
-- ⚠已淘汰旧版跨 tab 查 tabId 或 Python 轮询的繁琐流程，直接在当前页异步完成。
+- ⚠使用await时需显式`return`返回值，否则async包裹层默认返回null。
 
 ## 验证码/页面视觉截图
 - ⭐首选CDP截图：`Page.captureScreenshot`(format:'png')→返回base64，无需前台/后台tab也行，全页高清
 - 验证码canvas/img：JS `canvas.toDataURL()` 直接拿base64最干净
 - 备选：`window.open(location.href,'_blank')` 前台开新标签→win32截图→完后close
-  - GM_openInTab在web_execute_js不可用（非油猴上下文）
 
 ## 直接import(仅作调试使用)
 - `sys.path.insert(0, GenericAgent根目录)`, `from TMWebDriver import TMWebDriver`
@@ -150,7 +158,7 @@ document.body.appendChild(el);  // 响应写回el.textContent
 
 ## 跨域iframe操控(postMessage中继)
 - 跨域iframe的contentDocument不可访问，web_execute_js只在顶层执行
-- TM脚本已改造：iframe内不return，改为监听postMessage并eval执行+回传结果
+- 扩展content script已支持：iframe内不return，改为监听postMessage并eval执行+回传结果
 - 顶层发送：`iframe.contentWindow.postMessage({type:'ljq_exec', id, code}, '*')`
 - iframe回传：`{type:'ljq_result', id, result}` 通过window.addEventListener('message')接收
 - ⚠只能eval表达式，不支持return/函数体包装，构造代码时注意
@@ -159,8 +167,8 @@ document.body.appendChild(el);  // 响应写回el.textContent
 
 ## 连不上排查
 web_scan失败时按序排查：
-①TM没装？→遍历本机所有Chromium浏览器(Chrome/Edge/Brave…)用户数据目录下Extensions/，各子目录manifest.json搜"tampermonkey"
-  没找到→走web_setup_sop；找到→记住装在哪个浏览器
+①扩展没装？→检查Chrome扩展列表(chrome://extensions)是否有TMWebDriver扩展
+  没找到→走web_setup_sop；找到→确认已启用
 ②浏览器没开？→检查①对应的浏览器进程是否在跑(tasklist/ps)，没有则启动并打开正常URL（⚠about:blank等内部页不加载扩展）
 ③WS后台挂了？→socket.connect_ex(('127.0.0.1',18766))非0即dead→手动`from TMWebDriver import TMWebDriver; TMWebDriver()`起master
 

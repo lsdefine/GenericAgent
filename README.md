@@ -22,7 +22,7 @@ Every time GenericAgent solves a new task, it automatically crystallizes the exe
 - **Self-Evolving**: Automatically crystallizes each task into an skill. Capabilities grow with every use, forming your personal skill tree.
 - **Minimal Architecture**: ~3,300 lines of core code. Agent Loop is just 92 lines. No complex dependencies, zero deployment overhead.
 - **Strong Execution**: Injects into a real browser (preserving login sessions). 7 atomic tools take direct control of the system.
-- **High Compatibility**: Supports Claude / Gemini / Kimi and other major models. Cross-platform.
+- **High Compatibility**: Supports Claude / Gemini / Kimi / MiniMax and other major models. Cross-platform.
 
 
 ## 🧬 Self-Evolution Mechanism
@@ -199,7 +199,7 @@ MIT License — see [LICENSE](LICENSE)
 - **自我进化**: 每次任务自动沉淀 Skill，能力随使用持续增长，形成专属技能树
 - **极简架构**: ~3,300 行核心代码，Agent Loop 仅 92 行，无复杂依赖，部署零负担
 - **强执行力**: 注入真实浏览器（保留登录态），7 个原子工具直接接管系统
-- **高兼容性**: 支持 Claude / Gemini / Kimi 等主流模型，跨平台运行 
+- **高兼容性**: 支持 Claude / Gemini / Kimi / MiniMax 等主流模型，跨平台运行
 
 ## 🧬 自我进化机制
 

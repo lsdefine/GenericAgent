@@ -46,14 +46,15 @@ def get_pretty_json(data):
         data["script"] = data["script"].replace("; ", ";\n  ")
     return json.dumps(data, indent=2, ensure_ascii=False).replace('\\n', '\n')
 
-def agent_runner_loop(client, system_prompt, user_input, handler, tools_schema, max_turns=15, verbose=True, initial_user_content=None):
+def agent_runner_loop(client, system_prompt, user_input, handler, tools_schema, max_turns=40, verbose=True, initial_user_content=None):
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": initial_user_content if initial_user_content is not None else user_input}
     ]
-    for turn in range(max_turns):
-        yield f"**LLM Running (Turn {turn+1}) ...**\n\n"
-        if (turn+1) % 10 == 0: client.last_tools = ''  # 每10轮重置一次工具描述，避免上下文过大导致的模型性能下降
+    turn = 0; handler._done_hooks = [];  handler.max_turns = max_turns
+    while turn < handler.max_turns:
+        turn += 1; yield f"**LLM Running (Turn {turn}) ...**\n\n"
+        if turn%10 == 0: client.last_tools = ''  # 每10轮重置一次工具描述，避免上下文过大导致的模型性能下降
         response_gen = client.chat(messages=messages, tools=tools_schema)
         if verbose:
             response = yield from response_gen
@@ -66,7 +67,7 @@ def agent_runner_loop(client, system_prompt, user_input, handler, tools_schema, 
         else: tool_calls = [{'tool_name': tc.function.name, 'args': json.loads(tc.function.arguments)}
                           for tc in response.tool_calls]
        
-        next_prompt = ""
+        next_prompt = ""; should_exit = None
         for ii, tc in enumerate(tool_calls):
             tool_name, args = tc['tool_name'], tc['args']
             if tool_name == 'no_tool': pass
@@ -74,7 +75,7 @@ def agent_runner_loop(client, system_prompt, user_input, handler, tools_schema, 
                 showarg = get_pretty_json(args)
                 if not verbose and len(showarg) > 200: showarg = showarg[:200] + ' ...'
                 yield f"🛠️ **正在调用工具:** `{tool_name}`  📥**参数:**\n````text\n{showarg}\n````\n" 
-            handler.current_turn = turn + 1
+            handler.current_turn = turn
             gen = handler.dispatch(tool_name, args, response, index=ii)
             if verbose:
                 yield '`````\n'
@@ -82,14 +83,17 @@ def agent_runner_loop(client, system_prompt, user_input, handler, tools_schema, 
                 yield '`````\n'
             else: outcome = exhaust(gen)
 
-            if outcome.next_prompt is None: return {'result': 'CURRENT_TASK_DONE', 'data': outcome.data}
-            if outcome.should_exit: return {'result': 'EXITED', 'data': outcome.data}
+            if outcome.should_exit: return {'result': 'EXITED', 'data': outcome.data}    # should_exit is only used for immediate exit
+            if not outcome.next_prompt:
+                should_exit = {'result': 'CURRENT_TASK_DONE', 'data': outcome.data}; break
             if outcome.next_prompt.startswith('未知工具'): client.last_tools = ''
-
-            if outcome.data is not None: 
-                datastr = json.dumps(outcome.data, ensure_ascii=False, default=json_default) if type(outcome.data) in [dict, list] else str(outcome.data) 
+            if outcome.data is not None:
+                datastr = json.dumps(outcome.data, ensure_ascii=False, default=json_default) if type(outcome.data) in [dict, list] else str(outcome.data)
                 next_prompt += f"<tool_result>\n{datastr}\n</tool_result>\n\n"
-            next_prompt += outcome.next_prompt
-        next_prompt = handler.next_prompt_patcher(next_prompt, None, turn+1)
+            next_prompt += outcome.next_prompt;
+        if not next_prompt:
+            if len(handler._done_hooks) == 0: return should_exit
+            next_prompt += handler._done_hooks.pop(0)
+        next_prompt = handler.next_prompt_patcher(next_prompt, None, turn)
         messages = [{"role": "user", "content": next_prompt}]   # just new message, history is kept in *Session
     return {'result': 'MAX_TURNS_EXCEEDED'}

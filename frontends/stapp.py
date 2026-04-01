@@ -8,7 +8,7 @@ except: pass
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import streamlit as st
-import time, json, re, threading
+import time, json, re, threading, queue
 from agentmain import GeneraticAgent
 
 st.set_page_config(page_title="Cowork", layout="wide")
@@ -69,14 +69,18 @@ with st.sidebar: render_sidebar()
 
 def agent_backend_stream(prompt):
     display_queue = agent.put_task(prompt, source="user")
+    response = ''
     try:
         while True:
-            item = display_queue.get()
-            if 'next' in item: yield item['next'] 
-            if 'done' in item: 
+            try: item = display_queue.get(timeout=1)
+            except queue.Empty:
+                yield response   # heartbeat: let outer st.markdown() run → Streamlit checks StopException
+                continue
+            if 'next' in item:
+                response = item['next']; yield response
+            if 'done' in item:
                 yield item['done']; break
-    finally:
-        agent.abort()
+    finally: agent.abort()
 
 if "messages" not in st.session_state: st.session_state.messages = []
 for msg in st.session_state.messages:

@@ -113,66 +113,67 @@ if (text_only) {
 }
 const viewportArea = window.innerWidth * window.innerHeight; 
 
-function analyzeNode(node, pPathType='main') {  
-    // 处理非元素节点和叶节点  
-    if (node.nodeType !== 1 || !node.children.length) {  
-      node.nodeType === 1 && (node.dataset.mark = 'K:leaf');  
-      return;  
-    }  
-    const pathType = (node.dataset.mark && !node.dataset.mark.includes(':main')) ? 'second' : pPathType;  
+function analyzeNode(node, pPathType='main') {
+    // 处理非元素节点和叶节点
+    if (node.nodeType !== 1 || !node.children.length) {
+      node.nodeType === 1 && (node.dataset.mark = 'K:leaf');
+      return;
+    }
+    const pathType = (node.dataset.mark === 'K:secondary') ? 'second' : pPathType;
     const nodeInfoData = getNodeInfo(node);
     if (!nodeInfoData || !nodeInfoData.rect) return;
-    const rectn = nodeInfoData.rect; 
+    const rectn = nodeInfoData.rect;
     if (rectn.width < window.innerWidth * 0.8 && rectn.height < window.innerHeight * 0.8) return node;
     if (node.tagName === 'TABLE') return;
-    const children = Array.from(node.children);  
-    if (children.length === 1) {  
-      node.dataset.mark = 'K:container';  
-      return analyzeNode(children[0], pathType);  
-    }  
+    const children = Array.from(node.children);
+    if (children.length === 1) {
+      node.dataset.mark = 'K:container';
+      return analyzeNode(children[0], pathType);
+    }
     if (children.length > 10) return;
     
-    // 获取子元素信息并排序  
-    const childrenInfo = children.map(child => {  
-      const info = getNodeInfo(child) || { rect: {}, style: {} };  
-      return { node: child, rect: info.rect, style: info.style, 
-          area: info.area, zIndex: info.zIndex };  
-    }).sort((a, b) => b.area - a.area);  
-    
-    // 检测是划分还是覆盖  
-    const isOverlay = hasOverlap(childrenInfo);  
-    node.dataset.mark = isOverlay ? 'K:overlayParent' : 'K:partitionParent';  
-    
-    if (isOverlay) handleOverlayContainer(childrenInfo, pathType);  
-    else handlePartitionContainer(childrenInfo, pathType);  
+    // 获取子元素信息并排序
+    const childrenInfo = children.map(child => {
+      const info = getNodeInfo(child) || { rect: {}, style: {} };
+      return { node: child, rect: info.rect, style: info.style,
+          area: info.area, zIndex: info.zIndex };
+    }).sort((a, b) => b.area - a.area);
 
-    console.log(`${isOverlay ? '覆盖' : '划分'}容器:`, node, `子元素数量: ${children.length}`);  
-    console.log('子元素及标记:', children.map(child => ({   
-      element: child,   
-      mark: child.dataset.mark || '无',  
-      info: getNodeInfo ? getNodeInfo(child) : undefined  
-    })));  
-    for (const child of children)  
-      if (!child.dataset.mark || child.dataset.mark[0] !== 'R') analyzeNode(child, pathType);  
-  }  
-  
-  // 处理划分容器  
-  function handlePartitionContainer(childrenInfo, pathType) {  
+    // 检测是划分还是覆盖
+    const isOverlay = hasOverlap(childrenInfo);
+    node.dataset.mark = isOverlay ? 'K:overlayParent' : 'K:partitionParent';
+
+    if (isOverlay) handleOverlayContainer(childrenInfo, pathType);
+    else handlePartitionContainer(childrenInfo, pathType);
+
+    console.log(`${isOverlay ? '覆盖' : '划分'}容器:`, node, `子元素数量: ${children.length}`);
+    console.log('子元素及标记:', children.map(child => ({
+      element: child,
+      mark: child.dataset.mark || '无',
+      info: getNodeInfo ? getNodeInfo(child) : undefined
+    })));
+    for (const child of children)
+      if (!child.dataset.mark || child.dataset.mark[0] !== 'R') analyzeNode(child, pathType);
+  }
+
+  // 处理划分容器
+  function handlePartitionContainer(childrenInfo, pathType) {
     childrenInfo.sort((a, b) => b.area - a.area);
-    const totalArea = childrenInfo.reduce((sum, item) => sum + item.area, 0);  
+    const totalArea = childrenInfo.reduce((sum, item) => sum + item.area, 0);
     console.log(childrenInfo[0].area / totalArea);
-    const hasMainElement = childrenInfo.length >= 1 &&   
-                          (childrenInfo[0].area / totalArea > 0.5) &&   
-                          (childrenInfo.length === 1 || childrenInfo[0].area > childrenInfo[1].area * 2);  
-    if (hasMainElement) {  
+    const hasMainElement = childrenInfo.length >= 1 &&
+                          (childrenInfo[0].area / totalArea > 0.5) &&
+                          (childrenInfo.length === 1 || childrenInfo[0].area > childrenInfo[1].area * 2);
+    if (hasMainElement) {
       childrenInfo[0].node.dataset.mark = 'K:main';
-      for (let i = pathType==='main'?1:0; i < childrenInfo.length; i++) {  
-        const child = childrenInfo[i];  
+      for (let i = 1; i < childrenInfo.length; i++) {
+        const child = childrenInfo[i];
         let isSecondary = containsButton(child.node);
-        if (pathType === "main" && child.node.className.toLowerCase().includes('nav')) isSecondary = true;
-        if (pathType === "main" && child.node.className.toLowerCase().includes('breadcrumbs')) isSecondary = true;
-        if (pathType === "main" && child.node.className.toLowerCase().includes('header') && child.node.className.toLowerCase().includes('table')) isSecondary = true;
-        if (pathType === "main" && child.node.innerHTML.trim().replace(/\s+/g, '').length < 500) isSecondary = true;
+        if (child.node.className.toLowerCase().includes('nav')) isSecondary = true;
+        if (child.node.className.toLowerCase().includes('breadcrumbs')) isSecondary = true;
+        if (child.node.className.toLowerCase().includes('header') && child.node.className.toLowerCase().includes('table')) isSecondary = true;
+        if (child.node.innerHTML.trim().replace(/\s+/g, '').length < 500) isSecondary = true;
+        if (child.node.textContent.trim().length > 200) isSecondary = true;  // P3: 有实质文本内容则保留
         if (child.style.visibility === 'hidden') isSecondary = false;
         if (isSecondary) child.node.dataset.mark = 'K:secondary';  
         else child.node.dataset.mark = 'R:nonEssential';  
@@ -848,13 +849,13 @@ def execute_js_rich(script, driver, no_monitor=False):
         try: last_html = get_html(driver, cutlist=False, extra_js=temp_monitor_js, maxchars=9999999)
         except: pass
     result = None;  error_msg = None;  reloaded = False; newTabs = []
-    before_sids = set(driver.get_session_dict().keys())
+    before_sids = set(driver.get_session_dict().keys()); response = {}
     try:
         print(f"Executing: {script[:250]} ...")
         response = driver.execute_js(script)
         result = response.get('data') or response.get('result')
         if response.get('closed', 0) == 1: reloaded = True
-        time.sleep(2) 
+        time.sleep(1)
     except Exception as e:
         error = e.args[0] if e.args else str(e)
         if isinstance(error, dict): error.pop('stack', None)
@@ -866,12 +867,14 @@ def execute_js_rich(script, driver, no_monitor=False):
         "environment": {"reloaded": reloaded},
         "tab_id": driver.default_session_id
     }  
-    after = driver.get_session_dict()
-    new_sids = {k: v for k, v in after.items() if k not in before_sids}
-    if new_sids:
-        newTabs = [{'id': k, 'url': v} for k, v in new_sids.items()]
-        rr['environment']['newTabs'] = newTabs
-        rr['suggestion'] = "页面已刷新，以上新标签页在执行期间连接。"
+    if response.get('newTabs'): rr['environment']['newTabs'] = response['newTabs']
+    else:
+        after = driver.get_session_dict()
+        new_sids = {k: v for k, v in after.items() if k not in before_sids}
+        if new_sids:
+            newTabs = [{'id': k, 'url': v} for k, v in new_sids.items()]
+            rr['environment']['newTabs'] = newTabs
+            rr['suggestion'] = "页面已刷新，以上新标签页在执行期间连接。"
     if error_msg: rr['error'] = error_msg
     if no_monitor: return rr
     if not reloaded:

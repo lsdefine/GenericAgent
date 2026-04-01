@@ -80,6 +80,16 @@ claude_config = {
 }
 ```
 
+```python
+# MiniMax 使用 OpenAI 兼容格式，变量名含 'oai' 即可
+# 温度自动修正为 (0, 1]，支持 M2.7 / M2.5 全系列，204K 上下文
+oai_minimax_config = {
+    'apikey': 'eyJh...',
+    'apibase': 'https://api.minimax.io/v1',
+    'model': 'MiniMax-M2.7',
+}
+```
+
 **使用标准工具调用格式（适合较弱模型）：**
 
 ```python
@@ -105,6 +115,7 @@ native_claude_config = {
 | `native` + `oai` | OpenAI 标准工具调用 | 较弱模型推荐，工具调用更规范 |
 
 > 例：用 Claude 模型，但 API 服务提供的是 OpenAI 兼容接口 → 变量名用 `oai_xxx`。
+> 例：用 MiniMax 模型 → 变量名用 `oai_minimax_config`，MiniMax 走 OpenAI 兼容接口。
 
 **`apibase` 填写规则**（会自动拼接端点路径）：
 

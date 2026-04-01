@@ -287,8 +287,7 @@ class GenericAgentHandler(BaseHandler):
         return matches[-1].strip() if matches else None
 
     def do_code_run(self, args, response):
-        '''执行代码片段，有长度限制，不允许代码中放大量数据，如有需要应当通过文件读取进行。
-        '''
+        '''执行代码片段，有长度限制，不允许代码中放大量数据，如有需要应当通过文件读取进行。'''
         if response.tool_calls and sum(1 for tc in response.tool_calls[:args.get('_index', 0)] if tc.function.name == 'code_run') > 0:
             return StepOutcome("[BLANK]", next_prompt="no multi code_run in one round!") 
         code_type = args.get("type", "python")
@@ -300,7 +299,12 @@ class GenericAgentHandler(BaseHandler):
         raw_path = os.path.join(self.cwd, args.get("cwd", './'))
         cwd = os.path.normpath(os.path.abspath(raw_path))
         code_cwd = os.path.normpath(self.cwd)
-        result = yield from code_run(code, code_type, timeout, cwd, code_cwd=code_cwd, stop_signal=self.code_stop_signal)
+        if args.get("_inline_eval"):
+            ns = {'handler': self, 'parent': self.parent}
+            try: result = repr(eval(code, ns))
+            except SyntaxError: exec(code, ns); result = ns.get('_r', 'OK')
+            except Exception as e: result = f'Error: {e}'
+        else: result = yield from code_run(code, code_type, timeout, cwd, code_cwd=code_cwd, stop_signal=self.code_stop_signal)
         next_prompt = self._get_anchor_prompt()
         return StepOutcome(result, next_prompt=next_prompt)
     
@@ -384,7 +388,7 @@ class GenericAgentHandler(BaseHandler):
         
         blocks = extract_robust_content(response.content)
         if not blocks:
-            yield f"[Status] ❌ 失败: 未在回复中找到代码块内容\n"
+            yield f"[Status] ❌ 失败: 未在回复中找到<file_content>代码块内容\n"
             return StepOutcome({"status": "error", "msg": "No content found, if you want a blank, you should use code_run"}, next_prompt="\n")
         try:
             new_content = expand_file_refs(blocks, base_dir=self.cwd)
@@ -395,8 +399,7 @@ class GenericAgentHandler(BaseHandler):
                 with open(path, 'a' if mode == "append" else 'w', encoding="utf-8") as f: f.write(new_content)
             yield f"[Status] ✅ {mode.capitalize()} 成功 ({len(new_content)} bytes)\n"
             next_prompt = self._get_anchor_prompt()
-            return StepOutcome({"status": "success", 'writed_bytes': len(new_content)}, 
-                               next_prompt=next_prompt)
+            return StepOutcome({"status": "success", 'writed_bytes': len(new_content)}, next_prompt=next_prompt)
         except Exception as e:
             yield f"[Status] ❌ 写入异常: {str(e)}\n"
             return StepOutcome({"status": "error", "msg": str(e)}, next_prompt="\n")
@@ -438,31 +441,29 @@ class GenericAgentHandler(BaseHandler):
     def do_no_tool(self, args, response):
         '''这是一个特殊工具，由引擎自主调用，不要包含在TOOLS_SCHEMA里。
         当模型在一轮中未显式调用任何工具时，由引擎自动触发。
-        二次确认仅在回复几乎只包含<thinking>/<summary>和一段大代码块时触发。
-        '''
+        二次确认仅在回复几乎只包含<thinking>/<summary>和一段大代码块时触发。'''
         content = getattr(response, 'content', '') or ""
         if not response or not content.strip():
             yield "[Warn] LLM returned an empty response. Retrying...\n"
-            return StepOutcome({}, next_prompt="[System] Blank response, regenerate and tooluse", should_exit=False)
+            return StepOutcome({}, next_prompt="[System] Blank response, regenerate and tooluse")
         if '流异常中断，未收到完整响应 !!!]' in content:
-            return StepOutcome({}, next_prompt="[System] Incomplete response. Regenerate and tooluse.", should_exit=False)
+            return StepOutcome({}, next_prompt="[System] Incomplete response. Regenerate and tooluse.")
         if 'max_tokens !!!]' in content:
-            return StepOutcome({}, next_prompt="[System] max_tokens limit reached. Use multi small steps to do it.", should_exit=False)
+            return StepOutcome({}, next_prompt="[System] max_tokens limit reached. Use multi small steps to do it.")
         # 2. 检测“包含较大代码块但未调用工具”的情况
         # 这里通过三引号代码块 + 最少字符数的方式粗略判断“大段代码”
-        code_block_pattern = r"```[a-zA-Z0-9_]*\n[\s\S]{100,}?```"
+        code_block_pattern = r"```[a-zA-Z0-9_]*\n[\s\S]{300,}?```"
         m = re.search(code_block_pattern, content)
         if m:
             # 仅当 content 由 <thinking> / <summary> 和该代码块构成时才触发二次确认
             residual = content
-            # 去掉代码块本身
             residual = residual.replace(m.group(0), "")
             # 去掉<thinking>和<summary>块（大小写不敏感）
             residual = re.sub(r"<thinking>[\s\S]*?</thinking>", "", residual, flags=re.IGNORECASE)
             residual = re.sub(r"<summary>[\s\S]*?</summary>", "", residual, flags=re.IGNORECASE)
             # 如果去除上述结构后的非空白字符很少，说明没有额外自然语言说明
             clean_residual = re.sub(r"\s+", "", residual)
-            if len(clean_residual) <= 50:
+            if len(clean_residual) <= 20:
                 yield "[Info] Detected large code block without tool call and no extra natural language. Requesting clarification.\n"
                 next_prompt = (
                     "[System] 检测到你在上一轮回复中主要内容是较大代码块（仅配有<thinking>/<summary>），且本轮未调用任何工具。\n"
@@ -471,14 +472,13 @@ class GenericAgentHandler(BaseHandler):
                     "如果只是向用户展示或讲解代码片段，请在回复中补充自然语言说明，"
                     "并明确是否还需要额外的实际操作。"
                 )
-                return StepOutcome({}, next_prompt=next_prompt, should_exit=False)
+                return StepOutcome({}, next_prompt=next_prompt)
         # 3. 正常情况：直接将回复返回给用户并结束循环
         yield "[Info] Final response to user.\n"
-        return StepOutcome(response, next_prompt=None, should_exit=True)
+        return StepOutcome(response, next_prompt=None)
     
     def do_start_long_term_update(self, args, response):
-        '''Agent觉得当前任务完成后有重要信息需要记忆时调用此工具。
-        '''
+        '''Agent觉得当前任务完成后有重要信息需要记忆时调用此工具。'''
         prompt = '''### [总结提炼经验] 既然你觉得当前任务有重要信息需要记忆，请提取最近一次任务中【事实验证成功且长期有效】的环境事实、用户偏好、重要步骤，更新记忆。
 本工具是标记开启结算过程，若已在更新记忆过程或没有值得记忆的点，忽略本次调用。
 **提取行动验证成功的信息**：

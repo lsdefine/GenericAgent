@@ -206,12 +206,36 @@ class LauncherApp:
         if not self.selected:
             return
         lines = self.mgr.get_output(self.selected)
-        at_bottom = self.output_text.yview()[1] >= 0.99
+        new_text = ''.join(lines[-200:])
+
+        # 跳过无变化的刷新，避免不必要的闪烁和位置扰动
+        current = self.output_text.get('1.0', 'end-1c')
+        if new_text.rstrip('\n') == current.rstrip('\n'):
+            return
+
+        # 记录滚动状态
+        _top, bot = self.output_text.yview()
+        at_bottom = bot >= 0.99
+
+        # 记录「距底部的行偏移」用于非底部时精确恢复位置
+        if not at_bottom:
+            old_total = int(self.output_text.index('end-1c').split('.')[0])
+            first_vis = int(float(self.output_text.index('@0,0')))
+            offset_from_end = old_total - first_vis
+
         self.output_text.configure(state='normal')
         self.output_text.delete('1.0', 'end')
-        self.output_text.insert('end', ''.join(lines[-200:]))
+        self.output_text.insert('end', new_text)
         self.output_text.configure(state='disabled')
-        if at_bottom: self.output_text.see('end')
+
+        if at_bottom:
+            self.output_text.see('end')
+        else:
+            # 用距底部偏移恢复，不受总行数变化影响
+            new_total = int(self.output_text.index('end-1c').split('.')[0])
+            target = max(1, new_total - offset_from_end)
+            self.output_text.yview_moveto(0)  # 先归零避免残留
+            self.output_text.see(f'{target}.0')
 
     def _poll(self):
         for svc in self.services:

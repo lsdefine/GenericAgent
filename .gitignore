@@ -63,7 +63,7 @@ memory/*
 # Skill Search SOP
 !memory/skill_search/
 !memory/skill_search/**
-memory/skill_search/**/__pycache__/
+
 
 # ADB UI tool
 !memory/adb_ui.py
@@ -81,3 +81,6 @@ assets/tmwd_cdp_bridge/config.js
 reflect/*
 !reflect/autonomous.py
 !reflect/scheduler.py
+
+# Universal: never track __pycache__ anywhere
+**/__pycache__/

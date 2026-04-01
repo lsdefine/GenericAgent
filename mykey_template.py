@@ -68,6 +68,16 @@ native_oai_config = {
 # key命名含 'sider' 触发 SiderLLMSession（需安装 sider_ai_api 包）
 #sider_cookie = 'token=Bearer%20eyJhbGciOiJIUz...'
 
+# ── MiniMax (OpenAI-compatible) ─────────────────────────────────────────────────
+# MiniMax 使用 OpenAI 兼容接口，key命名含 'oai' 即可
+# 温度自动修正为 (0, 1]，支持 M2.7 / M2.5 全系列，204K 上下文
+# oai_minimax_config = {
+#     'apikey': 'eyJh...',                        # MiniMax API Key
+#     'apibase': 'https://api.minimax.io/v1',
+#     'model': 'MiniMax-M2.7',                    # MiniMax-M2.7-highspeed / MiniMax-M2.5 等
+#     'context_win': 50000,                       # M2.7 支持 204K context
+# }
+
 
 # If you need them
 # tg_bot_token = '84102K2gYZ...'

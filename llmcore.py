@@ -20,7 +20,7 @@ def compress_history_tags(messages, keep_recent=10, max_len=800):
     compress_history_tags._cd = getattr(compress_history_tags, '_cd', 0) + 1
     if compress_history_tags._cd % 5 != 0: return messages
     _before = sum(len(json.dumps(m, ensure_ascii=False)) for m in messages)
-    _pats = {tag: re.compile(rf'(<{tag}>)([\s\S]*?)(</{tag}>)') for tag in ('thinking', 'tool_use', 'tool_result')}
+    _pats = {tag: re.compile(rf'(<{tag}>)([\s\S]*?)(</{tag}>)') for tag in ('thinking', 'think', 'tool_use', 'tool_result')}
     def _trunc(text):
         for pat in _pats.values(): text = pat.sub(lambda m: m.group(1) + m.group(2)[:max_len] + '...' + m.group(3) if len(m.group(2)) > max_len else m.group(0), text)
         return text
@@ -200,10 +200,10 @@ def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
             try: evt = json.loads(data_str)
             except: continue
             ch = (evt.get("choices") or [{}])[0]
-            delta = ch.get("delta", {})
+            delta = ch.get("delta") or {}
             if delta.get("content"):
                 text = delta["content"]; content_text += text; yield text
-            for tc in delta.get("tool_calls", []):
+            for tc in (delta.get("tool_calls") or []):
                 idx = tc.get("index", 0)
                 if idx not in tc_buf: tc_buf[idx] = {"id": tc.get("id", ""), "name": "", "args": ""}
                 if tc.get("function", {}).get("name"): tc_buf[idx]["name"] = tc["function"]["name"]
@@ -225,7 +225,9 @@ def _openai_stream(api_base, api_key, messages, model, api_mode='chat_completion
                    temperature=0.5, max_tokens=None, tools=None, reasoning_effort=None,
                    max_retries=0, connect_timeout=10, read_timeout=300, proxies=None):
     """Shared OpenAI-compatible streaming request with retry. Yields text chunks, returns list[content_block]."""
-    if 'kimi' in model.lower() or 'moonshot' in model.lower(): temperature = 1.0
+    ml = model.lower()
+    if 'kimi' in ml or 'moonshot' in ml: temperature = 1.0
+    elif 'minimax' in ml: temperature = max(0.01, min(temperature, 1.0))  # MiniMax requires temp in (0, 1]
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "Accept": "text/event-stream"}
     if api_mode == "responses":
         url = auto_make_url(api_base, "responses")
@@ -328,7 +330,7 @@ class ClaudeSession:
     def __init__(self, cfg):
         self.api_key = cfg['apikey']; self.api_base = cfg['apibase'].rstrip('/')
         self.default_model = cfg.get('model', 'claude-opus')
-        self.context_win = cfg.get('context_win', 18000)
+        self.context_win = cfg.get('context_win', 20000)
         self.raw_msgs, self.lock = [], threading.Lock()
         self.system = ""
     def _trim_messages(self, raw_msgs):
@@ -345,7 +347,9 @@ class ClaudeSession:
         return result[::-1] or raw_msgs[-2:]
     def raw_ask(self, messages, model=None, temperature=0.5, max_tokens=6144):
         model = model or self.default_model
-        if 'kimi' in model.lower() or 'moonshot' in model.lower(): temperature = 1.0  # kimi/moonshot only accepts temp 1.0
+        ml = model.lower()
+        if 'kimi' in ml or 'moonshot' in ml: temperature = 1.0  # kimi/moonshot only accepts temp 1.0
+        elif 'minimax' in ml: temperature = max(0.01, min(temperature, 1.0))  # MiniMax requires temp in (0, 1]
         headers = {"x-api-key": self.api_key, "Content-Type": "application/json", "anthropic-version": "2023-06-01", "anthropic-beta": "prompt-caching-2024-07-31"}
         payload = {"model": model, "messages": messages, "temperature": temperature, "max_tokens": max_tokens, "stream": True}
         if self.system: payload["system"] = [{"type": "text", "text": self.system, "cache_control": {"type": "persistent"}}]
@@ -375,7 +379,7 @@ class LLMSession:
     def __init__(self, cfg):
         self.api_key = cfg['apikey']; self.api_base = cfg['apibase'].rstrip('/')
         self.default_model = cfg['model']
-        self.context_win = cfg.get('context_win', 18000)
+        self.context_win = cfg.get('context_win', 20000)
         self.raw_msgs, self.messages = [], []
         proxy = cfg.get('proxy')
         self.proxies = {"http": proxy, "https": proxy} if proxy else None
@@ -506,18 +510,22 @@ class NativeOAISession:
             while True: yield next(gen)
         except StopIteration as e: content_blocks = e.value or []
         if content_blocks and not (len(content_blocks) == 1 and content_blocks[0].get("text", "").startswith("Error:")):
-            self.history.append({"role": "assistant", "content": content_blocks})
+            hist_texts = [b for b in content_blocks if b.get("type") != "tool_use"]
+            hist_tools = [b for b in content_blocks if b.get("type") == "tool_use"]
+            if hist_tools: hist_texts.append({"type": "text", "text": json.dumps(hist_tools, ensure_ascii=False)})
+            self.history.append({"role": "assistant", "content": hist_texts or content_blocks})
         text_parts = [b["text"] for b in content_blocks if b.get("type") == "text"]
         content = "\n".join(text_parts).strip()
         tool_calls = [MockToolCall(b["name"], b.get("input", {}), id=b.get("id", "")) for b in content_blocks if b.get("type") == "tool_use"]
-        if len(tool_calls) == 0 and content.endswith('}]') and '[{"type":"tool_use"' in content:
-            try:
-                idx = content.index('[{"type":"tool_use"')
-                raw = json.loads(content[idx:])
-                tool_calls = [MockToolCall(b["name"], b.get("input", {}), id=b.get("id", "")) for b in raw if b.get("type") == "tool_use"]
-                content = content[:idx].strip()
-            except: pass
-        think_pattern = r"<thinking>(.*?)</thinking>"; thinking = ''
+        if len(tool_calls) == 0 and content.endswith('}]'):
+            _pat = next((p for p in ['[{"type":"tool_use"', '[{"type": "tool_use"'] if p in content), None)
+            if _pat:
+                try:
+                    idx = content.index(_pat); raw = json.loads(content[idx:])
+                    tool_calls = [MockToolCall(b["name"], b.get("input", {}), id=b.get("id", "")) for b in raw if b.get("type") == "tool_use"]
+                    content = content[:idx].strip()
+                except: pass
+        think_pattern = r"<think(?:ing)?>(.*?)</think(?:ing)?>"; thinking = ''
         think_match = re.search(think_pattern, content, re.DOTALL)
         if think_match:
             thinking = think_match.group(1).strip()
@@ -686,8 +694,7 @@ class ToolClient:
         tool_instruction = self._prepare_tool_instruction(tools)
         backend_messages = []
         merged_system = f"{system_content}\n{tool_instruction}".strip() if tool_instruction else system_content
-        if merged_system:
-            backend_messages.append({"role": "system", "content": merged_system})
+        if merged_system: backend_messages.append({"role": "system", "content": merged_system})
         for m in history_msgs:
             backend_messages.append({"role": m['role'], "content": m['content']})
             self.total_cd_tokens += self._estimate_content_len(m['content'])
@@ -733,7 +740,7 @@ class ToolClient:
 
     def _parse_mixed_response(self, text):
         remaining_text = text; thinking = ''
-        think_pattern = r"<thinking>(.*?)</thinking>"
+        think_pattern = r"<think(?:ing)?>(.*?)</think(?:ing)?>"
         think_match = re.search(think_pattern, text, re.DOTALL)
         
         if think_match:
@@ -741,7 +748,7 @@ class ToolClient:
             remaining_text = re.sub(think_pattern, "", remaining_text, flags=re.DOTALL)
         
         tool_calls = []; json_strs = []; errors = []
-        tool_pattern = r"<tool_use>((?:(?!<tool_use>).){15,}?)</tool_use>"
+        tool_pattern = r"<(?:tool_use|tool_call)>((?:(?!<(?:tool_use|tool_call)>).){15,}?)</(?:tool_use|tool_call)>"
         tool_all = re.findall(tool_pattern, remaining_text, re.DOTALL)
         
         if tool_all:
@@ -757,9 +764,9 @@ class ToolClient:
                 json_strs.append(json_str)
             remaining_text = remaining_text.replace('<tool_use>'+weaktoolstr, "")
         elif '"name":' in remaining_text and '"arguments":' in remaining_text:
-            json_match = re.search(r"(\{.*\"name\":.*?\})", remaining_text, re.DOTALL | re.MULTILINE)
+            json_match = re.search(r'\{.*"name":.*\}', remaining_text, re.DOTALL)
             if json_match:
-                json_str = json_match.group(1).strip()
+                json_str = json_match.group(0).strip()
                 json_strs.append(json_str)
                 remaining_text = remaining_text.replace(json_str, "").strip()
 
@@ -783,7 +790,9 @@ class ToolClient:
         return MockResponse(thinking, content, tool_calls, text)
 
 def _write_llm_log(label, content):
-    log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), f'temp/model_responses_{os.getpid()}.txt')
+    log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'temp/model_responses')
+    os.makedirs(log_dir, exist_ok=True)
+    log_path = os.path.join(log_dir, f'model_responses_{os.getpid()}.txt')
     ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     with open(log_path, 'a', encoding='utf-8', errors='replace') as f:
         f.write(f"=== {label} === {ts}\n{content}\n\n")
@@ -801,33 +810,49 @@ def tryparse(json_str):
 
 
 class MixinSession:
-    """Multi-session fallback with exponential backoff on Error: detection."""
+    """Multi-session fallback with spring-back to primary."""
     def __init__(self, all_sessions, cfg):
         self._retries, self._base_delay = cfg.get('max_retries', 3), cfg.get('base_delay', 1.5)
+        self._spring_sec = cfg.get('spring_back', 300)
         self._sessions = [all_sessions[i].backend for i in cfg.get('llm_nos', [])]
         assert 'Native' not in self._sessions[0].__class__.__name__
         assert len(set(type(s) for s in self._sessions)) == 1, f'MixinSession: all sessions must be same type, got {[type(s).__name__ for s in self._sessions]}'
         self._orig_raw_asks = [s.raw_ask for s in self._sessions]
         self._sessions[0].raw_ask = self._raw_ask
         self.default_model = getattr(self._sessions[0], 'default_model', None)
+        self._cur_idx, self._switched_at = 0, 0.0
     def __getattr__(self, name): return getattr(self._sessions[0], name)
     @property
     def primary(self): return self._sessions[0]
+    def _pick(self):
+        if self._cur_idx and time.time() - self._switched_at > self._spring_sec: self._cur_idx = 0
+        return self._cur_idx
     def _raw_ask(self, *args, **kwargs):
+        base, n = self._pick(), len(self._sessions)
+        test_error = lambda x: isinstance(x, str) and (x.startswith('Error:') or x.startswith('[Error:'))
         for attempt in range(self._retries + 1):
-            gen = self._orig_raw_asks[attempt % len(self._sessions)](*args, **kwargs)
+            idx = (base + attempt) % n
+            gen = self._orig_raw_asks[idx](*args, **kwargs)
             last_chunk, return_val, yielded = None, [], False
             try:
                 while True:
                     chunk = next(gen); last_chunk = chunk
-                    if not yielded and isinstance(chunk, str) and chunk.startswith('Error:'): continue
+                    if not yielded and test_error(chunk): continue
                     yield chunk; yielded = True
             except StopIteration as e: return_val = e.value or []
-            if isinstance(last_chunk, str) and last_chunk.startswith('Error:') and attempt < self._retries:
-                delay = min(30, self._base_delay * (2 ** attempt))
-                print(f'[MixinSession] {last_chunk[:80]}, retry {attempt+1}/{self._retries} in {delay:.1f}s')
-                time.sleep(delay); continue
-            return return_val
+            is_err = test_error(last_chunk)
+            if not is_err:
+                if attempt > 0: self._cur_idx = idx; self._switched_at = time.time()
+                return return_val
+            if attempt >= self._retries:
+                yield last_chunk; return return_val
+            nxt = (base + attempt + 1) % n
+            if nxt == base:  # full round failed, delay before next
+                rnd = (attempt + 1) // n
+                delay = min(30, self._base_delay * (2 ** rnd))
+                print(f'[MixinSession] {last_chunk[:80]}, round {rnd} exhausted, retry in {delay:.1f}s')
+                time.sleep(delay)
+            else: print(f'[MixinSession] {last_chunk[:80]}, retry {attempt+1}/{self._retries} (s{idx}→s{nxt})')
 
 class NativeToolClient:
     THINKING_PROMPT = """
@@ -869,10 +894,10 @@ class NativeToolClient:
         if resp:
             _write_llm_log('Response', resp.raw)
             text = resp.content
-            think_match = re.search(r'<thinking>(.*?)</thinking>', text, re.DOTALL)
+            think_match = re.search(r'<think(?:ing)?>(.*?)</think(?:ing)?>', text, re.DOTALL)
             if think_match:
                 resp.thinking = think_match.group(1).strip()
-                text = re.sub(r'<thinking>.*?</thinking>', '', text, flags=re.DOTALL)
+                text = re.sub(r'<think(?:ing)?>.*?</think(?:ing)?>', '', text, flags=re.DOTALL)
             resp.content = text.strip()
         if resp and hasattr(resp, 'tool_calls') and resp.tool_calls and isinstance(self.backend, NativeClaudeSession):
             self._pending_tool_ids = [tc.id for tc in resp.tool_calls]

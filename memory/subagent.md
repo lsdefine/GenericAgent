@@ -2,31 +2,18 @@
 
 ## Task Mode 文件IO协议
 
-- 目录：`temp/{task_name}/`（相对代码根GenericAgent/），主agent cwd在temp/时即 `./{task_name}/`
-- 启动：`python agentmain.py --task {task_name} [--llm_no N]`（cwd=代码根），其中agentmain.py位于代码根目录
-- 流程：写 input.txt → 启动 → 轮询 output.txt → 读回复 → 写 reply.txt 继续 → 不写则5min自动退出
-- input.txt原则：写目标+约束，可指定SOP名。禁写具体实现步骤——除非主agent已读过该SOP确认正确。凭印象猜的步骤会误导subagent
-- **input.txt长度红线**：input.txt必须精简。只写目标+约束+关键参数。大量数据给路径让subagent自己读，禁止入input.txt
-- output.txt：首轮对话的流式输出（持续append），用mtime/size判断更新
-- output1.txt, output2.txt...：reply后各轮的流式输出（递增编号），同样持续append
-
-## 后台调用要点
+- 目录：`temp/{task_name}/`（相对代码根），主agent cwd在temp/时即 `./{task_name}/`
+- 启动：`python agentmain.py --task {name} [--input "内容"] [--bg] [--llm_no N]`（cwd=代码根）
+  - `--input`：自动建目录+清旧output+写input.txt
+  - `--bg`：自举后台（Popen自身去掉--bg → print PID → exit）
+- 流程：启动 → 轮询 output.txt（`[ROUND END]`=该轮完成）→ 写 reply.txt 继续 → 不写则5min退出
+- output1/2/3.txt：reply后各轮输出（递增编号），同样append+`[ROUND END]`
+- input.txt：目标+约束，可指定SOP名。禁写具体步骤（除非已读SOP确认）。大量数据给路径禁塞入
+- --bg启动瞬间返回，可同一code_run内sleep后poll；非--bg方式禁止合并启动+轮询
 
 ```python
-task_dir = os.path.join(agent_root, 'temp', task_name)
-creation_flags = 0x08000000 if platform.system() == 'Windows' else 0
-proc = subprocess.Popen(
-    [sys.executable, 'agentmain.py', '--task', task_name],
-    cwd=agent_root, creationflags=creation_flags,
-    stdout=open(os.path.join(task_dir, 'stdout.log'), 'w', encoding='utf-8'),
-    stderr=open(os.path.join(task_dir, 'stderr.log'), 'w', encoding='utf-8'))
+pid = os.popen(f'python {agent_root}/agentmain.py --task {name} --input "{prompt}" --bg').read().strip()
 ```
-
-- 必须 Popen，禁止 subprocess.run（会阻塞）
-- stdout.log/stderr.log 用于调试subagent卡死、LLM调用失败等问题
-- 文件统一 UTF-8，subagent 无 reply 5min 自动退出无需清理
-- **禁止合并启动+轮询到同一个code_run**——会阻塞自己。启动Popen立即返回，下一轮再poll output.txt。这是并行的前提
-- 新建/复用任务目录时，先删除旧 output*.txt（否则会读到上次结果误判完成）
 
 ## 场景1：测试模式 - 行为验证
 **用途**：观察agent真实行为，修正RULES/L2/L3/SOP

@@ -10,9 +10,11 @@ from agent_loop import agent_runner_loop
 from ga import GenericAgentHandler, smart_format, get_global_memory, format_error
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
-with open(os.path.join(script_dir, 'assets/tools_schema.json'), 'r', encoding='utf-8') as f:
-    TS = f.read()
+def load_tool_schema(suffix=''):
+    global TOOLS_SCHEMA
+    TS = open(os.path.join(script_dir, f'assets/tools_schema{suffix}.json'), 'r', encoding='utf-8').read()
     TOOLS_SCHEMA = json.loads(TS if os.name == 'nt' else TS.replace('powershell', 'bash'))
+load_tool_schema()
 
 mem_dir = os.path.join(script_dir, 'memory')
 if not os.path.exists(mem_dir): os.makedirs(mem_dir)
@@ -69,6 +71,9 @@ class GeneraticAgent:
         self.llm_no = ((self.llm_no + 1) if n < 0 else n) % len(self.llmclients)
         self.llmclient = self.llmclients[self.llm_no]
         self.llmclient.last_tools = ''
+        name = self.get_llm_name()
+        if 'glm' in name or 'minimax' in name or 'kimi' in name: load_tool_schema('_cn')
+        else: load_tool_schema()
     def list_llms(self): return [(i, f"{type(b.backend).__name__}/{b.backend.default_model}", i == self.llm_no) for i, b in enumerate(self.llmclients)]
     def get_llm_name(self):
         b = self.llmclient
@@ -95,7 +100,7 @@ class GeneraticAgent:
             
             sys_prompt = get_system_prompt()
             script_dir = os.path.dirname(os.path.abspath(__file__))
-            handler = GenericAgentHandler(None, self.history, os.path.join(script_dir, 'temp'))
+            handler = GenericAgentHandler(self, self.history, os.path.join(script_dir, 'temp'))
             if self.handler and 'key_info' in self.handler.working: 
                 ki = re.sub(r'\n\[SYSTEM\] 此为.*?工作记忆[。\n]*', '', self.handler.working['key_info'])  # 去旧
                 handler.working['key_info'] = ki
@@ -110,6 +115,7 @@ class GeneraticAgent:
                 initial_user_content = build_multimodal_content(user_input, images)
             elif images:
                 print(f"[INFO] backend {type(self.llmclient.backend).__name__} does not support direct multimodal input, fallback to text attachment hints.")
+            # although new handler, the **full** history is in llmclient, so it is full history!
             gen = agent_runner_loop(self.llmclient, sys_prompt, user_input, 
                                 handler, TOOLS_SCHEMA, max_turns=40, verbose=self.verbose,
                                 initial_user_content=initial_user_content)
@@ -130,6 +136,9 @@ class GeneraticAgent:
                 print(f"Backend Error: {format_error(e)}")
                 display_queue.put({'done': full_resp + f'\n```\n{format_error(e)}\n```', 'source': source})
             finally:
+                if self.stop_sig:
+                    print('User aborted the task.')
+                    #with self.task_queue.mutex: self.task_queue.queue.clear()
                 self.is_running = self.stop_sig = False
                 self.task_queue.task_done()
                 if self.handler is not None: self.handler.code_stop_signal.append(1)
@@ -142,8 +151,20 @@ if __name__ == '__main__':
     parser.add_argument('--scheduled', action='store_true', help='计划任务轮询模式')
     parser.add_argument('--task', metavar='IODIR', help='一次性任务模式(文件IO)')
     parser.add_argument('--reflect', metavar='SCRIPT', help='反射模式：加载监控脚本，check()触发时发任务')
+    parser.add_argument('--input', help='任务内容')
     parser.add_argument('--llm_no', type=int, default=0, help='LLM编号')
+    parser.add_argument('--bg', action='store_true', help='后台自举: spawn自身去掉--bg, print PID, exit')
     args = parser.parse_args()
+
+    if args.bg:
+        import subprocess, platform
+        cmd = [sys.executable, os.path.abspath(__file__)] + [a for a in sys.argv[1:] if a != '--bg']
+        d = os.path.join(script_dir, f'temp/{args.task}'); os.makedirs(d, exist_ok=True)
+        p = subprocess.Popen(cmd, cwd=script_dir,
+            creationflags=0x08000000 if platform.system() == 'Windows' else 0,
+            stdout=open(os.path.join(d, 'stdout.log'), 'w', encoding='utf-8'),
+            stderr=open(os.path.join(d, 'stderr.log'), 'w', encoding='utf-8'))
+        print(p.pid); sys.exit(0)
 
     agent = GeneraticAgent()
     agent.next_llm(args.llm_no)
@@ -151,8 +172,13 @@ if __name__ == '__main__':
     threading.Thread(target=agent.run, daemon=True).start()
 
     if args.task:
-        d = os.path.join(script_dir, f'temp/{args.task}'); rp = os.path.join(d, 'reply.txt'); nround = ''
-        with open(os.path.join(d, 'input.txt'), encoding='utf-8') as f: raw = f.read()
+        d = os.path.join(script_dir, f'temp/{args.task}'); nround = ''
+        rp = os.path.join(d, 'reply.txt'); infile = os.path.join(d, 'input.txt')
+        if args.input:
+            os.makedirs(d, exist_ok=True)
+            import glob; [os.remove(f) for f in glob.glob(os.path.join(d, 'output*.txt'))]
+            with open(infile, 'w', encoding='utf-8') as f: f.write(args.input)
+        with open(infile, encoding='utf-8') as f: raw = f.read()
         while True:
             dq = agent.put_task(raw, source='task')
             while 'done' not in (item := dq.get(timeout=120)): 

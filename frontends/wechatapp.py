@@ -194,7 +194,13 @@ _TAG_PATS = [r'<' + t + r'>.*?</' + t + r'>' for t in ('thinking', 'summary', 't
 _TAG_PATS.append(r'<file_content>.*?</file_content>')
 
 def _strip_md(t):
-    t = re.sub(r'(`{3,})[\s\S]*?\1', lambda m: m.group().strip('`').split('\n',1)[-1] if '\n' in m.group() else m.group().strip('`'), t)
+    def _trunc_code(m):
+        body = m.group().strip('`')
+        if '\n' not in body: return body
+        lines = body.split('\n', 1)[-1].split('\n')  # drop language line
+        if len(lines) > 10: return '\n'.join(lines[:10]) + '\n...'
+        return '\n'.join(lines)
+    t = re.sub(r'(`{3,})[\s\S]*?\1', _trunc_code, t)
     t = re.sub(r'`([^`]+)`', r'\1', t)
     t = re.sub(r'!\[.*?\]\(.*?\)', '', t)
     t = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', t)
@@ -266,7 +272,12 @@ def on_message(bot, msg):
         files = re.findall(r'\[FILE:([^\]]+)\]', result)
         files = [f for f in files if (f if os.path.isabs(f) else os.path.join(_TEMP_DIR, f)) not in media_paths]
         show = _clean(result)
-        for chunk in _split(show):
+        chunks = _split(show)
+        _MAX_MSGS = 6
+        if len(chunks) > _MAX_MSGS:
+            keep = chunks[:3] + [f'...（省略{len(chunks) - 5}条）...'] + chunks[-2:]
+            chunks = keep
+        for chunk in chunks:
             try: bot.send_text(uid, chunk, context_token=ctx)
             except Exception as e: print(f'[WX] send err: {e}', file=sys.__stdout__)
             time.sleep(0.3)

@@ -1,5 +1,7 @@
 # Web 工具链初始化执行 SOP
 
+⚠ **当前只需安装 `assets/tmwd_cdp_bridge` Chrome 扩展即可，Tampermonkey 方案将在未来移除。**
+
 若 web_scan 和 web_execute_js 已测试可用，无需执行此 SOP。
 仅供初始安装时，code_run 可用但 web 工具尚未配置的场景。
 
@@ -49,6 +51,11 @@ browser = "chrome" if shutil.which("chrome") else "msedge"  # Edge内置必存�
      # 然后用 ljqCtrl 或 SendKeys 发送 Ctrl+L, Ctrl+V, Enter
      ```
 3. 提示用户在详情页中开启「允许运行用户脚本」开关。
+
+## 阶段 1.6：配置 Tampermonkey CSP 设置
+**目的**：移除网站 CSP 头，使 web_execute_js 能在所有页面正常注入执行。
+**路径**：TM 管理面板 → 设置 → 配置模式选「高级」→ 修改内容安全策略（CSP）头信息 → 选「全部移除」→ **点保存按钮**
+- ⚠️ 高级设置不会自动保存，必须手动点页面底部的「保存」按钮，否则配置不生效
 
 ## 阶段二：安装 ljq_web_driver.user.js
 **脚本路径**: `../assets/ljq_web_driver.user.js`

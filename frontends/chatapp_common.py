@@ -3,6 +3,15 @@ import asyncio, glob, os, queue as Q, re, socket, sys, time
 HELP_TEXT = "📖 命令列表:\n/help - 显示帮助\n/status - 查看状态\n/stop - 停止当前任务\n/new - 清空当前上下文\n/restore - 恢复上次对话历史\n/llm [n] - 查看或切换模型"
 FILE_HINT = "If you need to show files to user, use [FILE:filepath] in your response."
 TAG_PATS = [r"<" + t + r">.*?</" + t + r">" for t in ("thinking", "summary", "tool_use", "file_content")]
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+RESTORE_GLOBS = (
+    os.path.join(PROJECT_ROOT, "temp", "model_responses", "model_responses_*.txt"),
+    os.path.join(PROJECT_ROOT, "temp", "model_responses_*.txt"),
+)
+RESTORE_BLOCK_RE = re.compile(
+    r"^=== (Prompt|USER|Response) ===.*?\n(.*?)(?=^=== (?:Prompt|USER|Response) ===|\Z)",
+    re.DOTALL | re.MULTILINE,
+)
 
 
 def clean_reply(text):
@@ -30,20 +39,37 @@ def split_text(text, limit):
     return parts + ([text] if text else []) or ["..."]
 
 
+def _restore_log_files():
+    files = []
+    for pattern in RESTORE_GLOBS:
+        files.extend(glob.glob(pattern))
+    return sorted(set(files))
+
+
+def _parse_restore_pairs(content):
+    restored, pending_user = [], None
+    for role, body in RESTORE_BLOCK_RE.findall(content or ""):
+        body = (body or "").strip()
+        if not body:
+            continue
+        if role in ("Prompt", "USER"):
+            pending_user = body
+            continue
+        if pending_user is None:
+            continue
+        restored.extend([f"[USER]: {pending_user}", f"[Agent] {body[:500]}"])
+        pending_user = None
+    return restored
+
+
 def format_restore():
-    files = glob.glob("./temp/model_responses_*.txt")
+    files = _restore_log_files()
     if not files:
         return None, "❌ 没有找到历史记录"
     latest = max(files, key=os.path.getmtime)
     with open(latest, "r", encoding="utf-8") as f:
         content = f.read()
-    users = re.findall(r"=== USER ===\n(.+?)(?==== |$)", content, re.DOTALL)
-    resps = re.findall(r"=== Response ===.*?\n(.+?)(?==== Prompt|$)", content, re.DOTALL)
-    restored = []
-    for u, r in zip(users, resps):
-        u, r = u.strip(), r.strip()[:500]
-        if u and r:
-            restored.extend([f"[USER]: {u}", f"[Agent] {r}"])
+    restored = _parse_restore_pairs(content)
     if not restored:
         return None, "❌ 历史记录里没有可恢复内容"
     return (restored, os.path.basename(latest), len(restored) // 2), None

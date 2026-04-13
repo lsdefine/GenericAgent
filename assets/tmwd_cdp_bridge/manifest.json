@@ -10,13 +10,21 @@
     "debugger",
     "scripting",
     "alarms",
-    "declarativeNetRequest"
+    "declarativeNetRequest",
+    "management"
   ],
   "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "background.js"
   },
   "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["disable_dialogs.js"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "world": "MAIN"
+    },
     {
       "matches": ["<all_urls>"],
       "js": ["config.js", "content.js"],

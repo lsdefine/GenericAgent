@@ -32,6 +32,27 @@ async function handleExtMessage(msg, sender) {
       }
     } catch (e) { return { ok: false, error: e.message }; }
   }
+  if (msg.cmd === 'management') {
+    try {
+      if (msg.method === 'list') {
+        const all = await chrome.management.getAll();
+        return { ok: true, data: all.map(e => ({ id: e.id, name: e.name, enabled: e.enabled, type: e.type, version: e.version })) };
+      }
+      if (msg.method === 'reload') {
+        chrome.alarms.create('tmwd-self-reload', { when: Date.now() + 200 });
+        return { ok: true };
+      }
+      if (msg.method === 'disable') {
+        await chrome.management.setEnabled(msg.extId, false);
+        return { ok: true };
+      }
+      if (msg.method === 'enable') {
+        await chrome.management.setEnabled(msg.extId, true);
+        return { ok: true };
+      }
+      return { ok: false, error: 'Unknown method: ' + msg.method };
+    } catch (e) { return { ok: false, error: e.message }; }
+  }
   return { ok: false, error: 'Unknown cmd: ' + msg.cmd };
 }
 
@@ -114,6 +135,7 @@ function buildExecScript(code, errorHandler) {
   return `(async () => {
     function smartProcessResult(result) {
       if (result === null || result === undefined || typeof result !== 'object') return result;
+      try { if (result.window === result && result.document) return '[Window: ' + (result.location?.href || 'about:blank') + ']'; } catch(_){}
       if (typeof jQuery !== 'undefined' && result instanceof jQuery) {
         const elements = []; for (let i = 0; i < result.length; i++) { if (result[i] && result[i].nodeType === 1) elements.push(result[i].outerHTML); } return elements;
       }
@@ -128,7 +150,7 @@ function buildExecScript(code, errorHandler) {
           for (let i = 0; i < length; i++) { const elem = result[i]; if (elem && elem.nodeType === 1) elements.push(elem.outerHTML); } return elements;
         }
       }
-      try { return JSON.parse(JSON.stringify(result, function(key, value) { if (typeof value === 'object' && value !== null) { if (value.nodeType === 1) return value.outerHTML; if (value === window || value === document) return '[Object]'; } return value; })); } catch (e) { return '[无法序列化: ' + e.message + ']'; }
+      try { return JSON.parse(JSON.stringify(result, function(key, value) { if (typeof value === 'object' && value !== null) { if (value.nodeType === 1) return value.outerHTML; if (value === window || value === document) return '[Object]'; try { if (value.window === value && value.document) return '[Window]'; } catch(_){} } return value; })); } catch (e) { return '[无法序列化: ' + e.message + ']'; }
     }
     try {
       const jsCode = ${JSON.stringify(code)}.trim();
@@ -136,11 +158,12 @@ function buildExecScript(code, errorHandler) {
       const lastLine = lines.length > 0 ? lines[lines.length - 1].trim() : '';
       const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
       let r;
+      function _air(c) { const ls = c.split(/\\r?\\n/); let i = ls.length - 1; while (i >= 0 && !ls[i].trim()) i--; if (i < 0) return c; const t = ls[i].trim(); if (/^(return |return;|return$|let |const |var |if |if\\(|for |for\\(|while |while\\(|switch|try |throw |class |function |async |import |export |\\/\\/|})/.test(t)) return c; ls[i] = ls[i].match(/^(\\s*)/)[1] + 'return ' + t; return ls.join('\\n'); }
       if (lastLine.startsWith('return')) {
         r = await (new AsyncFunction(jsCode))();
       } else {
         try { r = eval(jsCode); if (r instanceof Promise) r = await r; } catch (e) {
-          if (e instanceof SyntaxError && (/return/i.test(e.message) || /await/i.test(e.message))) { r = await (new AsyncFunction(jsCode))(); } else throw e;
+          if (e instanceof SyntaxError && (/return/i.test(e.message) || /await/i.test(e.message))) { r = await (new AsyncFunction(_air(jsCode)))(); } else throw e;
         }
       }
       return { ok: true, data: smartProcessResult(r) };
@@ -190,6 +213,10 @@ async function isServerAlive() {
 }
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name === 'tmwd-self-reload') {
+    chrome.runtime.reload();
+    return;
+  }
   if (alarm.name === 'tmwd-ws-keepalive') {
     // Keepalive: ping to keep SW alive + detect dead connections
     if (ws && ws.readyState === WebSocket.OPEN) {
@@ -220,8 +247,11 @@ async function handleWsExec(data) {
     ws.send(JSON.stringify({ type: 'error', id: data.id, error: 'No tabId provided' }));
     return;
   }
+  // Use onCreated listener to reliably capture new tabs (avoids race condition with query-diff)
+  const newTabIds = new Set();
+  const onCreated = (tab) => { newTabIds.add(tab.id); };
+  chrome.tabs.onCreated.addListener(onCreated);
   try {
-    const tabsBefore = new Set((await chrome.tabs.query({})).map(t => t.id));
     let res;
     try {
       const result = await chrome.scripting.executeScript({
@@ -260,7 +290,14 @@ async function handleWsExec(data) {
         res = { ok: false, error: { name: 'Error', message: 'CDP fallback failed: ' + cdpErr.message, stack: '' } };
       }
     }
-    const newTabs = (await chrome.tabs.query({})).filter(t => !tabsBefore.has(t.id)).map(t => ({id: t.id, url: t.url, title: t.title}));
+    // Grace period for async tab creation (e.g. link click with target=_blank)
+    if (newTabIds.size === 0) await new Promise(r => setTimeout(r, 200));
+    chrome.tabs.onCreated.removeListener(onCreated);
+    // Get full info for captured new tabs
+    const newTabs = [];
+    for (const id of newTabIds) {
+      try { const t = await chrome.tabs.get(id); newTabs.push({id: t.id, url: t.url, title: t.title}); } catch (_) {}
+    }
     if (res?.ok) {
       ws.send(JSON.stringify({ type: 'result', id: data.id, result: res.data, newTabs }));
     } else {
@@ -269,6 +306,8 @@ async function handleWsExec(data) {
     }
   } catch (e) {
     ws.send(JSON.stringify({ type: 'error', id: data.id, error: { name: e.name || 'Error', message: e.message || String(e), stack: e.stack || '' } }));
+  } finally {
+    chrome.tabs.onCreated.removeListener(onCreated);
   }
 }
 
@@ -341,7 +380,7 @@ chrome.runtime.onInstalled.addListener(() => connectWS());
 // Sync tab list on changes
 async function sendTabsUpdate() {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  const tabs = (await chrome.tabs.query({})).filter(t => isScriptable(t.url));
+  const tabs = (await chrome.tabs.query({})).filter(t => isScriptable(t.url) && !/streamlit/i.test(t.title));
   ws.send(JSON.stringify({
     type: 'tabs_update',
     tabs: tabs.map(t => ({ id: t.id, url: t.url, title: t.title }))

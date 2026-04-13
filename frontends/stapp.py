@@ -27,6 +27,7 @@ agent = init()
 
 st.title("🖥️ Cowork")
 
+
 if 'autonomous_enabled' not in st.session_state: st.session_state.autonomous_enabled = False
 
 @st.fragment
@@ -66,6 +67,38 @@ def render_sidebar():
         st.caption("🔴 自主行动已停止")
 with st.sidebar: render_sidebar()
 
+def fold_turns(text):
+    """Return list of segments: [{'type':'text','content':...}, {'type':'fold','title':...,'content':...}]"""
+    parts = re.split(r'(\**LLM Running \(Turn \d+\) \.\.\.\*\**)', text)
+    if len(parts) < 4: return [{'type': 'text', 'content': text}]
+    segments = []
+    if parts[0].strip(): segments.append({'type': 'text', 'content': parts[0]})
+    turns = []
+    for i in range(1, len(parts), 2):
+        marker = parts[i]
+        content = parts[i+1] if i+1 < len(parts) else ''
+        turns.append((marker, content))
+    for idx, (marker, content) in enumerate(turns):
+        if idx < len(turns) - 1:
+            _c = re.sub(r'```.*?```|<thinking>.*?</thinking>', '', content, flags=re.DOTALL)
+            matches = re.findall(r'<summary>\s*((?:(?!<summary>).)*?)\s*</summary>', _c, re.DOTALL)
+            if matches:
+                title = matches[0].strip()
+                title = title.split('\n')[0]
+                if len(title) > 50: title = title[:50] + '...'
+            else: title = marker.strip('*')
+            segments.append({'type': 'fold', 'title': title, 'content': content})
+        else: segments.append({'type': 'text', 'content': marker + content})
+    return segments
+def render_segments(segments, suffix=''):
+    # 整块重画：调用方用 slot.container() 包裹，保证 DOM 路径稳定、跨 rerun 对齐（消除"灰色重影"）。
+    # heartbeat 空转时 segments 不变 → Streamlit 后端 diff 无变化 → 前端零闪烁；
+    # 但 container/markdown 本身是 API 调用，StopException 仍会被抛出（abort 照常起作用）。
+    for seg in segments:
+        if seg['type'] == 'fold':
+            with st.expander(seg['title'], expanded=False): st.markdown(seg['content'])
+        else:
+            st.markdown(seg['content'] + suffix)
 
 def agent_backend_stream(prompt):
     display_queue = agent.put_task(prompt, source="user")
@@ -84,26 +117,50 @@ def agent_backend_stream(prompt):
 
 if "messages" not in st.session_state: st.session_state.messages = []
 for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]): st.markdown(msg["content"], unsafe_allow_html=True)
+    with st.chat_message(msg["role"]):
+        # 用 slot=st.empty() + with slot.container(): ... 的外壳，DOM 路径和流式渲染完全一致，跨 rerun 对齐
+        slot = st.empty()
+        with slot.container():
+            if msg["role"] == "assistant": render_segments(fold_turns(msg["content"]))
+            else: st.markdown(msg["content"])
 
+# Scroll-height ghost fix: during streaming, expander open/close mid-animation can leave
+# phantom height → scrollbar long but can't scroll to bottom. Periodically detect & reflow.
+import streamlit.components.v1 as components
+_js_scroll_fix = ("!function(){var p=window.parent;if(p.__sfx)return;p.__sfx=1;"
+    "var d=p.document;setInterval(function(){"
+    "var m=d.querySelector('section.main');if(!m)return;"
+    "var b=m.querySelector('.block-container');if(!b)return;"
+    "if(m.scrollHeight>b.scrollHeight+150){"
+    "m.style.overflow='hidden';void m.offsetHeight;m.style.overflow=''}"
+    "},3000)}()")
 # IME composition fix (macOS only) - prevents Enter from submitting during CJK input
-if os.name != 'nt':
-    import streamlit.components.v1 as components
-    components.html('<script>!function(){if(window.parent.__imeFix)return;window.parent.__imeFix=1;var d=window.parent.document,c=0;d.addEventListener("compositionstart",()=>c=1,!0);d.addEventListener("compositionend",()=>c=0,!0);function f(){d.querySelectorAll("textarea[data-testid=stChatInputTextArea]").forEach(t=>{t.__imeFix||(t.__imeFix=1,t.addEventListener("keydown",e=>{e.key==="Enter"&&!e.shiftKey&&(e.isComposing||c||e.keyCode===229)&&(e.stopImmediatePropagation(),e.preventDefault())},!0))})}f();new MutationObserver(f).observe(d.body,{childList:1,subtree:1})}()</script>', height=0)
+_js_ime_fix = ("" if os.name == 'nt' else
+    "!function(){if(window.parent.__imeFix)return;window.parent.__imeFix=1;"
+    "var d=window.parent.document,c=0;"
+    "d.addEventListener('compositionstart',()=>c=1,!0);"
+    "d.addEventListener('compositionend',()=>c=0,!0);"
+    "function f(){d.querySelectorAll('textarea[data-testid=stChatInputTextArea]')"
+    ".forEach(t=>{t.__imeFix||(t.__imeFix=1,t.addEventListener('keydown',e=>{"
+    "e.key==='Enter'&&!e.shiftKey&&(e.isComposing||c||e.keyCode===229)&&"
+    "(e.stopImmediatePropagation(),e.preventDefault())},!0))})}"
+    "f();new MutationObserver(f).observe(d.body,{childList:1,subtree:1})}()")
+components.html(f'<script>{_js_scroll_fix};{_js_ime_fix}</script>', height=0)
 
 if prompt := st.chat_input("请输入指令"):
     st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"): st.markdown(prompt, unsafe_allow_html=False)  # 小心 XSS
+    with st.chat_message("user"): st.markdown(prompt)
 
     with st.chat_message("assistant"):
-        message_placeholder = st.empty()
-        response = ''
+        slot = st.empty(); response = ''
+        CURSOR = ' ▌'
         for response in agent_backend_stream(prompt):
-            message_placeholder.markdown(response + "▌", unsafe_allow_html=False)
-        message_placeholder.markdown(response, unsafe_allow_html=False)
+            # 每轮整块重画（含 heartbeat 空转）：segments 不变时 Streamlit diff 零变更 → 不闪烁；
+            # 而 slot.container() 调用本身保证 Streamlit 能抛 StopException（abort 生效）
+            with slot.container(): render_segments(fold_turns(response), suffix=CURSOR)
+        with slot.container(): render_segments(fold_turns(response))  # 收尾去光标
     st.session_state.messages.append({"role": "assistant", "content": response})
     st.session_state.last_reply_time = int(time.time())
 
 if st.session_state.autonomous_enabled:
     st.markdown(f"""<div id="last-reply-time" style="display:none">{st.session_state.get('last_reply_time', int(time.time()))}</div>""", unsafe_allow_html=True)
-

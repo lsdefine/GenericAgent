@@ -1,4 +1,4 @@
-import os, json, re, time, requests, sys, threading, urllib3, base64, mimetypes
+import os, json, re, time, requests, sys, threading, urllib3, base64, mimetypes, uuid
 from datetime import datetime
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -10,37 +10,85 @@ def _load_mykeys():
     if not os.path.exists(p): raise Exception('[ERROR] mykey.py or mykey.json not found, please create one from mykey_template.')
     with open(p, encoding='utf-8') as f: return json.load(f)
 
-mykeys = _load_mykeys()
-proxy = mykeys.get("proxy", 'http://127.0.0.1:2082')
-proxies = {"http": proxy, "https": proxy} if proxy else None
+def __getattr__(name):
+    if name in ('mykeys', 'proxies'):
+        mk = _load_mykeys()
+        proxy = mk.get("proxy", 'http://127.0.0.1:2082')
+        px = {"http": proxy, "https": proxy} if proxy else None
+        globals().update(mykeys=mk, proxies=px)
+        return globals()[name]
+    raise AttributeError(f"module 'llmcore' has no attribute {name}")
 
-def compress_history_tags(messages, keep_recent=10, max_len=800):
-    """Compress <thinking>/<tool_use>/<tool_result> tags in older messages to save tokens.
-    Supports both prompt-style (ClaudeSession/LLMSession) and content-style (NativeClaudeSession) messages."""
+def compress_history_tags(messages, keep_recent=10, max_len=800, force=False):
+    """Compress <thinking>/<tool_use>/<tool_result> tags in older messages to save tokens."""
     compress_history_tags._cd = getattr(compress_history_tags, '_cd', 0) + 1
+    if force: compress_history_tags._cd = 0
     if compress_history_tags._cd % 5 != 0: return messages
     _before = sum(len(json.dumps(m, ensure_ascii=False)) for m in messages)
     _pats = {tag: re.compile(rf'(<{tag}>)([\s\S]*?)(</{tag}>)') for tag in ('thinking', 'think', 'tool_use', 'tool_result')}
+    _hist_pat = re.compile(r'<(history|key_info)>[\s\S]*?</\1>')
+    def _trunc_str(s): return s[:max_len//2] + '\n...[Truncated]...\n' + s[-max_len//2:] if isinstance(s, str) and len(s) > max_len else s
     def _trunc(text):
-        for pat in _pats.values(): text = pat.sub(lambda m: m.group(1) + m.group(2)[:max_len] + '...' + m.group(3) if len(m.group(2)) > max_len else m.group(0), text)
+        text = _hist_pat.sub(lambda m: f'<{m.group(1)}>[...]</{m.group(1)}>', text)
+        for pat in _pats.values(): text = pat.sub(lambda m: m.group(1) + _trunc_str(m.group(2)) + m.group(3), text)
         return text
     for i, msg in enumerate(messages):
         if i >= len(messages) - keep_recent: break
-        if 'prompt' in msg: msg['prompt'] = _trunc(msg['prompt'])
-        elif 'content' in msg and 'prompt' not in msg:
-            c = msg['content']
-            if isinstance(c, str): msg['content'] = _trunc(c)
-            elif isinstance(c, list):
-                for block in c:
-                    if isinstance(block, dict) and block.get('type') == 'text' and isinstance(block.get('text'), str):
-                        block['text'] = _trunc(block['text'])
+        c = msg['content']
+        if isinstance(c, str): msg['content'] = _trunc(c)
+        elif isinstance(c, list):
+            for b in c:
+                if not isinstance(b, dict): continue
+                t = b.get('type')
+                if t == 'text' and isinstance(b.get('text'), str): b['text'] = _trunc(b['text'])
+                elif t == 'tool_result':
+                    tc = b.get('content')
+                    if isinstance(tc, str): b['content'] = _trunc_str(tc)
+                    elif isinstance(tc, list):
+                        for sub in tc:
+                            if isinstance(sub, dict) and sub.get('type') == 'text': sub['text'] = _trunc_str(sub.get('text'))
+                elif t == 'tool_use' and isinstance(b.get('input'), dict):
+                    for k, v in b['input'].items(): b['input'][k] = _trunc_str(v)
     print(f"[Cut] {_before} -> {sum(len(json.dumps(m, ensure_ascii=False)) for m in messages)}")
     return messages
+
+def _sanitize_leading_user_msg(msg):
+    """把 user 消息里的 tool_result 块改写成纯文本，避免孤立引用。
+    history 统一使用 Claude content-block 格式：content 是 list of blocks。"""
+    msg = dict(msg)  # 浅拷贝外层 dict
+    content = msg.get('content')
+    if not isinstance(content, list): return msg
+    texts = []
+    for block in content:
+        if not isinstance(block, dict): continue
+        if block.get('type') == 'tool_result':
+            c = block.get('content', '')
+            if isinstance(c, list):  # content 本身也可能是 list[{type:text,text:...}]
+                texts.extend(b.get('text', '') for b in c if isinstance(b, dict))
+            else: texts.append(str(c))
+        elif block.get('type') == 'text': texts.append(block.get('text', ''))
+    msg['content'] = [{"type": "text", "text": '\n'.join(t for t in texts if t)}]
+    return msg
+
+def trim_messages_history(history, context_win):
+    compress_history_tags(history)
+    cost = sum(len(json.dumps(m, ensure_ascii=False)) for m in history) 
+    print(f'[Debug] Current context: {cost} chars, {len(history)} messages.')
+    if cost > context_win * 3: 
+        compress_history_tags(history, keep_recent=4, force=True)   # trim breaks cache, so compress more btw
+        target = context_win * 3 * 0.6
+        while len(history) > 5 and cost > target:
+            history.pop(0)
+            while history and history[0].get('role') != 'user': history.pop(0)
+            if history and history[0].get('role') == 'user': history[0] = _sanitize_leading_user_msg(history[0])
+            cost = sum(len(json.dumps(m, ensure_ascii=False)) for m in history)
+        print(f'[Debug] Trimmed context, current: {cost} chars, {len(history)} messages.')
 
 def auto_make_url(base, path):
     b, p = base.rstrip('/'), path.strip('/')
     if b.endswith('$'): return b[:-1].rstrip('/')
-    return b if b.endswith(p) else f"{b}/{p}" if re.search(r'/v\d+$', b) else f"{b}/v1/{p}"
+    if b.endswith(p): return b
+    return f"{b}/{p}" if re.search(r'/v\d+(/|$)', b) else f"{b}/v1/{p}"
 
 def build_multimodal_content(prompt_text, image_paths):
     parts = []
@@ -66,8 +114,8 @@ class SiderLLMSession:
         from sider_ai_api import Session   # 不使用sider的话没必要安装这个包
         self._core = Session(cookie=cfg['apikey'], proxies=proxies)   
         self.default_model = cfg.get('model', 'gemini-3.0-flash')
-    def ask(self, prompt, model=None, stream=False):
-        if model is None: model = self.default_model
+    def ask(self, prompt, stream=False):
+        model = self.default_model
         if len(prompt) > 28000: 
             print(f"[Warn] Prompt too long ({len(prompt)} chars), truncating.")
             prompt = prompt[-28000:]
@@ -78,7 +126,7 @@ class SiderLLMSession:
 def _parse_claude_sse(resp_lines):
     """Parse Anthropic SSE stream. Yields text chunks, returns list[content_block]."""
     content_blocks = []; current_block = None; tool_json_buf = ""
-    stop_reason = None; got_message_stop = False
+    stop_reason = None; got_message_stop = False; warn = None
     for line in resp_lines:
         if not line: continue
         line = line.decode('utf-8') if isinstance(line, bytes) else line
@@ -124,15 +172,13 @@ def _parse_claude_sse(resp_lines):
         elif evt_type == "error":
             err = evt.get("error", {})
             emsg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
-            print(f"[SSE ERROR] {emsg}")
-            yield f"\n\n[SSE Error: {emsg}]"
-            break
-    if not got_message_stop and not stop_reason:
-        print("[WARN] SSE stream ended without message_stop - possible network interruption")
-        yield "\n\n[!!! 流异常中断，未收到完整响应 !!!]"
-    elif stop_reason == "max_tokens":
-        print(f"[WARN] Response truncated: max_tokens")
-        yield "\n\n[!!! Response truncated: max_tokens !!!]"
+            warn = f"\n\n[SSE Error: {emsg}]"; break
+    if not warn:
+        if not got_message_stop and not stop_reason: warn = "\n\n[!!! 流异常中断，未收到完整响应 !!!]"
+        elif stop_reason == "max_tokens": warn = "\n\n[!!! Response truncated: max_tokens !!!]"
+    if warn:
+        print(f"[WARN] {warn.strip()}")
+        content_blocks.append({"type": "text", "text": warn}); yield warn
     return content_blocks
 
 def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
@@ -221,6 +267,19 @@ def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
             blocks.append({"type": "tool_use", "id": tc["id"], "name": tc["name"], "input": inp})
         return blocks
 
+def _stamp_oai_cache_markers(messages, model):
+    """Add cache_control to last 2 user messages for Anthropic models via OAI-compatible relay."""
+    ml = model.lower()
+    if not any(k in ml for k in ('claude', 'anthropic')): return
+    user_idxs = [i for i, m in enumerate(messages) if m.get('role') == 'user']
+    for idx in user_idxs[-2:]:
+        c = messages[idx].get('content')
+        if isinstance(c, str):
+            messages[idx] = {**messages[idx], 'content': [{'type': 'text', 'text': c, 'cache_control': {'type': 'ephemeral'}}]}
+        elif isinstance(c, list) and c:
+            c = list(c); c[-1] = dict(c[-1], cache_control={'type': 'ephemeral'})
+            messages[idx] = {**messages[idx], 'content': c}
+
 def _openai_stream(api_base, api_key, messages, model, api_mode='chat_completions', *,
                    temperature=0.5, max_tokens=None, tools=None, reasoning_effort=None,
                    max_retries=0, connect_timeout=10, read_timeout=300, proxies=None):
@@ -235,6 +294,7 @@ def _openai_stream(api_base, api_key, messages, model, api_mode='chat_completion
         if reasoning_effort: payload["reasoning"] = {"effort": reasoning_effort}
     else:
         url = auto_make_url(api_base, "chat/completions")
+        _stamp_oai_cache_markers(messages, model)
         payload = {"model": model, "messages": messages, "temperature": temperature, "stream": True, "stream_options": {"include_usage": True}}
         if max_tokens: payload["max_tokens"] = max_tokens
         if reasoning_effort: payload["reasoning_effort"] = reasoning_effort
@@ -305,6 +365,9 @@ def _to_responses_input(messages):
     result = []
     for msg in messages:
         role = str(msg.get("role", "user")).lower()
+        if role == "tool":
+            result.append({"type": "function_call_output", "call_id": msg.get("tool_call_id", ""), "output": msg.get("content", "")})
+            continue
         if role not in ["user", "assistant", "system", "developer"]: role = "user"
         if role == "system": role = "developer"  # Responses API uses 'developer' instead of 'system'
         content = msg.get("content", "")
@@ -324,29 +387,101 @@ def _to_responses_input(messages):
                     if url and role != "assistant": parts.append({"type": "input_image", "image_url": url})
         if len(parts) == 0: parts = [{"type": text_type, "text": str(content)}]
         result.append({"role": role, "content": parts})
+        for tc in (msg.get("tool_calls") or []):
+            f = tc.get("function", {})
+            result.append({"type": "function_call", "call_id": tc.get("id", ""), "name": f.get("name", ""), "arguments": f.get("arguments", "")})
     return result
 
-class ClaudeSession:
+
+def _msgs_claude2oai(messages):
+    result = []
+    for msg in messages:
+        role = msg.get("role", "user")
+        content = msg.get("content", "")
+        blocks = content if isinstance(content, list) else [{"type": "text", "text": str(content)}]
+        if role == "assistant":
+            text_parts, tool_calls = [], []
+            for b in blocks:
+                if not isinstance(b, dict): continue
+                if b.get("type") == "text": text_parts.append({"type": "text", "text": b.get("text", "")})
+                elif b.get("type") == "tool_use":
+                    tool_calls.append({
+                        "id": b.get("id", ""), "type": "function",
+                        "function": {"name": b.get("name", ""), "arguments": json.dumps(b.get("input", {}), ensure_ascii=False)}
+                    })
+            m = {"role": "assistant"}
+            if text_parts: m["content"] = text_parts
+            else: m["content"] = ""
+            if tool_calls: m["tool_calls"] = tool_calls
+            result.append(m)
+        elif role == "user":
+            text_parts = []
+            for b in blocks:
+                if not isinstance(b, dict): continue
+                if b.get("type") == "tool_result":
+                    if text_parts:
+                        result.append({"role": "user", "content": text_parts})
+                        text_parts = []
+                    tr = b.get("content", "")
+                    if isinstance(tr, list):
+                        tr = "\n".join(x.get("text", "") for x in tr if isinstance(x, dict) and x.get("type") == "text")
+                    result.append({"role": "tool", "tool_call_id": b.get("tool_use_id", ""), "content": tr if isinstance(tr, str) else str(tr)})
+                elif b.get("type") == "image":
+                    src = b.get("source") or {}
+                    if src.get("type") == "base64" and src.get("data"):
+                        text_parts.append({"type": "image_url", "image_url": {"url": f"data:{src.get('media_type', 'image/png')};base64,{src.get('data', '')}"}})
+                elif b.get("type") == "image_url": text_parts.append(b)
+                elif b.get("type") == "text": text_parts.append({"type": "text", "text": b.get("text", "")})
+            if text_parts: result.append({"role": "user", "content": text_parts})
+        else: result.append(msg)
+    return result
+
+
+class BaseSession:
     def __init__(self, cfg):
-        self.api_key = cfg['apikey']; self.api_base = cfg['apibase'].rstrip('/')
-        self.default_model = cfg.get('model', 'claude-opus')
-        self.context_win = cfg.get('context_win', 20000)
-        self.raw_msgs, self.lock = [], threading.Lock()
+        self.api_key = cfg['apikey']
+        self.api_base = cfg['apibase'].rstrip('/')
+        self.default_model = cfg.get('model', '')
+        self.context_win = cfg.get('context_win', 24000)
+        self.history = []
+        self.lock = threading.Lock()
         self.system = ""
-    def _trim_messages(self, raw_msgs):
-        compress_history_tags(raw_msgs)
-        total = sum(len(m['prompt']) for m in raw_msgs)
-        print(f'[Debug] Current context: {total} chars, {len(raw_msgs)} messages.')
-        if total <= self.context_win * 3: return raw_msgs
-        target, current, result = self.context_win * 3 * 0.6, 0, []
-        for msg in reversed(raw_msgs):
-            if (msg_len := len(msg['prompt'])) + current <= target:
-                result.append(msg); current += msg_len
-            else: break    
-        print(f'[Debug] Trimmed context, current: {current} chars, {len(result)} messages.')
-        return result[::-1] or raw_msgs[-2:]
-    def raw_ask(self, messages, model=None, temperature=0.5, max_tokens=6144):
-        model = model or self.default_model
+        self.name = cfg.get('name', self.default_model)
+        proxy = cfg.get('proxy')
+        self.proxies = {"http": proxy, "https": proxy} if proxy else None
+        self.max_retries = max(0, int(cfg.get('max_retries', 1)))
+        self.connect_timeout = max(1, int(cfg.get('timeout', 5)))
+        self.read_timeout = max(5, int(cfg.get('read_timeout', 30)))
+        effort = cfg.get('reasoning_effort')
+        effort = None if effort is None else str(effort).strip().lower()
+        self.reasoning_effort = effort if effort in ('none', 'minimal', 'low', 'medium', 'high', 'xhigh') else None
+        if effort and not self.reasoning_effort: print(f"[WARN] Invalid reasoning_effort {effort!r}, ignored.")
+        mode = str(cfg.get('api_mode', 'chat_completions')).strip().lower().replace('-', '_')
+        self.api_mode = 'responses' if mode in ('responses', 'response') else 'chat_completions'
+        self.temperature = cfg.get('temperature')
+    def ask(self, prompt, stream=False):
+        def _ask_gen():
+            content = ''
+            with self.lock:
+                self.history.append({"role": "user", "content": [{"type": "text", "text": prompt}]})
+                trim_messages_history(self.history, self.context_win)
+                messages = self.make_messages(self.history)
+            content_blocks = None
+            gen = self.raw_ask(messages)
+            try:
+                while True: chunk = next(gen); content += chunk; yield chunk
+            except StopIteration as e: content_blocks = e.value or []
+            if len(content_blocks) > 1: print(f"[DEBUG BaseSession.ask] content_blocks: {content_blocks}")
+            for block in (content_blocks or []):
+                if block.get('type', '') == 'tool_use':
+                    tu = {'name': block.get('name', ''), 'arguments': block.get('input', {})}
+                    yield f'<tool_use>{json.dumps(tu, ensure_ascii=False)}</tool_use>'
+            if not content.startswith("Error:"): self.history.append({"role": "assistant", "content": [{"type": "text", "text": content}]})
+        return _ask_gen() if stream else ''.join(list(_ask_gen()))
+
+class ClaudeSession(BaseSession):
+    def raw_ask(self, messages, temperature=0.5, max_tokens=6144):
+        model = self.default_model
         ml = model.lower()
         if 'kimi' in ml or 'moonshot' in ml: temperature = 1.0  # kimi/moonshot only accepts temp 1.0
         elif 'minimax' in ml: temperature = max(0.01, min(temperature, 1.0))  # MiniMax requires temp in (0, 1]
@@ -354,177 +489,105 @@ class ClaudeSession:
         payload = {"model": model, "messages": messages, "temperature": temperature, "max_tokens": max_tokens, "stream": True}
         if self.system: payload["system"] = [{"type": "text", "text": self.system, "cache_control": {"type": "persistent"}}]
         try:
-            with requests.post(auto_make_url(self.api_base, "messages"), headers=headers, json=payload, stream=True, timeout=(5,30)) as r:
-                r.raise_for_status()
-                yield from _parse_claude_sse(r.iter_lines())
-        except Exception as e: yield f"Error: {str(e)}"
+            with requests.post(auto_make_url(self.api_base, "messages"), headers=headers, json=payload, stream=True, timeout=(self.connect_timeout, self.read_timeout)) as r:
+                if r.status_code != 200: raise Exception(f"HTTP {r.status_code} {r.content.decode('utf-8', errors='replace')[:500]}")
+                return (yield from _parse_claude_sse(r.iter_lines())) or []
+        except Exception as e:
+            yield (err := f"Error: {e}")
+            return [{"type": "text", "text": err}]
     def make_messages(self, raw_list):
-        msgs = [{"role": m['role'], "content": [{"type": "text", "text": m['prompt']}]} for m in raw_list]
-        c = msgs[-1]["content"]
-        c[-1] = dict(c[-1], cache_control={"type": "ephemeral"})
+        msgs = [{"role": m['role'], "content": list(m['content'])} for m in raw_list]
+        user_idxs = [i for i, m in enumerate(msgs) if m['role'] == 'user']
+        for idx in user_idxs[-2:]:
+            msgs[idx]["content"][-1] = dict(msgs[idx]["content"][-1], cache_control={"type": "ephemeral"})
         return msgs
-    def ask(self, prompt, model=None, stream=False):
-        def _ask_gen():
-            content = ''
-            with self.lock:
-                self.raw_msgs.append({"role": "user", "prompt": prompt})
-                self.raw_msgs = self._trim_messages(self.raw_msgs)
-                messages = self.make_messages(self.raw_msgs)
-            for chunk in self.raw_ask(messages, model):
-                content += chunk; yield chunk
-            if not content.startswith("Error:"): self.raw_msgs.append({"role": "assistant", "prompt": content})
-        return _ask_gen() if stream else ''.join(list(_ask_gen()))
 
-class LLMSession:
-    def __init__(self, cfg):
-        self.api_key = cfg['apikey']; self.api_base = cfg['apibase'].rstrip('/')
-        self.default_model = cfg['model']
-        self.context_win = cfg.get('context_win', 20000)
-        self.raw_msgs, self.messages = [], []
-        proxy = cfg.get('proxy')
-        self.proxies = {"http": proxy, "https": proxy} if proxy else None
-        self.lock = threading.Lock()
-        self.max_retries = max(0, int(cfg.get('max_retries', 2)))
-        self.connect_timeout = max(1, int(cfg.get('connect_timeout', 10)))
-        self.read_timeout = max(5, int(cfg.get('read_timeout', 120)))
-        effort = cfg.get('reasoning_effort')
-        effort = None if effort is None else str(effort).strip().lower()
-        self.reasoning_effort = effort if effort in ['none', 'minimal','low', 'medium', 'high', 'xhigh'] else None
-        if effort and self.reasoning_effort is None: print(f"[WARN] Invalid reasoning_effort {effort!r}, ignored.")
-        mode = str(cfg.get('api_mode', 'chat_completions')).strip().lower().replace('-', '_')
-        if mode in ["responses", "response"]: self.api_mode = "responses"
-        else: self.api_mode = "chat_completions"
-
-    def raw_ask(self, messages, model=None, temperature=0.5):
-        if model is None: model = self.default_model
-        yield from _openai_stream(self.api_base, self.api_key, messages, model, self.api_mode,
+class LLMSession(BaseSession):
+    def raw_ask(self, messages, temperature=0.5):
+        return (yield from _openai_stream(self.api_base, self.api_key, messages, self.default_model, self.api_mode,
                                   temperature=temperature, reasoning_effort=self.reasoning_effort,
                                   max_retries=self.max_retries, connect_timeout=self.connect_timeout,
-                                  read_timeout=self.read_timeout, proxies=self.proxies)
+                                  read_timeout=self.read_timeout, proxies=self.proxies))
+    def make_messages(self, raw_list): return _msgs_claude2oai(raw_list)
 
-    def make_messages(self, raw_list, omit_images=True):
-        compress_history_tags(raw_list)
-        messages = []
-        for i, msg in enumerate(raw_list):
-            prompt = msg['prompt']
-            image = msg.get('image')
-            if omit_images and image: messages.append({"role": msg['role'], "content": "[Image omitted, if you needed it, ask me]\n" + prompt})
-            elif not omit_images and image:
-                messages.append({"role": msg['role'], "content": [
-                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image}"}},
-                    {"type": "text", "text": prompt} ]})
-            else:
-                messages.append({"role": msg['role'], "content": prompt})
-        return messages
-       
-    def summary_history(self, model=None):
-        if model is None: model = self.default_model
-        with self.lock:
-            keep = 0; tok = 0
-            for m in reversed(self.raw_msgs):
-                l = len(str(m))//3
-                if tok + l > self.context_win*0.2: break
-                tok += l; keep += 1
-            keep = max(2, keep)
-            old, self.raw_msgs = self.raw_msgs[:-keep], self.raw_msgs[-keep:]
-            if len(old) == 0: old = self.raw_msgs; self.raw_msgs = []
-            p = "Summarize prev summary and prev conversations into compact memory (facts/decisions/constraints/open questions). Do NOT restate long schemas. The new summary should less than 1000 tokens. Permit dropping non-important things.\n"
-            messages = self.make_messages(old, omit_images=True)
-            messages += [{"role":"user", "content":p}]
-            msg_lens = [1000 if isinstance(m["content"], list) else len(str(m["content"]))//3 for m in messages]
-            summary = ''.join(list(self.raw_ask(messages, model, temperature=0.1)))
-            print('[Debug] Summary length:', len(summary)//3, '; Orig context lengths:', str(msg_lens))
-            if not summary.startswith("Error:"): 
-                self.raw_msgs.insert(0, {"role":"assistant", "prompt":"Prev summary:\n"+summary, "image":None})
-            else: self.raw_msgs = old + self.raw_msgs   # 不做了，下次再做
+def _fix_messages(messages):
+    """修复 messages 符合 Claude API：交替、tool_use/tool_result 配对"""
+    if not messages: return messages
+    _wrap = lambda c: c if isinstance(c, list) else [{"type": "text", "text": str(c)}]
+    fixed = []
+    for m in messages:
+        if fixed and m['role'] == fixed[-1]['role']:
+            fixed[-1] = {**fixed[-1], 'content': _wrap(fixed[-1]['content']) + [{"type": "text", "text": "\n"}] + _wrap(m['content'])}; continue
+        if fixed and fixed[-1]['role'] == 'assistant' and m['role'] == 'user':
+            uses = [b.get('id') for b in fixed[-1].get('content', []) if isinstance(b, dict) and b.get('type') == 'tool_use' and b.get('id')]
+            has = {b.get('tool_use_id') for b in _wrap(m['content']) if isinstance(b, dict) and b.get('type') == 'tool_result'}
+            miss = [uid for uid in uses if uid not in has]
+            if miss: m = {**m, 'content': [{"type": "tool_result", "tool_use_id": uid, "content": "(error)"} for uid in miss] + _wrap(m['content'])}
+        fixed.append(m)
+    while fixed and fixed[0]['role'] != 'user': fixed.pop(0)
+    return fixed
 
-    def ask(self, prompt, model=None, image_base64=None, stream=False):
-        if model is None: model = self.default_model
-        def _ask_gen():
-            content = ''
-            with self.lock:
-                self.raw_msgs.append({"role": "user", "prompt": prompt, "image": image_base64})
-                messages = self.make_messages(self.raw_msgs[:-1], omit_images=True)
-                messages += self.make_messages([self.raw_msgs[-1]], omit_images=False)
-                msg_lens = [1000 if isinstance(m["content"], list) else len(str(m["content"]))//3 for m in messages]
-                total_len = sum(msg_lens)   # estimate token count
-            gen = self.raw_ask(messages, model)
-            for chunk in gen:
-                content += chunk; yield chunk
-            if not content.startswith("Error:"):
-                self.raw_msgs.append({"role": "assistant", "prompt": content, "image": None})
-            if total_len > self.context_win // 2: print(f"[Debug] Whole context length {total_len} {str(msg_lens)}.")
-            if total_len > self.context_win: 
-                yield '[NextWillSummary]'
-                threading.Thread(target=self.summary_history, daemon=True).start()
-        if stream: return _ask_gen()
-        return ''.join(list(_ask_gen())) 
-        
-
-class NativeOAISession:
+class NativeClaudeSession(BaseSession):
     def __init__(self, cfg):
-        self.api_key = cfg['apikey']; self.api_base = cfg['apibase'].rstrip('/')
-        self.default_model = cfg.get('model', 'gpt-4o')
-        self.context_win = cfg.get('context_win', 24000)
-        proxy = cfg.get('proxy')
-        self.proxies = {"http": proxy, "https": proxy} if proxy else None
-        self.history = []; self.system = ''; self.lock = threading.Lock()
-        self.max_retries = max(0, int(cfg.get('max_retries', 2)))
-        self.connect_timeout = max(1, int(cfg.get('connect_timeout', 10)))
-        self.read_timeout = max(5, int(cfg.get('read_timeout', 120)))
-        effort = cfg.get('reasoning_effort')
-        effort = None if effort is None else str(effort).strip().lower()
-        self.reasoning_effort = effort if effort in ('low', 'medium', 'high') else None
-        if effort and not self.reasoning_effort: print(f"[WARN] Invalid reasoning_effort {effort!r}, ignored.")
-        mode = str(cfg.get('api_mode', 'chat_completions')).strip().lower().replace('-', '_')
-        self.api_mode = 'responses' if mode in ('responses', 'response') else 'chat_completions'
+        super().__init__(cfg)
+        self.context_win = cfg.get("context_win", 28000)
+        self.fake_cc_system_prompt = cfg.get("fake_cc_system_prompt", False)
+        self._session_id = str(uuid.uuid4())
+        self._account_uuid = str(uuid.uuid4())
+        self._device_id = uuid.uuid4().hex + uuid.uuid4().hex[:32]
+        self.tools = None
+    def raw_ask(self, messages, temperature=0.5, max_tokens=6144):
+        messages = _fix_messages(messages)
+        model = self.default_model
+        if self.temperature is not None: temperature = self.temperature
+        beta_parts = ["claude-code-20250219", "interleaved-thinking-2025-05-14", "redact-thinking-2026-02-12", "prompt-caching-scope-2026-01-05"]
+        if "[1m]" in model.lower():
+            beta_parts.insert(1, "context-1m-2025-08-07"); model = model.replace("[1m]", "").replace("[1M]", "")
+        headers = {"Content-Type": "application/json", "anthropic-version": "2023-06-01",
+            "anthropic-beta": ",".join(beta_parts), "anthropic-dangerous-direct-browser-access": "true",
+            "user-agent": "claude-cli/2.1.90 (external, cli)", "x-app": "cli"}
+        if self.api_key.startswith("sk-ant-"): headers["x-api-key"] = self.api_key
+        else: headers["authorization"] = f"Bearer {self.api_key}"
+        payload = {"model": model, "messages": messages, "temperature": temperature, "max_tokens": max_tokens, "stream": True}
+        payload["metadata"] = {"user_id": json.dumps({"device_id": self._device_id, "account_uuid": self._account_uuid, "session_id": self._session_id}, separators=(',', ':'))}
+        if self.tools:
+            claude_tools = openai_tools_to_claude(self.tools)
+            tools = [dict(t) for t in claude_tools]; tools[-1]["cache_control"] = {"type": "ephemeral"}
+            payload["tools"] = tools
+        else: print("[ERROR] No tools provided for this session.")
+        payload['system'] = [{"type": "text", "text": "You are Claude Code, Anthropic's official CLI for Claude.", "cache_control": {"type": "ephemeral"}}]
+        if self.system:
+            if self.fake_cc_system_prompt: messages[0]["content"].insert(0, {"type": "text", "text": self.system})
+            else: payload["system"] = [{"type": "text", "text": self.system}]
+        user_idxs = [i for i, m in enumerate(messages) if m['role'] == 'user']
+        for idx in user_idxs[-2:]:
+            messages[idx] = {**messages[idx], "content": list(messages[idx]["content"])}
+            messages[idx]["content"][-1] = dict(messages[idx]["content"][-1], cache_control={"type": "ephemeral"})
+        try:
+            resp = requests.post(auto_make_url(self.api_base, "messages")+'?beta=true', headers=headers, json=payload, stream=True, timeout=(self.connect_timeout, self.read_timeout))
+            if resp.status_code != 200: raise Exception(f"HTTP {resp.status_code} {resp.content.decode('utf-8', errors='replace')[:500]}")
+            return (yield from _parse_claude_sse(resp.iter_lines())) or []
+        except Exception as e:
+            yield (err := f"Error: {e}")
+            return [{"type": "text", "text": err}]
 
-    def raw_ask(self, messages, tools=None, system=None, model=None, temperature=0.5, max_tokens=6144, **kw):
-        """OpenAI streaming. yields text chunks, generator return = list[content_block]"""
-        model = model or self.default_model
-        msgs = ([{"role": "system", "content": system}] if system else []) + messages
-        return (yield from _openai_stream(self.api_base, self.api_key, msgs, model, self.api_mode,
-                                          temperature=temperature, max_tokens=max_tokens, tools=tools,
-                                          reasoning_effort=self.reasoning_effort,
-                                          max_retries=self.max_retries, connect_timeout=self.connect_timeout,
-                                          read_timeout=self.read_timeout, proxies=self.proxies))
-
-    def ask(self, msg, tools=None, model=None, **kw):
+    def ask(self, msg):
         assert type(msg) is dict
         with self.lock:
             self.history.append(msg)
-            compress_history_tags(self.history)
-            cost = sum(len(json.dumps(m, ensure_ascii=False)) for m in self.history) 
-            print(f'[Debug] Current context: {cost} chars, {len(self.history)} messages.')
-            if cost > self.context_win * 3: 
-                target = self.context_win * 3 * 0.6
-                while len(self.history) > 2 and cost > target:
-                    self.history.pop(0); self.history.pop(0)
-                    cost = sum(len(json.dumps(m, ensure_ascii=False)) for m in self.history)
-                print(f'[Debug] Trimmed context, current: {cost} chars, {len(self.history)} messages.')
-            messages = list(self.history)
-
+            trim_messages_history(self.history, self.context_win)
+            messages = [{"role": m["role"], "content": list(m["content"])} for m in self.history]
         content_blocks = None
-        gen = self.raw_ask(messages, tools, self.system, model)
+        gen = self.raw_ask(messages)
         try:
             while True: yield next(gen)
         except StopIteration as e: content_blocks = e.value or []
         if content_blocks and not (len(content_blocks) == 1 and content_blocks[0].get("text", "").startswith("Error:")):
-            hist_texts = [b for b in content_blocks if b.get("type") != "tool_use"]
-            hist_tools = [b for b in content_blocks if b.get("type") == "tool_use"]
-            if hist_tools: hist_texts.append({"type": "text", "text": json.dumps(hist_tools, ensure_ascii=False)})
-            self.history.append({"role": "assistant", "content": hist_texts or content_blocks})
+            self.history.append({"role": "assistant", "content": content_blocks})
         text_parts = [b["text"] for b in content_blocks if b.get("type") == "text"]
         content = "\n".join(text_parts).strip()
         tool_calls = [MockToolCall(b["name"], b.get("input", {}), id=b.get("id", "")) for b in content_blocks if b.get("type") == "tool_use"]
-        if len(tool_calls) == 0 and content.endswith('}]'):
-            _pat = next((p for p in ['[{"type":"tool_use"', '[{"type": "tool_use"'] if p in content), None)
-            if _pat:
-                try:
-                    idx = content.index(_pat); raw = json.loads(content[idx:])
-                    tool_calls = [MockToolCall(b["name"], b.get("input", {}), id=b.get("id", "")) for b in raw if b.get("type") == "tool_use"]
-                    content = content[:idx].strip()
-                except: pass
+        if not tool_calls: tool_calls, content = _parse_text_tool_calls(content)
         think_pattern = r"<think(?:ing)?>(.*?)</think(?:ing)?>"; thinking = ''
         think_match = re.search(think_pattern, content, re.DOTALL)
         if think_match:
@@ -532,67 +595,17 @@ class NativeOAISession:
             content = re.sub(think_pattern, "", content, flags=re.DOTALL)
         return MockResponse(thinking, content, tool_calls, str(content_blocks))
 
-
-class NativeClaudeSession:
-    def __init__(self, cfg):
-        self.api_key = cfg['apikey']; self.api_base = cfg['apibase'].rstrip('/')
-        self.default_model = cfg.get('model', 'claude-opus')
-        self.context_win = cfg.get('context_win', 24000)
-        self.history = []; self.system = ''; self.lock = threading.Lock()
-
-    def raw_ask(self, messages, tools=None, system=None, model=None, temperature=0.5, max_tokens=6144):
-        model = model or self.default_model
-        headers = {"x-api-key": self.api_key, "Content-Type": "application/json", "anthropic-version": "2023-06-01", "anthropic-beta": "prompt-caching-2024-07-31"}
-        payload = {"model": model, "messages": messages, "temperature": temperature, "max_tokens": max_tokens, "stream": True}
-        if tools:
-            tools = [dict(t) for t in tools]; tools[-1]["cache_control"] = {"type": "ephemeral"}
-            payload["tools"] = tools
-        if system: payload["system"] = [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
-        messages[-1] = {**messages[-1], "content": list(messages[-1]["content"])}
-        messages[-1]["content"][-1] = dict(messages[-1]["content"][-1], cache_control={"type": "ephemeral"})
-        try:
-            resp = requests.post(auto_make_url(self.api_base, "messages"), headers=headers, json=payload, stream=True, timeout=60)
-            if resp.status_code != 200:
-                error_msg = f"Error: HTTP {resp.status_code} {resp.text[:500]}"
-                yield error_msg
-                return [{"type": "text", "text": error_msg}]
-        except Exception as e:
-            error_msg = f"Error: {e}"
-            yield error_msg
-            return [{"type": "text", "text": error_msg}]
-        content_blocks = yield from _parse_claude_sse(resp.iter_lines())
-        return content_blocks or []
-
-    def ask(self, msg, tools=None, model=None):
-        assert type(msg) is dict
-        with self.lock:
-            self.history.append(msg)
-            compress_history_tags(self.history)
-            cost = sum(len(json.dumps(m, ensure_ascii=False)) for m in self.history) 
-            print(f'[Debug] Current context: {cost} chars, {len(self.history)} messages.')
-            if cost > self.context_win * 3: 
-                target = self.context_win * 3 * 0.6
-                while len(self.history) > 2 and cost > target:
-                    self.history.pop(0); self.history.pop(0)
-                    cost = sum(len(json.dumps(m, ensure_ascii=False)) for m in self.history)
-                print(f'[Debug] Trimmed context, current: {cost} chars, {len(self.history)} messages.')
-            messages = list(self.history)
-
-        content_blocks = None
-        gen = self.raw_ask(messages, tools, self.system, model)
-        try:
-            while True: yield next(gen)
-        except StopIteration as e: content_blocks = e.value or []
-        if content_blocks and not (len(content_blocks) == 1 and content_blocks[0].get("text", "").startswith("Error:")):
-            self.history.append({"role": "assistant", "content": content_blocks})
-        thinking = ''
-        text_parts = [b["text"] for b in content_blocks if b.get("type") == "text"]
-        content = "\n".join(text_parts).strip()
-        tool_calls = []
-        for b in content_blocks:
-            if b.get("type") == "tool_use":
-                tool_calls.append(MockToolCall(b["name"], b.get("input", {}), id=b.get("id", "")))
-        return MockResponse(thinking, content, tool_calls, str(content_blocks))
+class NativeOAISession(NativeClaudeSession):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+    def raw_ask(self, messages, temperature=0.5, max_tokens=6144, **kw):
+        """OpenAI streaming. yields text chunks, generator return = list[content_block]"""
+        msgs = ([{"role": "system", "content": self.system}] if self.system else []) + _msgs_claude2oai(messages)
+        return (yield from _openai_stream(self.api_base, self.api_key, msgs, self.default_model, self.api_mode,
+                                          temperature=temperature, max_tokens=max_tokens, 
+                                          tools=self.tools, reasoning_effort=self.reasoning_effort,
+                                          max_retries=self.max_retries, connect_timeout=self.connect_timeout,
+                                          read_timeout=self.read_timeout, proxies=self.proxies))
 
 def openai_tools_to_claude(tools):
     """[{type:'function', function:{name,description,parameters}}] → [{name,description,input_schema}]."""
@@ -600,10 +613,8 @@ def openai_tools_to_claude(tools):
     for t in tools:
         if 'input_schema' in t: result.append(t); continue  # 已是claude格式
         fn = t.get('function', t)
-        result.append({
-            'name': fn['name'], 'description': fn.get('description', ''),
-            'input_schema': fn.get('parameters', {'type': 'object', 'properties': {}})
-        })
+        result.append({'name': fn['name'], 'description': fn.get('description', ''),
+            'input_schema': fn.get('parameters', {'type': 'object', 'properties': {}})})
     return result
 
 
@@ -628,19 +639,14 @@ class ToolClient:
         self.backend = backend
         self.auto_save_tokens = auto_save_tokens
         self.last_tools = ''
+        self.name = self.backend.name
         self.total_cd_tokens = 0
 
     def chat(self, messages, tools=None):
-        if self._should_use_structured_messages(messages):
-            backend_messages = self._build_backend_messages(messages, tools)
-            print("Structured prompt length:", sum(self._estimate_content_len(m.get("content")) for m in backend_messages), 'chars')
-            prompt_log = self._serialize_messages_for_log(backend_messages)
-            gen = self.backend.raw_ask(backend_messages)
-        else:
-            full_prompt = self._build_protocol_prompt(messages, tools)
-            print("Full prompt length:", len(full_prompt), 'chars')
-            prompt_log = full_prompt
-            gen = self.backend.ask(full_prompt, stream=True)
+        full_prompt = self._build_protocol_prompt(messages, tools)
+        print("Full prompt length:", len(full_prompt), 'chars')
+        prompt_log = full_prompt
+        gen = self.backend.ask(full_prompt, stream=True)
         _write_llm_log('Prompt', prompt_log)
         raw_text = ''; summarytag = '[NextWillSummary]'
         for chunk in gen:
@@ -651,8 +657,7 @@ class ToolClient:
         _write_llm_log('Response', raw_text)
         return self._parse_mixed_response(raw_text)
 
-    def _should_use_structured_messages(self, messages):
-        return isinstance(self.backend, LLMSession) and any(isinstance(m.get("content"), list) for m in messages)
+    #def _should_use_structured_messages(self, messages): return isinstance(self.backend, LLMSession) and any(isinstance(m.get("content"), list) for m in messages)
 
     def _estimate_content_len(self, content):
         if isinstance(content, str): return len(content)
@@ -673,11 +678,11 @@ class ToolClient:
         tools_json = json.dumps(tools, ensure_ascii=False, separators=(',', ':'))
         tool_instruction = f"""
 ### 交互协议 (必须严格遵守，持续有效)
-请按照以下步骤思考并行动，标签之间需要回车换行：
+请按照以下步骤思考并行动：
 1. **思考**: 在 `<thinking>` 标签中先进行思考，分析现状和策略。
 2. **总结**: 在 `<summary>` 中输出*极为简短*的高度概括的单行（<30字）物理快照，包括上次工具调用结果产生的新信息+本次工具调用意图。此内容将进入长期工作记忆，记录关键信息，严禁输出无实际信息增量的描述。
-3. **行动**: 如需调用工具，请在回复正文之后输出一个（或多个）**<tool_use>块**，然后结束，我会稍后给你返回<tool_result>块。
-   格式: ```<tool_use>\n{{"name": "工具名", "arguments": {{参数}}}}\n</tool_use>\n```
+3. **行动**: 如需调用工具，请在回复正文之后输出一个（或多个）**<tool_use>块**，然后结束。
+格式: ```<tool_use>{{"name": "工具名", "arguments": {{参数}}}}</tool_use>```
 
 ### 可用工具库（已挂载，持续有效）
 {tools_json}
@@ -688,53 +693,20 @@ class ToolClient:
         self.last_tools = tools_json
         return tool_instruction
 
-    def _build_backend_messages(self, messages, tools):
-        system_content = next((m['content'] for m in messages if m['role'].lower() == 'system'), "")
-        history_msgs = [m for m in messages if m['role'].lower() != 'system']
-        tool_instruction = self._prepare_tool_instruction(tools)
-        backend_messages = []
-        merged_system = f"{system_content}\n{tool_instruction}".strip() if tool_instruction else system_content
-        if merged_system: backend_messages.append({"role": "system", "content": merged_system})
-        for m in history_msgs:
-            backend_messages.append({"role": m['role'], "content": m['content']})
-            self.total_cd_tokens += self._estimate_content_len(m['content'])
-        if self.total_cd_tokens > 6000: self.last_tools = ''
-        return backend_messages
-
-    def _serialize_messages_for_log(self, messages):
-        logged = []
-        for msg in messages:
-            content = msg.get("content")
-            if isinstance(content, list):
-                parts = []
-                for part in content:
-                    if not isinstance(part, dict): continue
-                    if part.get("type") == "text":
-                        parts.append({"type": "text", "text": part.get("text", "")})
-                    elif part.get("type") == "image_url":
-                        url = (part.get("image_url") or {}).get("url", "")
-                        prefix = url.split(",", 1)[0] if url else "data:image/unknown;base64"
-                        parts.append({"type": "image_url", "image_url": {"url": prefix + ",<omitted>"}})
-                    else:
-                        parts.append(part)
-                logged.append({"role": msg.get("role"), "content": parts})
-            else:
-                logged.append(msg)
-        return json.dumps(logged, ensure_ascii=False, indent=2)
-
     def _build_protocol_prompt(self, messages, tools):
         system_content = next((m['content'] for m in messages if m['role'].lower() == 'system'), "")
         history_msgs = [m for m in messages if m['role'].lower() != 'system']
         tool_instruction = self._prepare_tool_instruction(tools)
-        system = ""
+        system = ""; user = ""
         if system_content: system += f"{system_content}\n"
         system += f"{tool_instruction}"
-        user = ""
         for m in history_msgs:
             role = "USER" if m['role'] == 'user' else "ASSISTANT"
-            user += f"=== {role} ===\n{m['content']}\n\n"
-            self.total_cd_tokens += self._estimate_content_len(m['content'])           
-        if self.total_cd_tokens > 6000: self.last_tools = ''
+            user += f"=== {role} ===\n"
+            for tr in m.get('tool_results', []): user += f'<tool_result>{tr["content"]}</tool_result>\n'
+            user += str(m['content']) + "\n"
+            self.total_cd_tokens += self._estimate_content_len(user)           
+        if self.total_cd_tokens > 9000: self.last_tools = ''
         user += "=== ASSISTANT ===\n" 
         return system + user
 
@@ -756,7 +728,7 @@ class ToolClient:
             json_strs.extend([s for s in tool_all if s.startswith('{') and s.endswith('}')])
             remaining_text = re.sub(tool_pattern, "", remaining_text, flags=re.DOTALL)
         elif '<tool_use>' in remaining_text:
-            weaktoolstr = remaining_text.split('<tool_use>')[-1].strip()
+            weaktoolstr = remaining_text.split('<tool_use>')[-1].strip().strip('><')
             json_str = weaktoolstr if weaktoolstr.endswith('}') else ''
             if json_str == '' and '```' in weaktoolstr and weaktoolstr.split('```')[0].strip().endswith('}'):
                 json_str = weaktoolstr.split('```')[0].strip()
@@ -789,6 +761,28 @@ class ToolClient:
         content = remaining_text.strip()
         return MockResponse(thinking, content, tool_calls, text)
 
+def _parse_text_tool_calls(content):
+    """Fallback: extract tool calls from text when model doesn't use native tool_use blocks."""
+    tcs = []
+    # try JSON array: [{"type":"tool_use", "name":..., "input":...}]
+    _jp = next((p for p in ['[{"type":"tool_use"', '[{"type": "tool_use"'] if p in content), None)
+    if _jp and content.endswith('}]'):
+        try:
+            idx = content.index(_jp); raw = json.loads(content[idx:])
+            tcs = [MockToolCall(b["name"], b.get("input", {}), id=b.get("id", "")) for b in raw if b.get("type") == "tool_use"]
+            return tcs, content[:idx].strip()
+        except: pass
+    # try XML tags: <tool_call>{"name":..., "arguments":...}</tool_call>
+    _xp = r"<(?:tool_use|tool_call)>((?:(?!<(?:tool_use|tool_call)>).){15,}?)</(?:tool_use|tool_call)>"
+    for s in re.findall(_xp, content, re.DOTALL):
+        try:
+            d = tryparse(s.strip()); name = d.get('name')
+            args = d.get('arguments') or d.get('args') or d.get('input') or {}
+            if name: tcs.append(MockToolCall(name, args))
+        except: pass
+    if tcs: content = re.sub(_xp, "", content, flags=re.DOTALL).strip()
+    return tcs, content
+
 def _write_llm_log(label, content):
     log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'temp/model_responses')
     os.makedirs(log_dir, exist_ok=True)
@@ -808,20 +802,29 @@ def tryparse(json_str):
     if '}' in json_str: json_str = json_str[:json_str.rfind('}') + 1]
     return json.loads(json_str)
 
-
 class MixinSession:
     """Multi-session fallback with spring-back to primary."""
     def __init__(self, all_sessions, cfg):
         self._retries, self._base_delay = cfg.get('max_retries', 3), cfg.get('base_delay', 1.5)
         self._spring_sec = cfg.get('spring_back', 300)
-        self._sessions = [all_sessions[i].backend for i in cfg.get('llm_nos', [])]
-        assert 'Native' not in self._sessions[0].__class__.__name__
-        assert len(set(type(s) for s in self._sessions)) == 1, f'MixinSession: all sessions must be same type, got {[type(s).__name__ for s in self._sessions]}'
+        self._sessions = [all_sessions[i].backend if isinstance(i, int) else 
+                          next(s.backend for s in all_sessions if type(s) is not dict and s.backend.name == i) for i in cfg.get('llm_nos', [])]
+        is_native = lambda s: 'Native' in s.__class__.__name__
+        groups = {is_native(s) for s in self._sessions}
+        assert len(groups) == 1, f"MixinSession: sessions must be in same group (Native or non-Native), got {[type(s).__name__ for s in self._sessions]}"
+        self.name = '|'.join(s.name for s in self._sessions)
+        import copy; self._sessions[0] = copy.copy(self._sessions[0])
         self._orig_raw_asks = [s.raw_ask for s in self._sessions]
         self._sessions[0].raw_ask = self._raw_ask
         self.default_model = getattr(self._sessions[0], 'default_model', None)
         self._cur_idx, self._switched_at = 0, 0.0
     def __getattr__(self, name): return getattr(self._sessions[0], name)
+    def __setattr__(self, name, value):
+        if name in ('system', 'tools'):
+            for s in self._sessions:
+                v = openai_tools_to_claude(value) if name == 'tools' and type(s) is NativeClaudeSession else value
+                setattr(s, name, v)
+        else: object.__setattr__(self, name, value)
     @property
     def primary(self): return self._sessions[0]
     def _pick(self):
@@ -833,6 +836,7 @@ class MixinSession:
         for attempt in range(self._retries + 1):
             idx = (base + attempt) % n
             gen = self._orig_raw_asks[idx](*args, **kwargs)
+            print(f'[MixinSession] Using session ({self._sessions[idx].name})')
             last_chunk, return_val, yielded = None, [], False
             try:
                 while True:
@@ -849,7 +853,7 @@ class MixinSession:
             nxt = (base + attempt + 1) % n
             if nxt == base:  # full round failed, delay before next
                 rnd = (attempt + 1) // n
-                delay = min(30, self._base_delay * (2 ** rnd))
+                delay = min(30, self._base_delay * (1.5 ** rnd))
                 print(f'[MixinSession] {last_chunk[:80]}, round {rnd} exhausted, retry in {delay:.1f}s')
                 time.sleep(delay)
             else: print(f'[MixinSession] {last_chunk[:80]}, retry {attempt+1}/{self._retries} (s{idx}→s{nxt})')
@@ -865,28 +869,34 @@ class NativeToolClient:
     def __init__(self, backend):
         self.backend = backend
         self.backend.system = self.THINKING_PROMPT
-        self.tools = {}
+        self.name = self.backend.name
         self._pending_tool_ids = []
     def set_system(self, extra_system):
         combined = f"{extra_system}\n\n{self.THINKING_PROMPT}" if extra_system else self.THINKING_PROMPT
         if combined != self.backend.system: print(f"[Debug] Updated system prompt, length {len(combined)} chars.")
         self.backend.system = combined
     def chat(self, messages, tools=None):
-        if tools: self.tools = openai_tools_to_claude(tools) if isinstance(self.backend, NativeClaudeSession) else tools
-        combined_content = []; resp = None
+        if tools: self.backend.tools = tools
+        combined_content = []; resp = None; tool_results = []
         for msg in messages:
             c = msg.get('content', '')
             if msg['role'] == 'system': 
                 self.set_system(c); continue
             if isinstance(c, str): combined_content.append({"type": "text", "text": c})
             elif isinstance(c, list): combined_content.extend(c)
-        if self._pending_tool_ids and isinstance(self.backend, NativeClaudeSession):
-            tool_result_blocks = [{"type": "tool_result", "tool_use_id": tid, "content": ""} for tid in self._pending_tool_ids]
-            combined_content = tool_result_blocks + combined_content
-            self._pending_tool_ids = []
-        merged = {"role": "user", "content": combined_content}
+            if msg['role'] == 'user' and msg.get('tool_results'): tool_results.extend(msg['tool_results'])
+        tr_id_set = set();  tool_result_blocks = []
+        for tr in tool_results:
+            tool_use_id, content = tr.get("tool_use_id", ""), tr.get("content", "")
+            tr_id_set.add(tool_use_id)
+            if tool_use_id: tool_result_blocks.append({"type": "tool_result", "tool_use_id": tool_use_id, "content": tr.get("content", "")})
+            else: combined_content = [{"type": "text", "text": f'<tool_result>{content}</tool_result>'}] + combined_content
+        for tid in self._pending_tool_ids:
+            if tid not in tr_id_set: tool_result_blocks.append({"type": "tool_result", "tool_use_id": tid, "content": ""})
+        self._pending_tool_ids = []
+        merged = {"role": "user", "content": tool_result_blocks + combined_content}
         _write_llm_log('Prompt', json.dumps(merged, ensure_ascii=False, indent=2))
-        gen = self.backend.ask(merged, self.tools); 
+        gen = self.backend.ask(merged)
         try:
             while True: 
                 chunk = next(gen); yield chunk
@@ -899,6 +909,5 @@ class NativeToolClient:
                 resp.thinking = think_match.group(1).strip()
                 text = re.sub(r'<think(?:ing)?>.*?</think(?:ing)?>', '', text, flags=re.DOTALL)
             resp.content = text.strip()
-        if resp and hasattr(resp, 'tool_calls') and resp.tool_calls and isinstance(self.backend, NativeClaudeSession):
-            self._pending_tool_ids = [tc.id for tc in resp.tool_calls]
+        if resp and hasattr(resp, 'tool_calls') and resp.tool_calls: self._pending_tool_ids = [tc.id for tc in resp.tool_calls]
         return resp

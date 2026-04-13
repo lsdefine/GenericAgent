@@ -1,8 +1,19 @@
-import asyncio, glob, os, queue as Q, re, socket, sys, time
+import ast, asyncio, glob, json, os, queue as Q, re, socket, sys, time
 
 HELP_TEXT = "📖 命令列表:\n/help - 显示帮助\n/status - 查看状态\n/stop - 停止当前任务\n/new - 清空当前上下文\n/restore - 恢复上次对话历史\n/llm [n] - 查看或切换模型"
 FILE_HINT = "If you need to show files to user, use [FILE:filepath] in your response."
 TAG_PATS = [r"<" + t + r">.*?</" + t + r">" for t in ("thinking", "summary", "tool_use", "file_content")]
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+RESTORE_GLOBS = (
+    os.path.join(PROJECT_ROOT, "temp", "model_responses", "model_responses_*.txt"),
+    os.path.join(PROJECT_ROOT, "temp", "model_responses_*.txt"),
+)
+RESTORE_BLOCK_RE = re.compile(
+    r"^=== (Prompt|Response) ===.*?\n(.*?)(?=^=== (?:Prompt|Response) ===|\Z)",
+    re.DOTALL | re.MULTILINE,
+)
+HISTORY_RE = re.compile(r"<history>\s*(.*?)\s*</history>", re.DOTALL)
+SUMMARY_RE = re.compile(r"<summary>\s*(.*?)\s*</summary>", re.DOTALL)
 
 
 def clean_reply(text):
@@ -30,13 +41,14 @@ def split_text(text, limit):
     return parts + ([text] if text else []) or ["..."]
 
 
-def format_restore():
-    files = glob.glob("./temp/model_responses_*.txt")
-    if not files:
-        return None, "❌ 没有找到历史记录"
-    latest = max(files, key=os.path.getmtime)
-    with open(latest, "r", encoding="utf-8") as f:
-        content = f.read()
+def _restore_log_files():
+    files = []
+    for pattern in RESTORE_GLOBS:
+        files.extend(glob.glob(pattern))
+    return sorted(set(files))
+
+
+def _restore_text_pairs(content):
     users = re.findall(r"=== USER ===\n(.+?)(?==== |$)", content, re.DOTALL)
     resps = re.findall(r"=== Response ===.*?\n(.+?)(?==== Prompt|$)", content, re.DOTALL)
     restored = []
@@ -44,9 +56,114 @@ def format_restore():
         u, r = u.strip(), r.strip()[:500]
         if u and r:
             restored.extend([f"[USER]: {u}", f"[Agent] {r}"])
+    return restored
+
+
+def _native_prompt_obj(prompt_body):
+    try:
+        prompt = json.loads(prompt_body)
+    except Exception:
+        return None
+    if not isinstance(prompt, dict) or prompt.get("role") != "user":
+        return None
+    if not isinstance(prompt.get("content"), list):
+        return None
+    return prompt
+
+
+def _native_prompt_text(prompt):
+    texts = []
+    for block in prompt.get("content", []):
+        if isinstance(block, dict) and block.get("type") == "text":
+            text = block.get("text", "")
+            if isinstance(text, str) and text.strip():
+                texts.append(text)
+    return "\n".join(texts).strip()
+
+
+def _native_history_lines(prompt_text):
+    match = HISTORY_RE.search(prompt_text or "")
+    if not match:
+        return []
+    restored = []
+    for line in match.group(1).splitlines():
+        line = line.strip()
+        if line.startswith("[USER]: ") or line.startswith("[Agent] "):
+            restored.append(line)
+    return restored
+
+
+def _native_first_user_line(prompt_text):
+    text = (prompt_text or "").strip()
+    if not text or "<history>" in text or text.startswith("### [WORKING MEMORY]"):
+        return ""
+    if text.startswith(FILE_HINT):
+        text = text[len(FILE_HINT):].lstrip()
+    if "### 用户当前消息" in text:
+        text = text.split("### 用户当前消息", 1)[-1].strip()
+    return text
+
+
+def _native_response_summary(response_body):
+    try:
+        blocks = ast.literal_eval((response_body or "").strip())
+    except Exception:
+        return ""
+    if not isinstance(blocks, list):
+        return ""
+    text_parts = []
+    for block in blocks:
+        if isinstance(block, dict) and block.get("type") == "text":
+            text = block.get("text", "")
+            if isinstance(text, str) and text:
+                text_parts.append(text)
+    match = SUMMARY_RE.search("\n".join(text_parts))
+    return (match.group(1).strip() if match else "")[:500]
+
+
+def _restore_native_history(content):
+    blocks = RESTORE_BLOCK_RE.findall(content or "")
+    if not blocks:
+        return []
+    pairs = []
+    pending_prompt = None
+    for label, body in blocks:
+        if label == "Prompt":
+            pending_prompt = body
+        elif pending_prompt is not None:
+            pairs.append((pending_prompt, body))
+            pending_prompt = None
+    for prompt_body, response_body in reversed(pairs):
+        prompt = _native_prompt_obj(prompt_body)
+        if prompt is None:
+            continue
+        prompt_text = _native_prompt_text(prompt)
+        restored = list(_native_history_lines(prompt_text))
+        if restored:
+            summary = _native_response_summary(response_body)
+            summary_line = f"[Agent] {summary}" if summary else ""
+            if summary_line and (not restored or restored[-1] != summary_line):
+                restored.append(summary_line)
+            return restored
+        user_text = _native_first_user_line(prompt_text)
+        summary = _native_response_summary(response_body)
+        if user_text and summary:
+            return [f"[USER]: {user_text}", f"[Agent] {summary}"]
+    return []
+
+
+def format_restore():
+    files = _restore_log_files()
+    if not files:
+        return None, "❌ 没有找到历史记录"
+    latest = max(files, key=os.path.getmtime)
+    with open(latest, "r", encoding="utf-8") as f:
+        content = f.read()
+    restored = _restore_text_pairs(content) or _restore_native_history(content)
     if not restored:
         return None, "❌ 历史记录里没有可恢复内容"
-    return (restored, os.path.basename(latest), len(restored) // 2), None
+    count = sum(1 for line in restored if line.startswith("[USER]: "))
+    return (restored, os.path.basename(latest), count), None
 
 
 def build_done_text(raw_text):

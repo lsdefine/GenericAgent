@@ -7,7 +7,7 @@
 ```python
 import sys
 sys.path.append('../memory') # 直接挂载工具目录
-from mem_scanner import scan_memory
+from procmem_scanner import scan_memory
 
 # 示例：搜索特定 Hex 特征码，开启 llm_mode 以获取上下文
 results = scan_memory(pid, "48 8b ?? ?? 00", mode="hex", llm_mode=True)
@@ -16,10 +16,10 @@ results = scan_memory(pid, "48 8b ?? ?? 00", mode="hex", llm_mode=True)
 **CLI:**
 ```powershell
 # 基础搜索
-python ../memory/mem_scanner.py <PID> "pattern" --mode string
+python ../memory/procmem_scanner.py <PID> "pattern" --mode string
 
 # LLM 增强模式（输出包含上下文的 JSON，推荐）
-python ../memory/mem_scanner.py <PID> "pattern" --llm
+python ../memory/procmem_scanner.py <PID> "pattern" --llm
 ```
 
 ## 2. 典型场景：结构体或关键数据定位

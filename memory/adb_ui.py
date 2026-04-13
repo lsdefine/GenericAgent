@@ -42,7 +42,7 @@ def _parse_xml(xml_str, keyword=None, clickable_only=False, raw=False):
         cls = n.get("class", "").split(".")[-1]
         rid = n.get("resource-id", "")
         label = text or desc
-        if not label and not raw: continue
+        if not label and not click and not raw: continue
         if clickable_only and not click: continue
         if keyword and keyword.lower() not in label.lower(): continue
         cx, cy = 0, 0
@@ -51,8 +51,8 @@ def _parse_xml(xml_str, keyword=None, clickable_only=False, raw=False):
             if len(m) == 2:
                 cx = (int(m[0][0]) + int(m[1][0])) // 2
                 cy = (int(m[0][1]) + int(m[1][1])) // 2
-        nodes.append({"text": text or desc, "click": click,
-                      "bounds": bounds, "cx": cx, "cy": cy, "class": cls, "id": rid})
+        edit = cls == "EditText"
+        nodes.append({"text": text or desc, "click": click, "edit": edit, "cx": cx, "cy": cy, "cls": cls, "rid": rid})
     return nodes
 
 def ui(keyword=None, clickable_only=False, raw=False):
@@ -66,9 +66,13 @@ def ui(keyword=None, clickable_only=False, raw=False):
     nodes = _parse_xml(xml_str, keyword, clickable_only, raw)
     if not raw:
         for n in nodes:
-            flag = "Y" if n["click"] else " "
+            flag = "E" if n.get("edit") else ("Y" if n["click"] else " ")
             coord = f"({n['cx']},{n['cy']})" if n['cx'] else ""
-            print(f"[{flag}] {n['text']}  {coord}  {n['bounds']}")
+            display_text = n['text']
+            if not display_text:
+                hint = n.get('rid', '').split('/')[-1] or n.get('cls', 'icon')
+                display_text = f"<{hint}>"
+            print(f"[{flag}] {display_text}  {coord}")
         print(f"\ntotal: {len(nodes)} nodes")
     return nodes
 

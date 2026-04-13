@@ -19,4 +19,4 @@ def _run(*a, **k):
         if r.stderr is not None: r.stderr = _d(r.stderr)
     return r
 subprocess.run = _run
-
+sys.excepthook = lambda t, v, tb: (sys.__excepthook__(t, v, tb), print(f"\n[Agent Hint]: NO GUESSING! You MUST probe first. If missing common package, pip.")) if issubclass(t, (ImportError, AttributeError)) else sys.__excepthook__(t, v, tb)

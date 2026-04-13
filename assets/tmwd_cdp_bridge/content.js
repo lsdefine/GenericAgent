@@ -1,3 +1,4 @@
+;(function(){ if (/streamlit/i.test(document.title)) return;
 
 // Remove meta CSP tags
 document.querySelectorAll('meta[http-equiv="Content-Security-Policy"]').forEach(e => e.remove());
@@ -43,3 +44,4 @@ async function handle(el) {
     el.textContent = JSON.stringify({ ok: false, error: e.message });
   }
 }
+})();

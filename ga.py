@@ -1,4 +1,4 @@
-import sys, os, re, json, time, threading
+import sys, os, re, json, time, threading, importlib
 from datetime import datetime
 from pathlib import Path
 import tempfile, traceback, subprocess, itertools, collections
@@ -6,7 +6,7 @@ if sys.stdout is None: sys.stdout = open(os.devnull, "w")
 if sys.stderr is None: sys.stderr = open(os.devnull, "w")
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from agent_loop import BaseHandler, StepOutcome, try_call_generator
+from agent_loop import BaseHandler, StepOutcome, json_default
 
 def code_run(code, code_type="python", timeout=60, cwd=None, code_cwd=None, stop_signal=[]):
     """代码执行器
@@ -73,12 +73,12 @@ def code_run(code, code_type="python", timeout=60, cwd=None, code_cwd=None, stop
         status = "success" if exit_code == 0 else "error"
         status_icon = "✅" if exit_code == 0 else "❌"
         if exit_code is None: status_icon = "⏳" 
-        output_snippet = smart_format(stdout_str, max_str_len=600, omit_str='\n[omitted long output]\n')
+        output_snippet = smart_format(stdout_str, max_str_len=600, omit_str='\n\n[omitted long output]\n\n')
         yield f"[Status] {status_icon} Exit Code: {exit_code}\n[Stdout]\n{output_snippet}\n"
         if process.stdout: threading.Thread(target=process.stdout.close, daemon=True).start()
         return {
             "status": status,
-            "stdout": smart_format(stdout_str, max_str_len=8000, omit_str='\n[omitted long output]\n'),
+            "stdout": smart_format(stdout_str, max_str_len=10000, omit_str='\n\n[omitted long output]\n\n'),
             "exit_code": exit_code
         }
     except Exception as e:
@@ -94,10 +94,8 @@ def ask_user(question: str, candidates: list = None):
     return {"status": "INTERRUPT", "intent": "HUMAN_INTERVENTION",
         "data": {"question": question, "candidates": candidates or []}}
 
-from simphtml import execute_js_rich, get_html
-
+import simphtml
 driver = None
-
 def first_init_driver():
     global driver
     from TMWebDriver import TMWebDriver
@@ -137,7 +135,9 @@ def web_scan(tabs_only=False, switch_tab_id=None, text_only=False):
                 "active_tab": driver.default_session_id
             }
         }
-        if not tabs_only: result["content"] = get_html(driver, cutlist=True, maxchars=28000, text_only=text_only)
+        if not tabs_only: 
+            importlib.reload(simphtml); result["content"] = simphtml.get_html(driver, cutlist=True, maxchars=35000, text_only=text_only)
+            if text_only: result['content'] = smart_format(result['content'], max_str_len=10000, omit_str='\n\n[omitted long content]\n\n')
         return result
     except Exception as e:
         return {"status": "error", "msg": format_error(e)}
@@ -183,7 +183,7 @@ def web_execute_js(script, switch_tab_id=None, no_monitor=False):
         if driver is None: first_init_driver()
         if len(driver.get_all_sessions()) == 0: return {"status": "error", "msg": "没有可用的浏览器标签页，查L3记忆分析原因。"}
         if switch_tab_id: driver.default_session_id = switch_tab_id
-        result = execute_js_rich(script, driver, no_monitor=no_monitor)
+        result = simphtml.execute_js_rich(script, driver, no_monitor=no_monitor)
         return result
     except Exception as e:
         return {"status": "error", "msg": format_error(e)}
@@ -234,32 +234,30 @@ def file_read(path, start=1, keyword=None, count=200, show_linenos=True):
                 else: return f"Keyword '{keyword}' not found after line {start}. Falling back to content from line {start}:\n\n" \
                                + file_read(path, start, None, count, show_linenos)
             else: res = list(itertools.islice(stream, count))
-            realcnt = len(res); L_MAX = max(100, 512000//realcnt); TAG = " ... [TRUNCATED]"
+            realcnt = len(res); L_MAX = min(max(100, 256000//realcnt), 8000); TAG = " ... [TRUNCATED]"
             remaining = sum(1 for _ in itertools.islice(stream, 5000))
-            total_lines = (start - 1) + realcnt + remaining
+            total_lines = (res[0][0] - 1 if res else start - 1) + realcnt + remaining
             total_tag = "[FILE] Total " + (f"{total_lines}+" if remaining >= 5000 else str(total_lines)) + ' lines\n'
             res = [(i, l if len(l) <= L_MAX else l[:L_MAX] + TAG) for i, l in res]
             result = "\n".join(f"{i}|{l}" if show_linenos else l for i, l in res)
             if show_linenos: result = total_tag + result
             return result
-    except Exception as e:
-        return f"Error: {str(e)}"
+    except Exception as e: return f"Error: {str(e)}"
 
-def smart_format(data, max_depth=2, max_str_len=100, omit_str=' ... '):
-    def truncate(obj, depth):
-        if isinstance(obj, str):
-            if len(obj) < max_str_len+len(omit_str)*2: return obj
-            return f"{obj[:max_str_len//2]}{omit_str}{obj[-max_str_len//2:]}"
-        if depth >= max_depth: return truncate(str(obj), depth + 1)
-        if isinstance(obj, dict): return {k: truncate(v, depth + 1) for k, v in obj.items()}
-        if isinstance(obj, list): return [truncate(i, depth + 1) for i in obj]
-        return obj
-    if isinstance(data, (str, bytes)): return truncate(data, 0)
-    return json.dumps(truncate(data, 0), indent=2, ensure_ascii=False, default=str)
+def smart_format(data, max_str_len=100, omit_str=' ... '):
+    if not isinstance(data, str): data = str(data)
+    if len(data) < max_str_len + len(omit_str)*2: return data
+    return f"{data[:max_str_len//2]}{omit_str}{data[-max_str_len//2:]}"
+
+def consume_file(dr, file):
+    if dr and os.path.exists(os.path.join(dr, file)): 
+        with open(os.path.join(dr, file), encoding='utf-8', errors='replace') as f: content = f.read()
+        os.remove(os.path.join(dr, file))
+        return content
 
 class GenericAgentHandler(BaseHandler):
     '''Generic Agent 工具库，包含多种工具的实现。工具函数自动加上了 do_ 前缀。实际工具名没有前缀。'''
-    def __init__(self, parent, last_history=None, cwd='./'):
+    def __init__(self, parent, last_history=None, cwd='./temp'):
         self.parent = parent
         self.working = {}
         self.cwd = cwd;  self.current_turn = 0
@@ -272,7 +270,8 @@ class GenericAgentHandler(BaseHandler):
     
     def tool_after_callback(self, tool_name, args, response, ret):
         if args.get('_index', 0) > 0: return 
-        rsumm = re.search(r"<summary>(.*?)</summary>", response.content, re.DOTALL)
+        _c = re.sub(r'```.*?```|<thinking>.*?</thinking>', '', response.content, flags=re.DOTALL)
+        rsumm = re.search(r"<summary>(.*?)</summary>", _c, re.DOTALL)
         if rsumm: summary = rsumm.group(1).strip()[:200]
         else:
             clean_args = {k: v for k, v in args.items() if not k.startswith('_')}
@@ -289,12 +288,12 @@ class GenericAgentHandler(BaseHandler):
     def do_code_run(self, args, response):
         '''执行代码片段，有长度限制，不允许代码中放大量数据，如有需要应当通过文件读取进行。'''
         if response.tool_calls and sum(1 for tc in response.tool_calls[:args.get('_index', 0)] if tc.function.name == 'code_run') > 0:
-            return StepOutcome("[BLANK]", next_prompt="no multi code_run in one round!") 
+            return StepOutcome("[ERROR] no multi code_run in one round!", next_prompt="\n") 
         code_type = args.get("type", "python")
         code = args.get("code") or args.get("script")
         if not code:
             code = self._extract_code_block(response, code_type)
-            if not code: return StepOutcome(None, next_prompt=f"[Error] Code missing. Use ```{code_type} block or 'script' arg.")
+            if not code: return StepOutcome("[Error] Code missing. Use ```{code_type} block or 'script' arg.", next_prompt="\n")
         timeout = args.get("timeout", 60)
         raw_path = os.path.join(self.cwd, args.get("cwd", './'))
         cwd = os.path.normpath(os.path.abspath(raw_path))
@@ -305,7 +304,7 @@ class GenericAgentHandler(BaseHandler):
             except SyntaxError: exec(code, ns); result = ns.get('_r', 'OK')
             except Exception as e: result = f'Error: {e}'
         else: result = yield from code_run(code, code_type, timeout, cwd, code_cwd=code_cwd, stop_signal=self.code_stop_signal)
-        next_prompt = self._get_anchor_prompt()
+        next_prompt = self._get_anchor_prompt(skip=args.get('_index', 0) > 0)
         return StepOutcome(result, next_prompt=next_prompt)
     
     def do_ask_user(self, args, response):
@@ -326,14 +325,14 @@ class GenericAgentHandler(BaseHandler):
         result = web_scan(tabs_only=tabs_only, switch_tab_id=switch_tab_id, text_only=text_only)
         content = result.pop("content", None)
         yield f'[Info] {str(result)}\n'
-        if content: next_prompt = f"<tool_result>\n```html\n{content}\n```\n</tool_result>"
-        else: next_prompt = "标签页列表如上\n"  # 手动tool_result为了触发历史上下文自动压缩
+        if content: result = json.dumps(result, ensure_ascii=False, default=json_default) + f"\n```html\n{content}\n```"
+        next_prompt = "\n"
         return StepOutcome(result, next_prompt=next_prompt)
     
     def do_web_execute_js(self, args, response):
         '''web情况下的优先使用工具，执行任何js达成对浏览器的*完全*控制。支持将结果保存到文件供后续读取分析。'''
         script = args.get("script", "") or self._extract_code_block(response, "javascript")
-        if not script: return StepOutcome(None, next_prompt="[Error] Script missing. Use ```javascript block or 'script' arg.")
+        if not script: return StepOutcome("[Error] Script missing. Use ```javascript block or 'script' arg.", next_prompt="\n")
         abs_path = self._get_abs_path(script.strip())
         if os.path.isfile(abs_path):
             with open(abs_path, 'r', encoding='utf-8') as f: script = f.read()
@@ -350,11 +349,13 @@ class GenericAgentHandler(BaseHandler):
                 result["js_return"] += f"\n\n[已保存完整内容到 {abs_path}]"
             except:
                 result['js_return'] += f"\n\n[保存失败，无法写入文件 {abs_path}]"
-        try: print("Web Execute JS Result:", smart_format(result))
+        show = smart_format(json.dumps(result, ensure_ascii=False, indent=2, default=json_default), max_str_len=300)
+        try: print("Web Execute JS Result:", show)
         except: pass
-        yield f"JS 执行结果:\n{smart_format(result)}\n"
-        next_prompt = self._get_anchor_prompt()
-        return StepOutcome(smart_format(result, max_str_len=5000), next_prompt=next_prompt)
+        yield f"JS 执行结果:\n{show}\n"
+        next_prompt = self._get_anchor_prompt(skip=args.get('_index', 0) > 0)
+        result = json.dumps(result, ensure_ascii=False, default=json_default)
+        return StepOutcome(smart_format(result, max_str_len=8000), next_prompt=next_prompt)
     
     def do_file_patch(self, args, response):
         path = self._get_abs_path(args.get("path", ""))
@@ -366,8 +367,8 @@ class GenericAgentHandler(BaseHandler):
             yield f"[Status] ❌ 引用展开失败: {e}\n"
             return StepOutcome({"status": "error", "msg": str(e)}, next_prompt="\n")
         result = file_patch(path, old_content, new_content)
-        yield f"\n{smart_format(result)}\n"
-        next_prompt = self._get_anchor_prompt()
+        yield f"\n{str(result)}\n"
+        next_prompt = self._get_anchor_prompt(skip=args.get('_index', 0) > 0)
         return StepOutcome(result, next_prompt=next_prompt)
     
     def do_file_write(self, args, response):
@@ -380,7 +381,7 @@ class GenericAgentHandler(BaseHandler):
         yield f"[Action] {action_str} file: {os.path.basename(path)}\n"
 
         def extract_robust_content(text):
-            tag = re.search(r"<file_content>(.*)</file_content>", text, re.DOTALL)
+            tag = re.search(r"<file_content[^>]*>(.*)</file_content>", text, re.DOTALL)
             if tag: return tag.group(1).strip()
             s, e = text.find("```"), text.rfind("```")
             if -1 < s < e: return text[text.find("\n", s)+1 : e].strip()
@@ -389,7 +390,7 @@ class GenericAgentHandler(BaseHandler):
         blocks = extract_robust_content(response.content)
         if not blocks:
             yield f"[Status] ❌ 失败: 未在回复中找到<file_content>代码块内容\n"
-            return StepOutcome({"status": "error", "msg": "No content found, if you want a blank, you should use code_run"}, next_prompt="\n")
+            return StepOutcome({"status": "error", "msg": "No content found. Put content inside <file_content>...</file_content> tags in your reply body and call file_write."}, next_prompt="\n")
         try:
             new_content = expand_file_refs(blocks, base_dir=self.cwd)
             if mode == "prepend":
@@ -398,7 +399,7 @@ class GenericAgentHandler(BaseHandler):
             else:
                 with open(path, 'a' if mode == "append" else 'w', encoding="utf-8") as f: f.write(new_content)
             yield f"[Status] ✅ {mode.capitalize()} 成功 ({len(new_content)} bytes)\n"
-            next_prompt = self._get_anchor_prompt()
+            next_prompt = self._get_anchor_prompt(skip=args.get('_index', 0) > 0)
             return StepOutcome({"status": "success", 'writed_bytes': len(new_content)}, next_prompt=next_prompt)
         except Exception as e:
             yield f"[Status] ❌ 写入异常: {str(e)}\n"
@@ -417,26 +418,25 @@ class GenericAgentHandler(BaseHandler):
         if show_linenos:
             tips = '由于设置了show_linenos，以下返回信息为：(行号|)内容 。\n'
             result = tips + result 
-        if ' ... [TRUNCATED]' in result:
-            result += '\n\n（某些行被截断，如需完整内容可改用 code_run 读取）'
-        next_prompt = self._get_anchor_prompt()
+        if ' ... [TRUNCATED]' in result: result += '\n\n（某些行被截断，如需完整内容可改用 code_run 读取）'
+        result = smart_format(result, max_str_len=20000, omit_str='\n\n[omitted long content]\n\n')
+        next_prompt = self._get_anchor_prompt(skip=args.get('_index', 0) > 0)
         log_memory_access(path)
         if 'memory' in path or 'sop' in path: 
             next_prompt += "\n[SYSTEM TIPS] 正在读取记忆或SOP文件，若决定按sop执行请提取sop中的关键点（特别是靠后的）update working memory."
         return StepOutcome(result, next_prompt=next_prompt)
     
     def do_update_working_checkpoint(self, args, response):
-        '''为整个任务设定后续需要临时记忆的重点。
-        '''
+        '''为整个任务设定后续需要临时记忆的重点。'''
         key_info = args.get("key_info", "")
         related_sop = args.get("related_sop", "")
         if "key_info" in args: self.working['key_info'] = key_info
         if "related_sop" in args: self.working['related_sop'] = related_sop
         self.working['passed_sessions'] = 0
         yield f"[Info] Updated key_info and related_sop.\n"
-        next_prompt = self._get_anchor_prompt()
+        next_prompt = self._get_anchor_prompt(skip=args.get('_index', 0) > 0)
         #next_prompt += '\n[SYSTEM TIPS] 此函数一般在任务开始或中间时调用，如果任务已成功完成应该是start_long_term_update用于结算长期记忆。\n'
-        return StepOutcome({"status": "success"}, next_prompt=next_prompt)
+        return StepOutcome({"result": "working key_info updated"}, next_prompt=next_prompt)
 
     def do_no_tool(self, args, response):
         '''这是一个特殊工具，由引擎自主调用，不要包含在TOOLS_SCHEMA里。
@@ -446,9 +446,9 @@ class GenericAgentHandler(BaseHandler):
         if not response or not content.strip():
             yield "[Warn] LLM returned an empty response. Retrying...\n"
             return StepOutcome({}, next_prompt="[System] Blank response, regenerate and tooluse")
-        if '流异常中断，未收到完整响应 !!!]' in content:
+        if '未收到完整响应 !!!]' in content[-100:]:
             return StepOutcome({}, next_prompt="[System] Incomplete response. Regenerate and tooluse.")
-        if 'max_tokens !!!]' in content:
+        if 'max_tokens !!!]' in content[-100:]:
             return StepOutcome({}, next_prompt="[System] max_tokens limit reached. Use multi small steps to do it.")
         # 2. 检测“包含较大代码块但未调用工具”的情况
         # 这里通过三引号代码块 + 最少字符数的方式粗略判断“大段代码”
@@ -493,14 +493,16 @@ class GenericAgentHandler(BaseHandler):
         else: result = "Memory Management SOP not found. Do not update memory."
         return StepOutcome(result, next_prompt=prompt)
 
-    def _get_anchor_prompt(self):
+    def _get_anchor_prompt(self, skip=False):
+        if skip: return "\n"
         h_str = "\n".join(self.history_info[-20:])
         prompt = f"\n### [WORKING MEMORY]\n<history>\n{h_str}\n</history>"
         prompt += f"\nCurrent turn: {self.current_turn}\n"
         if self.working.get('key_info'): prompt += f"\n<key_info>{self.working.get('key_info')}</key_info>"
         if self.working.get('related_sop'): prompt += f"\n有不清晰的地方请再次读取{self.working.get('related_sop')}"
-        try: print(prompt)
-        except: pass
+        if getattr(self.parent, 'verbose', False):
+            try: print(prompt)
+            except: pass
         return prompt
 
     def next_prompt_patcher(self, next_prompt, outcome, turn):
@@ -509,13 +511,17 @@ class GenericAgentHandler(BaseHandler):
         elif turn % 7 == 0:
             next_prompt += f"\n\n[DANGER] 已连续执行第 {turn} 轮。禁止无效重试。若无有效进展，必须切换策略：1. 探测物理边界 2. 请求用户协助。如有需要，可调用 update_working_checkpoint 保存关键上下文。"
         elif turn % 10 == 0: next_prompt += get_global_memory()
+        injkeyinfo = consume_file(self.parent.task_dir, '_keyinfo')
+        injprompt = consume_file(self.parent.task_dir, '_intervene')
+        if injkeyinfo: self.working['key_info'] = self.working.get('key_info', '') + f"\n[MASTER] {injkeyinfo}"
+        if injprompt: next_prompt += f"\n\n[MASTER] {injprompt}\n"
         return next_prompt
 
 def get_global_memory():
     prompt = "\n"
     try:
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        with open(os.path.join(script_dir, 'memory/global_mem_insight.txt'), 'r', encoding='utf-8') as f: insight = f.read()
+        with open(os.path.join(script_dir, 'memory/global_mem_insight.txt'), 'r', encoding='utf-8', errors='replace') as f: insight = f.read()
         with open(os.path.join(script_dir, 'assets/insight_fixed_structure.txt'), 'r', encoding='utf-8') as f: structure = f.read()
         prompt += f'cwd = {os.path.abspath("./temp")} （用./引用）\n'
         prompt += f"\n[Memory] (../memory)\n"

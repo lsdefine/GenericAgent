@@ -72,16 +72,40 @@ function createEnhancedDOMCopy() {
     const nonTextChildren = childNodes.filter(child => child.nodeType !== 3);  
     const hasValidChildren = nonTextChildren.length > 0;  
           
-    if (!isVisible && nonTextChildren.length > 0) {
-      const visChild = nonTextChildren.find(child => 
-          nodeInfo.has(child) && nodeInfo.get(child).isVisible);
-      if (visChild) info = nodeInfo.get(visChild);
+    if (hasValidChildren) {
+      const childrenInfos = nonTextChildren.map(c => nodeInfo.get(c)).filter(i => i && i.rect && i.rect.width > 0 && i.rect.height > 0);
+      const bgAlpha = (() => {
+        const c = style.backgroundColor;
+        if (!c || c === 'transparent') return 0;
+        const m = c.match(/rgba?\([^)]+,\s*([\d.]+)\)/);
+        return m ? parseFloat(m[1]) : 1;
+      })();
+      const hasVisualBg = bgAlpha > 0.1 || style.backgroundImage !== 'none' || (style.backdropFilter && style.backdropFilter !== 'none') || style.boxShadow !== 'none';
+      
+      if (!hasVisualBg && childrenInfos.length > 0) {
+        let minL = Infinity, minT = Infinity, maxR = -Infinity, maxB = -Infinity;
+        for (const cInfo of childrenInfos) {
+          minL = Math.min(minL, cInfo.rect.left);
+          minT = Math.min(minT, cInfo.rect.top);
+          maxR = Math.max(maxR, cInfo.rect.right);
+          maxB = Math.max(maxB, cInfo.rect.bottom);
+        }
+        info.rect = { left: minL, top: minT, right: maxR, bottom: maxB, width: maxR - minL, height: maxB - minT };
+        info.area = info.rect.width * info.rect.height;
+      } else {
+        const maxC = childrenInfos.filter(i => i.isVisible).sort((a, b) => b.area - a.area)[0];
+        if (maxC && maxC.area > 10000 && (!isVisible || maxC.area > info.area * 5)) info = maxC;
+      }
     }
     nodeInfo.set(clone, info);
 
     if (sourceNode.nodeType === 1 && sourceNode.tagName === 'DIV') {    
       if (!hasValidChildren && !sourceNode.textContent.trim()) return null; 
     }  
+    // aria-hidden + not visible = truly hidden (e.g. mobile menus), remove even if has children
+    if (sourceNode.getAttribute && sourceNode.getAttribute('aria-hidden') === 'true' && !info.isVisible) {
+      return null;
+    }
     if (info.isVisible || hasValidChildren || keep) {  
       childNodes.forEach(child => clone.appendChild(child));  
       return clone;  
@@ -136,8 +160,9 @@ function analyzeNode(node, pPathType='main') {
     const childrenInfo = children.map(child => {
       const info = getNodeInfo(child) || { rect: {}, style: {} };
       return { node: child, rect: info.rect, style: info.style,
-          area: info.area, zIndex: info.zIndex };
-    }).sort((a, b) => b.area - a.area);
+          area: info.area, zIndex: (info.zIndex || 0), isVisible: info.isVisible };
+    });
+    childrenInfo.sort((a, b) => b.area - a.area);
 
     // 检测是划分还是覆盖
     const isOverlay = hasOverlap(childrenInfo);
@@ -168,18 +193,20 @@ function analyzeNode(node, pPathType='main') {
       childrenInfo[0].node.dataset.mark = 'K:main';
       for (let i = 1; i < childrenInfo.length; i++) {
         const child = childrenInfo[i];
+        let className = (child.node.getAttribute('class') || '').toLowerCase();
         let isSecondary = containsButton(child.node);
-        if (child.node.className.toLowerCase().includes('nav')) isSecondary = true;
-        if (child.node.className.toLowerCase().includes('breadcrumbs')) isSecondary = true;
-        if (child.node.className.toLowerCase().includes('header') && child.node.className.toLowerCase().includes('table')) isSecondary = true;
+        if (className.includes('nav')) isSecondary = true;
+        if (className.includes('breadcrumbs')) isSecondary = true;
+        if (className.includes('header') && className.includes('table')) isSecondary = true;
         if (child.node.innerHTML.trim().replace(/\s+/g, '').length < 500) isSecondary = true;
         if (child.node.textContent.trim().length > 200) isSecondary = true;  // P3: 有实质文本内容则保留
         if (child.style.visibility === 'hidden') isSecondary = false;
         if (isSecondary) child.node.dataset.mark = 'K:secondary';  
-        else child.node.dataset.mark = 'R:nonEssential';  
+        else child.node.dataset.mark = 'K:nonEssential';  
       }  
     } else {  
-      const uniqueClassNames = new Set(childrenInfo.map(item => item.node.className)).size;  
+      return; // relaxed: skip equalmany filtering, list truncation handles token budget
+      const uniqueClassNames = new Set(childrenInfo.map(item => item.node.getAttribute('class') || '')).size;  
       const highClassNameVariety = uniqueClassNames >= childrenInfo.length * 0.8;  
       if (pathType !== 'main' && highClassNameVariety && childrenInfo.length > 5) {
         childrenInfo.forEach(child => child.node.dataset.mark = 'R:equalmany');  
@@ -197,6 +224,9 @@ function analyzeNode(node, pPathType='main') {
   }   
   
   function handleOverlayContainer(childrenInfo, pathType) {  
+    // elementFromPoint ground truth: 让浏览器告诉我们谁在视觉最上层
+    const _efp = document.elementFromPoint(window.innerWidth/2, window.innerHeight/2);
+    if (_efp) { let _el = _efp; while (_el) { const _h = childrenInfo.find(c => c.node.id && c.node.id === _el.id); if (_h) { _h.zIndex = 9999; break; } _el = _el.parentElement; } }
     const sorted = [...childrenInfo].sort((a, b) => b.zIndex - a.zIndex);  
     console.log('排序后的子元素:', sorted);
     if (sorted.length === 0) return;  
@@ -215,7 +245,7 @@ function analyzeNode(node, pPathType='main') {
     const minDimensionRatio = Math.min(rect.width / window.innerWidth, rect.height / window.innerHeight);  
     const maxDimensionRatio = Math.max(rect.width / window.innerWidth, rect.height / window.innerHeight);  
     const isNearTop = rect.top < 50;  
-    const isDialog = top.node.querySelector('iframe') && centerDiff < 0.3;
+    const isDialog = (top.node.querySelector('iframe') || top.node.querySelector('button') || top.node.querySelector('input')) && centerDiff < 0.3;
 
     if (isComplex && centerDiff < 0.2 && 
         ((minDimensionRatio > 0.2 && rect.width/window.innerWidth < 0.98) || minDimensionRatio > 0.95)) {  
@@ -246,99 +276,132 @@ function analyzeNode(node, pPathType='main') {
         const r1 = a.rect, r2 = b.rect;  
         if (!r1.width || !r2.width || !r1.height || !r2.height) {return false;}
         const epsilon = 1;
-        return !(r1.x + r1.width <= r2.x + epsilon || r1.x >= r2.x + r2.width - epsilon || 
-            r1.y + r1.height <= r2.y + epsilon || r1.y >= r2.y + r2.height - epsilon
+        const x1 = r1.x !== undefined ? r1.x : r1.left;
+        const y1 = r1.y !== undefined ? r1.y : r1.top;
+        const x2 = r2.x !== undefined ? r2.x : r2.left;
+        const y2 = r2.y !== undefined ? r2.y : r2.top;
+        return !(x1 + r1.width <= x2 + epsilon || x1 >= x2 + r2.width - epsilon || 
+            y1 + r1.height <= y2 + epsilon || y1 >= y2 + r2.height - epsilon
         );
       })
     );  
 }
 
+// Hoist top 1-2 deep fixed dialogs to body level for overlay detection
+const _fc = [...domCopy.querySelectorAll('*')].filter(el => {
+  if (el.parentNode === domCopy) return false;
+  const info = getNodeInfo(el);
+  if (!info?.rect || info.style.position !== 'fixed') return false;
+  const r = info.rect, cover = (r.width * r.height) / viewportArea;
+  const cd = Math.abs((r.left + r.width/2) - window.innerWidth/2) / window.innerWidth;
+  return cover > 0.15 && cover < 1.0 && cd < 0.3 && el.querySelector('button, input, a, [role="button"], iframe');
+}).filter((el, _, arr) => !arr.some(o => o !== el && o.contains(el)))
+  .sort((a, b) => (getNodeInfo(b).rect.width * getNodeInfo(b).rect.height) - (getNodeInfo(a).rect.width * getNodeInfo(a).rect.height))
+  .slice(0, 2);
+_fc.forEach(el => { const r = getNodeInfo(el).rect; console.log('[simphtml] Hoisted fixed dialog:', el.tagName + (el.id ? '#'+el.id : '') + (el.className ? '.'+String(el.className).split(' ')[0] : ''), Math.round(r.width)+'x'+Math.round(r.height), Math.round(100*r.width*r.height/viewportArea)+'%'); el.parentNode.removeChild(el); domCopy.appendChild(el); });
 const result = analyzeNode(domCopy); 
 domCopy.querySelectorAll('[data-mark^="R:"]').forEach(el=>el.parentNode?.removeChild(el));  
 let root = domCopy;  
 while (root.children.length === 1) {  
   root = root.children[0];  
 }  
-for (let ii = 0; ii < 3; ii++) 
+for (let ii = 0; ii < 3; ii++) {
   root.querySelectorAll('div').forEach(div => (!div.textContent.trim() && div.children.length === 0) && div.remove());
+}
 root.querySelectorAll('[data-mark]').forEach(e => e.removeAttribute('data-mark'));  
-root.removeAttribute('data-mark');  
+root.removeAttribute('data-mark');
+root.querySelectorAll('iframe').forEach(f => {
+  if (f.children.length) {
+    const d = document.createElement('div');
+    for (const a of f.attributes) d.setAttribute(a.name, a.value);
+    d.setAttribute('data-tag', 'iframe');
+    while (f.firstChild) d.appendChild(f.firstChild);
+    f.parentNode.replaceChild(d, f);
+  }
+});
 return root.outerHTML;
     }
 optHTML()'''
 
 js_findMainList = r'''function findMainList(startElement = null) {
-        const containerElement = startElement || document.body;  
-        const rect = containerElement.getBoundingClientRect();  
-        const centerX = startElement ? (rect.left + rect.width/2) : (window.innerWidth/2);  
-        const centerY = startElement ? (rect.top + rect.height/2) : (window.innerHeight/2);  
-        
-        // 获取中心元素  
-        const centerElement = document.elementFromPoint(centerX, centerY) || containerElement;  
-        if (!centerElement) return { container: null, items: [] };  
+        const root = startElement || document.body;
+        const MIN_CHILDREN = 8;
+        const MAX_CONTAINERS = 20;
 
-        // 收集祖先链  
-        const ancestors = [];  
-        for (let current = centerElement; current && ancestors.length < 10; current = current.parentElement) {  
-            ancestors.push(current);  
-            if (current === containerElement) break;  
-            if (containerElement !== document.body && !containerElement.contains(current)) break;  
-        }  
-        if (!ancestors.includes(containerElement)) ancestors.push(containerElement);  
+        // 全局扫描：收集候选容器，按 l1 + l2*0.1 排序（l2=孙子元素数，捕获表格等多层结构）
+        const candidates = [];
+        const allEls = root.querySelectorAll('*');
+        for (const node of allEls) {
+            if (node.closest('svg')) continue;
+            const l1 = node.children.length;
+            if (l1 < 5) continue;
+            let l2 = 0;
+            for (const child of node.children) l2 += child.children.length;
+            const score = l1 + l2 * 0.1;
+            if (score >= MIN_CHILDREN) candidates.push({node, score});
+        }
+        candidates.sort((a, b) => b.score - a.score);
+        const toProcess = candidates.slice(0, MAX_CONTAINERS).map(c => c.node);
 
-        let groupCandidates = [];
-        ancestors.forEach(ancestor => {
-            const topGroups = findTopGroups(ancestor, 3);
-            groupCandidates = groupCandidates.concat(topGroups);
-        });
-
-        console.log(groupCandidates);
-
-        let candidates = [];
-        ancestors.forEach(container => {
-            groupCandidates.forEach(groupInfo => {
-                // 尝试将组应用到当前容器
+        // 对每个容器找候选组并评分
+        let allCandidates = [];
+        for (const container of toProcess) {
+            const topGroups = findTopGroups(container, 3);
+            for (const groupInfo of topGroups) {
                 const items = findMatchingElements(container, groupInfo.selector);
-                // 只考虑足够大的组
-                if (items.length >= 3) {
-                    candidates.push({
-                        container: container,
-                        selector: groupInfo.selector,
-                        items: items,
-                        gscore: groupInfo.score
-                    });
+                if (items.length >= 5) {
+                    const score = scoreContainer(container, items) + groupInfo.score;
+                    if (score >= 30) {
+                        allCandidates.push({ container, selector: groupInfo.selector, items, score });
+                    }
                 }
-            });
-        });
-
-        candidates = candidates.map(candidate => {
-            const score = scoreContainer(candidate.container, candidate.items) + candidate.gscore;
-            return {...candidate, score};
-        });
-
-        if (candidates.length === 0) {
-            return { container: centerElement, items: [] };
+            }
         }
 
-        // 3. 选择得分最高的容器
-        const bestCandidate = candidates.sort((a, b) => b.score - a.score)[0];
-        console.log(candidates);
+        // 按分数降序排列
+        allCandidates.sort((a, b) => b.score - a.score);
 
-        // 如果最高分仍然很低，退回到中心元素
-        if (bestCandidate.score < 30) {
-            return { container: centerElement, items: [] };
+        // 去重：移除与更高分候选重叠超50%的结果
+        const kept = [];
+        for (const cand of allCandidates) {
+            let dominated = false;
+            for (const k of kept) {
+                if (k.container.contains(cand.container) || cand.container.contains(k.container)) {
+                    const kSet = new Set(k.items);
+                    const overlap = cand.items.filter(it => kSet.has(it)).length;
+                    if (overlap > cand.items.length * 0.5) { dominated = true; break; }
+                }
+            }
+            if (!dominated) kept.push(cand);
         }
 
-        return {
-            container: bestCandidate.container,
-            items: bestCandidate.items,
-            selector: bestCandidate.selector,
-            score: bestCandidate.score
-        };
+        function describeResult(container, items, selector, score) {
+            if(container&&!container.id)container.id='_ljq'+(window._lci=(window._lci||0)+1);
+            const cTag = container ? container.tagName : null;
+            const cId = container ? (container.id || '') : '';
+            const cClass = container ? (String(container.className || '').trim()) : '';
+            const result = {
+                containerTag: cTag, containerId: cId, containerClass: cClass,
+                itemCount: items.length,
+            };
+            let prefix = '';
+            if (cId) prefix = '#' + CSS.escape(cId);
+            if (selector) result.selector = prefix ? (prefix + ' > ' + selector) : selector;
+            if (score !== undefined) result.score = score;
+            if (items.length > 0) {
+                result.firstItemPreview = items[0].outerHTML.substring(0, 200);
+                result.itemTags = items.slice(0, 10).map(el => el.tagName + (el.className ? '.' + String(el.className).trim().split(/\s+/)[0] : ''));
+            }
+            return result;
+        }
+
+        if (kept.length === 0) return [];
+
+        return kept.map(c => describeResult(c.container, c.items, c.selector, c.score));
     }
     
     function findTopGroups(container, limit) {
-        const children = Array.from(container.children);
+        const children = Array.from(container.children).filter(c => !c.closest('svg'));
         const totalChildren = children.length;
         if (totalChildren < 3) return [];
 
@@ -393,7 +456,7 @@ js_findMainList = r'''function findMainList(startElement = null) {
         // 添加类组
         Object.keys(classFreq).forEach(cls => {
             if (classFreq[cls] >= minGroupSize) {
-                const selector = '.' + cls;
+                const selector = '.' + CSS.escape(cls);
                 groups.push({
                     selector,
                     elements: classMap[cls],
@@ -402,14 +465,8 @@ js_findMainList = r'''function findMainList(startElement = null) {
             }
         });
         // 添加标签+类组合
-        const topTags = Object.keys(tagFreq)
-            .filter(t => tagFreq[t] >= minGroupSize)
-            .slice(0, 3);
-
-        const topClasses = Object.keys(classFreq)
-            .filter(c => classFreq[c] >= minGroupSize)
-            .sort((a, b) => classFreq[b] - classFreq[a])
-            .slice(0, 3);
+        const topTags = Object.keys(tagFreq).filter(t => tagFreq[t] >= minGroupSize).slice(0, 3);
+        const topClasses = Object.keys(classFreq).filter(c => classFreq[c] >= minGroupSize).sort((a, b) => classFreq[b] - classFreq[a]).slice(0, 3);
 
         // 标签+类
         topTags.forEach(tag => {
@@ -420,12 +477,8 @@ js_findMainList = r'''function findMainList(startElement = null) {
                                                 );
 
                 if (elements.length >= minGroupSize) {
-                    const selector = tag + '.' + cls;
-                    groups.push({
-                        selector,
-                        elements,
-                        score: scoreGroup(selector, elements)
-                    });
+                    const selector = tag + '.' + CSS.escape(cls);
+                    groups.push({selector, elements, score: scoreGroup(selector, elements)});
                 }
             });
         });
@@ -434,25 +487,16 @@ js_findMainList = r'''function findMainList(startElement = null) {
         for (let i = 0; i < topClasses.length; i++) {
             for (let j = i + 1; j < topClasses.length; j++) {
                 const elements = children.filter(el =>
-                                                 el.className &&
-                                                 el.className.split(/\s+/).includes(topClasses[i]) &&
-                                                 el.className.split(/\s+/).includes(topClasses[j])
-                                                );
+                                                 el.className && el.className.split(/\s+/).includes(topClasses[i]) && el.className.split(/\s+/).includes(topClasses[j]));
 
                 if (elements.length >= minGroupSize) {
-                    const selector = '.' + topClasses[i] + '.' + topClasses[j];
-                    groups.push({
-                        selector,
-                        elements,
-                        score: scoreGroup(selector, elements)
-                    });
+                    const selector = '.' + CSS.escape(topClasses[i]) + '.' + CSS.escape(topClasses[j]);
+                    groups.push({selector, elements,score: scoreGroup(selector, elements)});
                 }
             }
         }
         // 返回得分最高的N个组
-        return groups
-            .sort((a, b) => b.score - a.score)
-            .slice(0, limit);
+        return groups.sort((a, b) => b.score - a.score).slice(0, limit);
     }
 
     function findMatchingElements(container, selector) {
@@ -467,7 +511,6 @@ js_findMainList = r'''function findMainList(startElement = null) {
 
     function scoreContainer(container, items) {
         if (!container || items.length < 3) return 0;
-
         // 1. 计算基础面积数据
         const containerRect = container.getBoundingClientRect();
         const containerArea = containerRect.width * containerRect.height;
@@ -487,14 +530,11 @@ js_findMainList = r'''function findMainList(startElement = null) {
                 visibleItems++;
             }
         });
-
         // 如果可见项太少，返回低分
         if (visibleItems < 3) return 0;
-
         // 防止异常值：确保面积不超过容器
         totalItemArea = Math.min(totalItemArea, containerArea * 0.98);
         const areaRatio = totalItemArea / containerArea;
-
         // 3. 计算各项评分 - 使用线性插值而非阶梯
         // 3.2 面积比评分 - 最多40分，连续曲线
         // 使用sigmoid函数让评分更平滑
@@ -506,7 +546,6 @@ js_findMainList = r'''function findMainList(startElement = null) {
             const mean = itemAreas.reduce((sum, area) => sum + area, 0) / itemAreas.length;
             const variance = itemAreas.reduce((sum, area) => sum + Math.pow(area - mean, 2), 0) / itemAreas.length;
             const cv = mean > 0 ? Math.sqrt(variance) / mean : 1;
-
             // 指数衰减函数，cv越小分数越高
             uniformityScore = 20 * Math.exp(-2.5 * cv);
         }
@@ -525,10 +564,8 @@ js_findMainList = r'''function findMainList(startElement = null) {
             // 坐标分组并计算行列数
             const uniqueRows = new Set(items.map(item => Math.round(item.getBoundingClientRect().top / 5) * 5)).size;
             const uniqueCols = new Set(items.map(item => Math.round(item.getBoundingClientRect().left / 5) * 5)).size;
-
             // 如果是单行或单列，直接给满分；否则评估网格质量
-            if (uniqueRows === 1 || uniqueCols === 1) {
-                layoutScore = 20;
+            if (uniqueRows === 1 || uniqueCols === 1) { layoutScore = 20;
             } else {
                 const coverage = Math.min(1, items.length / (uniqueRows * uniqueCols));
                 const efficiency = Math.max(0, 1 - (uniqueRows + uniqueCols) / (2 * items.length));
@@ -553,172 +590,11 @@ js_findMainList = r'''function findMainList(startElement = null) {
         return totalScore;
     }'''
 
-js_findMainContent = '''
-  function isLikelyOperationMenu(element) {  
-    // 基础尺寸和位置检查  
-    const rect = element.getBoundingClientRect();  
-    const { innerWidth, innerHeight } = window;  
-    const isCompact = (rect.width * rect.height) < (innerWidth * innerHeight * 0.15);  
-    if (!isCompact) return false;  
-    
-    // 边缘检测  
-    const edgeProximity = {  
-      top: rect.top < 100,  
-      left: rect.left < 50,  
-      right: innerWidth - rect.right < 50,  
-      bottom: innerHeight - rect.bottom < 100  
-    };  
-    const isAtEdge = Object.values(edgeProximity).some(Boolean);  
-    
-    // 交互元素分析  
-    const links = [...element.querySelectorAll('a')];  
-    const buttons = [...element.querySelectorAll('button, [role="button"]')];  
-    const allInteractive = [...links, ...buttons];  
-    
-    // 快速排除: 边缘较大元素通常是导航  
-    if (isAtEdge && rect.width > 150 && rect.height > 50 && links.length > 3) {  
-      return false;  
-    }  
-    
-    // 链接类型分析  
-    const linkTypes = links.reduce((types, link) => {  
-      const href = link.getAttribute('href') || '';  
-      if (href.startsWith('#')) types.hash++;  
-      else if (href.startsWith('javascript:')) types.js++;  
-      else if (href.includes('://') && !href.includes(location.hostname)) types.external++;  
-      else types.internal++;  
-      return types;  
-    }, { hash: 0, js: 0, external: 0, internal: 0 });  
-    
-    // 特征评分  
-    const operationFeatures = [  
-      linkTypes.hash > 0 || linkTypes.js > 0,  // 页内操作链接  
-      buttons.length > 0,                      // 有按钮  
-      buttons.length > 1,
-      rect.width > rect.height * 1.5 && allInteractive.length <= 6,  // 水平排列且元素适量  
-      element.querySelectorAll('svg, img, i, [class*="icon"]').length > 0,  // 有图标  
-      getComputedStyle(element).position !== 'static' && !isAtEdge  // 定位但不在边缘  
-    ];  
-    const navigationFeatures = [  
-      isAtEdge,                           // 在页面边缘  
-      linkTypes.internal > 3,             // 多个内部页面链接  
-      links.length === allInteractive.length && links.length > 3  // 全是链接且数量多  
-    ];  
-    const opScore = operationFeatures.filter(Boolean).length;  
-    const navScore = navigationFeatures.filter(Boolean).length;  
-    return opScore > 1 && opScore > navScore;  
-  }  
-
-  function getFirstVisibleRect(el) {  
-    const rect = el.getBoundingClientRect();  
-    
-    if (rect.width > 0 && rect.height > 0) {  
-        return {  
-            left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom,  
-            width: rect.width, height: rect.height, x: rect.x, y: rect.y,  
-            zIndex: parseInt(getComputedStyle(el).zIndex) || 0  
-        };  
-    }  
-    
-    if (!el.querySelector('button, a, input') || !el.innerText.trim()) return rect;  
-    
-    const visibleChild = Array.from(el.children)  
-        .find(child => {  
-            const hasContent = child.querySelector('button, a, input') && child.innerText.trim();  
-            return hasContent && (  
-                child.getBoundingClientRect().width > 0 ||   
-                getFirstVisibleRect(child).width > 0  
-            );  
-        });  
-        
-    if (!visibleChild) return rect;  
-    
-    const childRect = visibleChild.getBoundingClientRect();  
-    return childRect.width > 0 ?   
-        {  
-            left: childRect.left, top: childRect.top, right: childRect.right, bottom: childRect.bottom,  
-            width: childRect.width, height: childRect.height, x: childRect.x, y: childRect.y,  
-            zIndex: parseInt(getComputedStyle(visibleChild).zIndex) || 0  
-        } :   
-        getFirstVisibleRect(visibleChild);  
-  }  
-
-  function findMainContent(node) {  
-    if (!node?.children?.length) return node;  
-    const rectn = node.getBoundingClientRect();
-    const viewportArea = window.innerWidth * window.innerHeight;  
-    if (rectn.width * rectn.height < viewportArea * 0.4) return node;
-    
-    // 过滤可见元素  
-    const children = [...node.children].filter(child => {  
-      const style = window.getComputedStyle(child);  
-      const hasTextContent = child.textContent.trim().length > 5; 
-      return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0' && hasTextContent;  
-    });  
-    if (!children.length) return node;  
-    if (children.length === 1) return findMainContent(children[0]);  
-    if (children.length > 10) return node;
-    if (children.length == 2 && (isLikelyOperationMenu(children[0]) || isLikelyOperationMenu(children[1]))) return node;
-
-    // 计算元素信息  
-    const elemInfo = children.map(child => {  
-      const rect = getFirstVisibleRect(child);   
-      const style = window.getComputedStyle(child);  
-      return {   
-        element: child, area: rect.width * rect.height, rect, style,
-        zIndex: rect.zIndex || 0, position: style.position  
-      };  
-    }).sort((a, b) => b.area - a.area);      
-    // 检测重叠  
-    function isOverlapping(r1, r2) {  
-      return !(r1.right <= r2.left || r1.left >= r2.right || r1.bottom <= r2.top || r1.top >= r2.bottom);  
-    }  
-    // 检查是否有任何重叠的元素对  
-    const hasOverlap = elemInfo.some((e1, i) =>   
-      elemInfo.slice(i + 1).some(e2 => isOverlapping(e1.rect, e2.rect))  
-    );  
-    
-    console.log(hasOverlap, elemInfo);
-    
-    // 无重叠情况: 面积比例判断  
-    if (!hasOverlap) {  
-      const totalArea = elemInfo.reduce((sum, item) => sum + item.area, 0);  
-      const [main, second] = elemInfo;  
-      return (main.area / totalArea > 0.6 && (!second || main.area > second.area * 2))   
-        ? findMainContent(main.element) : node;  
-    }  
-                      
-    // 1. 按z-index和定位方式排序  
-    const sorted = [...elemInfo].sort((a, b) => {  
-        // 非静态定位优先  
-        if (a.position !== 'static' && b.position === 'static') return -1;  
-        if (a.position === 'static' && b.position !== 'static') return 1;  
-        // 其次按z-index排序  
-        return b.zIndex - a.zIndex;  
-    });  
-
-    // 2. 在排序后的列表中找到第一个符合条件的元素  
-    const suitable = sorted.find(x => {  
-        const el = x.element, rect = x.rect, style = x.style;
-        return Math.abs((rect.left + rect.width/2) - window.innerWidth/2) < window.innerWidth*0.3 &&  
-               parseFloat(style.opacity) > 0.1 &&  
-               (parseInt(rect.zIndex) > 30 || style.boxShadow !== 'none') &&  
-               el.querySelector('button, a, input') !== null;  
-    });  
-    
-    // 3. 找到合适元素则使用它，否则返回面积最大的元素  
-    if (suitable) {  
-        return findMainContent(suitable.element);  
-    } else {  
-        const byArea = [...elemInfo].sort((a, b) => b.area - a.area);  
-        return findMainContent(byArea[0].element);  
-    }  
-  }  '''
-
 def optimize_html_for_tokens(html):  
     if type(html) is str: soup = BeautifulSoup(html, 'html.parser')  
     else: soup = html
-    for svg in soup.find_all('svg'): svg.clear()
+    for svg in soup.find_all('svg'):
+        svg.clear(); svg.attrs = {}
     [tag.attrs.pop('style', None) for tag in soup.find_all(True)]  
     for tag in soup.find_all(True):  
         if tag.has_attr('src'):  
@@ -780,7 +656,7 @@ def get_temp_texts(driver):
         print(e)
         return []
     
-import time, re
+import time, re, os
 def get_main_block(driver, extra_js="", text_only=False): 
     page = driver.execute_js(f"{extra_js}\n{js_optHTML}\nreturn optHTML({str(text_only).lower()});").get('data', '')
     if text_only:
@@ -823,25 +699,120 @@ def find_changed_elements(before_html, after_html):
         result["top_change"] = h if len(h) <= 2000 else h[:2000] + '...[TRUNCATED]'
     return result
 
-def get_html(driver, cutlist=False, maxchars=38000, instruction="", extra_js="", text_only=False):
+def get_html(driver, cutlist=False, maxchars=35000, instruction="", extra_js="", text_only=False):
+    if cutlist: rr = driver.execute_js(js_findMainList + "return findMainList(document.body);").get('data', [])
     page = get_main_block(driver, extra_js=extra_js, text_only=text_only)
     if text_only: return page
     soup = optimize_html_for_tokens(page)
+    for div in soup.select('div[data-tag="iframe"]'):
+        div.name = 'iframe'; del div['data-tag']
     html = str(soup)
-    if not cutlist or len(html) <= maxchars: return html
-    rr = driver.execute_js(js_findMainList + js_findMainContent + """
-        return findMainList(findMainContent(document.body));""").get('data', {})
-    sel = rr.get("selector", None) if isinstance(rr, dict) else None
-    if sel: 
-        s = BeautifulSoup(str(soup), "html.parser"); items = s.select(sel)
+    if not cutlist: return html
+    lists = rr if isinstance(rr, list) else ([rr] if isinstance(rr, dict) and rr.get('selector') else [])
+    if lists: print(f"[cutlist] Found {len(lists)} list(s): {[e.get('selector','?') if isinstance(e,dict) else '?' for e in lists]}")
+    for entry in lists:
+        sel = entry.get('selector') if isinstance(entry, dict) else None
+        if not sel: continue
+        try: items = soup.select(sel)
+        except Exception: print(f'[cutlist] skip invalid selector: {sel}'); continue
+        if len(items) < 5: continue
+        total_len = sum(len(str(it)) for it in items)
+        avg_len = total_len / len(items)
+        print(f"[cutlist]   '{sel}': {len(items)} items, avg {avg_len:.0f} chars, total {total_len}, if keep 3, save ~{total_len - 3 * avg_len:.0f} chars")
+        if avg_len < 200 or (avg_len < 700 and total_len < 2500): continue
         hit = [it for it in items if instruction and instruction.strip() and instruction in it.get_text(" ",strip=True)]
         keep = hit[:6] if hit else items[:3]
-        for it in items:
-            if it not in keep: it.decompose()
-        ss = '[SYSTEM] Found item list, only show some items ...\n' + str(optimize_html_for_tokens(s))
-    else: ss = html
-    if len(ss) > maxchars: ss = ss[:maxchars] + ' ... [TRUNCATED]'
+        removed = [it for it in items if it not in keep]
+        sample_texts = []
+        for rm in removed[:5]:
+            txt = rm.get_text(" ", strip=True)[:40]
+            if txt: sample_texts.append(txt)
+        hint_parts = [f'[FAKE ELEMENT] {len(removed)} more items hidden, selector: "{sel}"']
+        if sample_texts: hint_parts.append('Hidden items: ' + ','.join(f'"{t}"' for t in sample_texts))
+        hint_tag = soup.new_tag("div")
+        hint_tag.string = ' '.join(hint_parts)
+        if keep: keep[-1].insert_after(hint_tag)
+        for it in removed: it.decompose()
+    ss = str(optimize_html_for_tokens(soup)) if lists else html
+    print(f"[get_html] Result: {len(html)} -> {len(ss)} chars after cutlist ({100-len(ss)*100//len(html)}% saved)")
+    if len(ss) > maxchars: ss = str(smart_truncate(soup, maxchars))
     return ss
+
+def smart_truncate(soup, budget, _depth=0):
+    """原地截断 soup 使其接近 budget 字符。
+    策略：穿透单子元素找分叉点；top3 能扛住 over 则按比例分担，否则从尾部删子元素。"""
+    CUT_THRESHOLD = 8000  # 小于此值直接去尾，大于则继续递归找分叉点
+    indent = '  ' * _depth
+    def cut(ele, keep):
+        from bs4 import NavigableString
+        s = str(ele)
+        over = len(s) - keep
+        if over <= 0: return
+        # 保护 FAKE ELEMENT 提示标签
+        protected = [c.extract() for c in ele.find_all(lambda tag: tag.string and '[FAKE ELEMENT]' in tag.string)]
+        s = str(ele)
+        over = len(s) - keep
+        if over <= 0:
+            for p in protected: ele.append(p)
+            return
+        marker = f' [TRUNCATED {over//1000}k chars]'
+        inner = ele.decode_contents()
+        tag_overhead = len(s) - len(inner)
+        inner_keep = max(keep - tag_overhead - len(marker), 0)
+        ele.clear()
+        if inner_keep > 0:
+            ele.append(BeautifulSoup(inner[:inner_keep], 'html.parser'))
+        ele.append(NavigableString(marker))
+        for p in protected: ele.append(p)
+    total = len(str(soup))
+    if total <= budget: return soup
+    kids = [(c, len(str(c))) for c in soup.children if c.name and not (c.string and '[FAKE ELEMENT]' in c.string)]
+    if not kids: return soup
+    selflen = total - sum(l for _, l in kids)
+    remaining_budget = max(budget - selflen, 0)
+    tag = getattr(soup, 'name', '?')
+    print(f'{indent}[smart_truncate] <{tag}> total={total} budget={budget} selflen={selflen} kids={len(kids)}')
+    # === 1 kid: 穿透 ===
+    if len(kids) == 1:
+        print(f'{indent}  -> single child, recurse into <{kids[0][0].name}>')
+        smart_truncate(kids[0][0], remaining_budget, _depth)
+        return soup
+    over = sum(l for _, l in kids) - remaining_budget
+    if over <= 0: return soup
+    # 看 top 3 能否承担 over
+    ranked = sorted(range(len(kids)), key=lambda i: kids[i][1], reverse=True)
+    tops = list(ranked[:min(3, len(ranked))])
+    top_total = sum(kids[i][1] for i in tops)
+    if top_total < over:
+        # === top 3 扛不住，从尾部删子元素 ===
+        removed = 0
+        removed_count = 0
+        while kids and removed < over:
+            c, l = kids.pop(); c.decompose()
+            removed += l; removed_count += 1
+        print(f'{indent}  -> tail-cut: removed {removed_count} children ({removed//1000}k chars) from end')
+        return soup
+    # === top 2-3 按比例分担 ===
+    # 过滤掉太小的 kid（不到最大的 10%），让大的全扛
+    max_size = kids[ranked[0]][1]
+    filtered = [i for i in tops if kids[i][1] >= max_size * 0.1]
+    filtered_total = sum(kids[i][1] for i in filtered)
+    if filtered_total >= over:
+        tops, top_total = filtered, filtered_total
+    # 先打印所有分配计划
+    actions = []
+    for i in tops:
+        c, l = kids[i]
+        share = int(over * l / top_total)
+        new_keep = l - share
+        print(f'{indent}  -> <{c.name}> {l} -> {new_keep} (share={share})')
+        actions.append((c, l, new_keep))
+    # 再统一执行
+    for c, l, new_keep in actions:
+        if new_keep <= 0: c.decompose()
+        elif new_keep > CUT_THRESHOLD: smart_truncate(c, new_keep, _depth + 1)
+        else: cut(c, new_keep)
+    return soup
 
 def execute_js_rich(script, driver, no_monitor=False):
     last_html = None
@@ -853,7 +824,7 @@ def execute_js_rich(script, driver, no_monitor=False):
     try:
         print(f"Executing: {script[:250]} ...")
         response = driver.execute_js(script)
-        result = response.get('data') or response.get('result')
+        result = response['data'] if 'data' in response else response.get('result')
         if response.get('closed', 0) == 1: reloaded = True
         time.sleep(1)
     except Exception as e:
@@ -864,16 +835,16 @@ def execute_js_rich(script, driver, no_monitor=False):
     rr = {
         "status": "failed" if error_msg else "success",
         "js_return": result,
-        "environment": {"reloaded": reloaded},
         "tab_id": driver.default_session_id
     }  
-    if response.get('newTabs'): rr['environment']['newTabs'] = response['newTabs']
+    if reloaded: rr['reloaded'] = reloaded
+    if response.get('newTabs'): rr['newTabs'] = response['newTabs']
     else:
         after = driver.get_session_dict()
         new_sids = {k: v for k, v in after.items() if k not in before_sids}
         if new_sids:
             newTabs = [{'id': k, 'url': v} for k, v in new_sids.items()]
-            rr['environment']['newTabs'] = newTabs
+            rr['newTabs'] = newTabs
             rr['suggestion'] = "页面已刷新，以上新标签页在执行期间连接。"
     if error_msg: rr['error'] = error_msg
     if no_monitor: return rr

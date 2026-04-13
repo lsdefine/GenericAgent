@@ -1,19 +1,16 @@
 # Subagent 调用 SOP
 
-## Task Mode 文件IO协议
+## 文件IO协议
 
-- 目录：`temp/{task_name}/`（相对代码根），主agent cwd在temp/时即 `./{task_name}/`
-- 启动：`python agentmain.py --task {name} [--input "内容"] [--bg] [--llm_no N]`（cwd=代码根）
-  - `--input`：自动建目录+清旧output+写input.txt
-  - `--bg`：自举后台（Popen自身去掉--bg → print PID → exit）
-- 流程：启动 → 轮询 output.txt（`[ROUND END]`=该轮完成）→ 写 reply.txt 继续 → 不写则5min退出
-- output1/2/3.txt：reply后各轮输出（递增编号），同样append+`[ROUND END]`
-- input.txt：目标+约束，可指定SOP名。禁写具体步骤（除非已读SOP确认）。大量数据给路径禁塞入
-- --bg启动瞬间返回，可同一code_run内sleep后poll；非--bg方式禁止合并启动+轮询
-
-```python
-pid = os.popen(f'python {agent_root}/agentmain.py --task {name} --input "{prompt}" --bg').read().strip()
-```
+- 目录：`temp/{task_name}/`（cwd在temp/时即`./{task_name}/`）
+- 启动：`python agentmain.py --task {name} [--input "短文本"] [--bg] [--llm_no N]`（cwd=代码根）
+- `--input`自动建目录+清旧output+写input.txt；长文本先手动写input.txt再启动(不带--input)
+- `--bg`后台(print PID exit)，可同一code_run内sleep后poll；非--bg禁合并启动+轮询
+- input：目标+约束即可，subagent同等智能。**禁写步骤/过度描述**，大量数据给路径
+- 通信：output.txt(append,`[ROUND END]`=轮完成) → 写reply.txt继续 → 不写10min退出。reply后输出为output1/2/3.txt(同格式)
+- 干预文件：`_stop`(当轮结束退出) | `_keyinfo`(注入working memory) | `_intervene`(追加指令)
+- **主agent空闲时应读output观察进度，必要时用干预文件纠偏，禁止无脑长时间sleep轮询**
+- 监察模式启动时加`--verbose`，output将包含工具执行结果，主agent可直接审查原始数据而非仅信任摘要
 
 ## 场景1：测试模式 - 行为验证
 **用途**：观察agent真实行为，修正RULES/L2/L3/SOP

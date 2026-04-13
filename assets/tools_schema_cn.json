@@ -35,7 +35,7 @@
   }},
   {"type": "function", "function": {
     "name": "web_scan",
-    "description": "获取当前页面的简化HTML内容和标签页列表。注意：简化会过滤边栏、浮动元素等非主体内容，如需查看被过滤内容请用execute_js。切换页面后一般应先调用查看",
+    "description": "获取当前页面的简化HTML内容和标签页列表。会移除隐藏/浮动/被遮盖的元素。切换页面后一般应先调用查看",
     "parameters": {"type": "object", "properties": {
       "tabs_only": {"type": "boolean", "description": "仅返回标签页列表和当前标签信息，不获取HTML内容", "default": false},
       "switch_tab_id": {"type": "string", "description": "可选的标签页 ID。如果提供，系统将在扫描前切换到该标签页"},
@@ -43,7 +43,7 @@
   }},
   {"type": "function", "function": {
     "name": "web_execute_js",
-    "description": "执行 JS 控制浏览器。建议精准使用减少 web_scan。为免转义问题，代码优先考虑放回复正文 ```javascript 块",
+    "description": "执行 JS 控制浏览器。禁止猜测，准确操作以减少 web_scan 调用。为免转义问题，代码优先考虑放回复正文 ```javascript 块",
     "parameters": {"type": "object", "properties": {
       "script": {"type": "string", "description": "[Optional] JS代码或路径。为免转义建议留空，改用正文代码块（与此参数互斥）"},
       "save_to_file": {"type": "string", "description": "结果存文件，适合返回值较长时", "default": ""},

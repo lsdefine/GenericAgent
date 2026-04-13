@@ -1,4 +1,4 @@
-import os, json, socket as _socket, logging
+import os, json, time as _time, socket as _socket, logging
 from datetime import datetime, timedelta
 
 # 端口锁：防止重复启动，bind失败时agentmain会直接崩溃退出
@@ -8,7 +8,7 @@ except NameError:
     _lock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
     _lock.bind(('127.0.0.1', 45762)); _lock.listen(1)
 
-INTERVAL = 60
+INTERVAL = 120
 ONCE = False
 
 _dir = os.path.dirname(os.path.abspath(__file__))
@@ -27,6 +27,7 @@ if not _logger.handlers:
 
 # 默认最大延迟窗口（小时），超过此时间不触发
 DEFAULT_MAX_DELAY = 6
+_l4_t = 0  # last L4 archive time
 
 def _parse_cooldown(repeat):
     """解析repeat为冷却时间(比实际周期略短,防漂移)"""
@@ -56,6 +57,18 @@ def _last_run(tid, done_files):
     return latest
 
 def check():
+    # L4 archive cron (silent, every 12h)
+    global _l4_t
+    if _time.time() - _l4_t > 43200:
+        _l4_t = _time.time()
+        try:
+            import sys; sys.path.insert(0, os.path.join(_dir, '../memory/L4_raw_sessions'))
+            from compress_session import batch_process
+            r = batch_process(dry_run=False)
+            print(f'[L4 cron] {r}')
+        except Exception as e:
+            _logger.error(f'L4 archive failed: {e}')
+
     if not os.path.isdir(TASKS): return None
     now = datetime.now()
     os.makedirs(DONE, exist_ok=True)
@@ -109,6 +122,7 @@ def check():
                 f'先读 scheduled_task_sop 了解执行流程，然后执行以下任务：\n\n'
                 f'{prompt}\n\n'
                 f'完成后将执行报告写入 {rpt}。')
+
     return None
 
 def health_check():
@@ -134,7 +148,6 @@ def health_check():
         last = _last_run(tid, done_files)
         cooldown = _parse_cooldown(repeat)
 
-        # 判断健康状态
         if not enabled:
             status = 'DISABLED'
         elif last is None:
@@ -142,12 +155,8 @@ def health_check():
         elif repeat == 'once':
             status = 'COMPLETED' if last else 'PENDING'
         else:
-            # 检查是否超过预期间隔的1.5倍
-            expected_gap = cooldown * 1.25  # 略大于冷却时间
-            if (now - last) > expected_gap:
-                status = 'OVERDUE'
-            else:
-                status = 'HEALTHY'
+            expected_gap = cooldown * 1.25
+            status = 'OVERDUE' if (now - last) > expected_gap else 'HEALTHY'
         results.append({
             'task': tid, 'status': status, 'enabled': enabled,
             'repeat': repeat, 'schedule': sched,

@@ -7,7 +7,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from llmcore import SiderLLMSession, LLMSession, ToolClient, ClaudeSession, MixinSession, NativeToolClient, NativeClaudeSession, build_multimodal_content, NativeOAISession
 from agent_loop import agent_runner_loop
-from ga import GenericAgentHandler, smart_format, get_global_memory, format_error
+from ga import GenericAgentHandler, smart_format, get_global_memory, format_error, consume_file
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 def load_tool_schema(suffix=''):
@@ -56,11 +56,15 @@ class GeneraticAgent:
             except: pass
         for i, s in enumerate(llm_sessions):
             if isinstance(s, dict) and 'mixin_cfg' in s:
-                try: llm_sessions[i] = ToolClient(MixinSession(llm_sessions, s['mixin_cfg']))
+                try:
+                    mixin = MixinSession(llm_sessions, s['mixin_cfg'])
+                    if isinstance(mixin._sessions[0], (NativeClaudeSession, NativeOAISession)): llm_sessions[i] = NativeToolClient(mixin)
+                    else: llm_sessions[i] = ToolClient(mixin)
                 except Exception as e: print(f'[WARN] Failed to init MixinSession with cfg {s["mixin_cfg"]}: {e}')
         self.llmclients = llm_sessions
         self.lock = threading.Lock()
-        self.history = []               
+        self.task_dir = None
+        self.history = []
         self.task_queue = queue.Queue() 
         self.is_running = False; self.stop_sig = False
         self.llm_no = 0;  self.inc_out = False
@@ -74,10 +78,10 @@ class GeneraticAgent:
         name = self.get_llm_name()
         if 'glm' in name or 'minimax' in name or 'kimi' in name: load_tool_schema('_cn')
         else: load_tool_schema()
-    def list_llms(self): return [(i, f"{type(b.backend).__name__}/{b.backend.default_model}", i == self.llm_no) for i, b in enumerate(self.llmclients)]
+    def list_llms(self): return [(i, f"{type(b.backend).__name__}/{b.backend.name}", i == self.llm_no) for i, b in enumerate(self.llmclients)]
     def get_llm_name(self):
         b = self.llmclient
-        return f"{type(b.backend).__name__}/{b.backend.default_model}"
+        return f"{type(b.backend).__name__}/{b.backend.name}"
 
     def abort(self):
         if not self.is_running: return
@@ -122,9 +126,10 @@ class GeneraticAgent:
             try:
                 full_resp = ""; last_pos = 0
                 for chunk in gen:
+                    if consume_file(self.task_dir, '_stop'): self.abort() 
                     if self.stop_sig: break
                     full_resp += chunk
-                    if len(full_resp) - last_pos > 50:
+                    if len(full_resp) - last_pos > 50 or 'LLM Running' in chunk:
                         display_queue.put({'next': full_resp[last_pos:] if self.inc_out else full_resp, 'source': source})
                         last_pos = len(full_resp)
                 if self.inc_out and last_pos < len(full_resp): display_queue.put({'next': full_resp[last_pos:], 'source': source})
@@ -153,6 +158,7 @@ if __name__ == '__main__':
     parser.add_argument('--reflect', metavar='SCRIPT', help='反射模式：加载监控脚本，check()触发时发任务')
     parser.add_argument('--input', help='任务内容')
     parser.add_argument('--llm_no', type=int, default=0, help='LLM编号')
+    parser.add_argument('--verbose', action='store_true', help='输出包含工具执行结果(监察模式用)')
     parser.add_argument('--bg', action='store_true', help='后台自举: spawn自身去掉--bg, print PID, exit')
     args = parser.parse_args()
 
@@ -168,12 +174,12 @@ if __name__ == '__main__':
 
     agent = GeneraticAgent()
     agent.next_llm(args.llm_no)
-    agent.verbose = False
+    agent.verbose = args.verbose
     threading.Thread(target=agent.run, daemon=True).start()
 
     if args.task:
-        d = os.path.join(script_dir, f'temp/{args.task}'); nround = ''
-        rp = os.path.join(d, 'reply.txt'); infile = os.path.join(d, 'input.txt')
+        agent.task_dir = d = os.path.join(script_dir, f'temp/{args.task}'); nround = ''
+        infile = os.path.join(d, 'input.txt')
         if args.input:
             os.makedirs(d, exist_ok=True)
             import glob; [os.remove(f) for f in glob.glob(os.path.join(d, 'output*.txt'))]
@@ -185,13 +191,12 @@ if __name__ == '__main__':
                 if 'next' in item and random.random() < 0.95:  # 概率写一次中间结果
                     with open(f'{d}/output{nround}.txt', 'w', encoding='utf-8') as f: f.write(item.get('next', ''))
             with open(f'{d}/output{nround}.txt', 'w', encoding='utf-8') as f: f.write(item['done'] + '\n\n[ROUND END]\n')
-            for _ in range(150):  # 等reply.txt，5分钟超时
+            consume_file(d, '_stop')  # 已经成功停下来了，避免打断下次reply
+            for _ in range(300):  # 等reply.txt，10分钟超时
                 time.sleep(2)
-                if os.path.exists(rp):
-                    with open(rp, encoding='utf-8') as f: raw = f.read()
-                    os.remove(rp); break
+                if (raw := consume_file(d, 'reply.txt')): break
             else: break
-            nround = int(nround) + 1 if nround.isdigit() else 1
+            nround = nround + 1 if isinstance(nround, int) else 1
     elif args.reflect:
         import importlib.util
         spec = importlib.util.spec_from_file_location('reflect_script', args.reflect)

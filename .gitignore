@@ -43,13 +43,18 @@ memory/*
 !memory/autonomous_operation_sop/**
 !memory/scheduled_task_sop.md
 
+# L4 session archiver (only the script, not archives)
+!memory/L4_raw_sessions/
+memory/L4_raw_sessions/*
+!memory/L4_raw_sessions/compress_session.py
+
 # ljqCtrl related tools
 !memory/ljqCtrl.py
 !memory/ljqCtrl_sop.md
 
-# mem_scanner related tools
-!memory/mem_scanner.py
-!memory/mem_scanner_sop.md
+# procmem_scanner related tools
+!memory/procmem_scanner.py
+!memory/procmem_scanner_sop.md
 
 # TMWebDriver SOP
 !memory/tmwebdriver_sop.md
@@ -75,6 +80,7 @@ restore_commit.txt
 sche_tasks/
 # CDP Bridge 密钥配置（首次运行自动生成）
 assets/tmwd_cdp_bridge/config.js
+assets/copilot_proxy.pyw
 **log.*
 
 # Reflect (ignore new files, whitelist existing)

@@ -8,7 +8,8 @@
 需要时read L2 或 ls ../memory/ 查L3
 L0(META-SOP): memory_management_sop
 L2: 现空
-L3: web_setup_sop | autonomous_operation_sop | scheduled_task_sop | ljqCtrl_sop+.py | tmwebdriver_sop | subagent_sop | plan_sop | mem_scanner.py | adb_ui.py
+L3: web_setup_sop | autonomous_operation_sop | scheduled_task_sop | ljqCtrl_sop+.py | tmwebdriver_sop | subagent_sop | plan_sop | procmem_scanner.py | adb_ui.py
+L4: ../memory/L4_raw_sessions/
 
 [RULES]
 1. 搜索先行: 信息尽量用google（必须web）, 项目内os.listdir, 禁猜路径

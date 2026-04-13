@@ -10,7 +10,7 @@ async function fetchCookies() {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab?.url) { out.textContent = 'No active tab'; return; }
-    const resp = await chrome.runtime.sendMessage({ action: 'cookies', url: tab.url });
+    const resp = await chrome.runtime.sendMessage({ cmd: 'cookies', url: tab.url });
     if (!resp?.ok) { out.textContent = 'Error: ' + (resp?.error || 'unknown'); return; }
     if (!resp.data.length) { out.textContent = '(no cookies)'; return; }
     // 展示带标记

@@ -35,7 +35,7 @@
   }},
   {"type": "function", "function": {
     "name": "web_scan",
-    "description": "Get simplified HTML and tab list. Filters sidebars/floating elements; use execute_js for filtered content. Call after switching pages",
+    "description": "Get simplified HTML and tab list. Removes hidden/floating/covered elements. Call after switching pages",
     "parameters": {"type": "object", "properties": {
       "tabs_only": {"type": "boolean", "description": "Show tab list only, no HTML", "default": false},
       "switch_tab_id": {"type": "string", "description": "[Optional] Tab ID to switch to"},
@@ -43,10 +43,10 @@
   }},
   {"type": "function", "function": {
     "name": "web_execute_js",
-    "description": "Execute JS to control browser. Use precisely to reduce web_scan calls. Put code in ```javascript blocks in reply body to avoid escaping",
+    "description": "Execute JS to control browser. No guessing. Act accurately to reduce web_scan calls. Put code in ```javascript blocks in reply body to avoid escaping",
     "parameters": {"type": "object", "properties": {
       "script": {"type": "string", "description": "[Mutually exclusive] JS code or script path. NEVER use this param when use reply code block"},
-      "save_to_file": {"type": "string", "description": "file path; only for long result", "default": ""},
+      "save_to_file": {"type": "string", "description": "file path; **only** for long result", "default": ""},
       "no_monitor": {"type": "boolean", "description": "Skip page change monitoring, saves 2-3s. Only for reads, not for page actions", "default": false}}}
   }},
   {"type": "function", "function": {

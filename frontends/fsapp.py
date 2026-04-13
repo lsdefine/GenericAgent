@@ -4,6 +4,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 os.chdir(PROJECT_ROOT)
 from agentmain import GeneraticAgent
+from frontends.chatapp_common import format_restore
 from llmcore import mykeys
 
 import lark_oapi as lark
@@ -516,22 +517,13 @@ def handle_command(open_id, cmd, chat_id=None):
         _send_cmd_response(f"状态: {'空闲' if not agent.is_running else '运行中'}")
     elif cmd == "/restore":
         try:
-            files = glob.glob("./temp/model_responses_*.txt")
-            if not files:
-                return _send_cmd_response("没有找到历史记录")
-            latest = max(files, key=os.path.getmtime)
-            with open(latest, "r", encoding="utf-8") as f:
-                content = f.read()
-            users = re.findall(r"=== USER ===\n(.+?)(?==== |$)", content, re.DOTALL)
-            resps = re.findall(r"=== Response ===.*?\n(.+?)(?==== Prompt|$)", content, re.DOTALL)
-            count = 0
-            for u, r in zip(users, resps):
-                u, r = u.strip(), r.strip()[:500]
-                if u and r:
-                    agent.history.extend([f"[USER]: {u}", f"[Agent] {r}"])
-                    count += 1
+            restored_info, err = format_restore()
+            if err:
+                return _send_cmd_response(err.replace("❌ ", ""))
+            restored, fname, count = restored_info
+            agent.history.extend(restored)
             agent.abort()
-            _send_cmd_response(f"已恢复 {count} 轮对话\n来源: {os.path.basename(latest)}\n(仅恢复上下文，请输入新问题继续)")
+            _send_cmd_response(f"已恢复 {count} 轮对话\n来源: {fname}\n(仅恢复上下文，请输入新问题继续)")
         except Exception as e:
             _send_cmd_response(f"恢复失败: {e}")
     else:

@@ -1,0 +1,52 @@
+---
+description: Git 工作流与发版流程
+globs: .github/**,scripts/bump-version.js,cliff.toml,CHANGELOG.md
+alwaysApply: false
+---
+
+# Git 工作流
+
+## 分支策略
+
+- `main` — 主分支，保持稳定
+- `feat/*` — 功能分支
+- `fix/*` — 修复分支
+
+## Commit 规范
+
+由 commitlint + Husky 强制执行 Conventional Commits。
+
+格式: `type(scope): description`
+
+scope 枚举: `app`, `site`, `skin`, `monitor`, `social`, `i18n`, `ci`, `deps`
+
+**使用 panda-git-commit skill 生成 commit message。**
+
+## 发版流程
+
+```bash
+# 1. 更新版本号（同步三处）
+pnpm bump minor
+
+# 2. 生成 CHANGELOG
+git-cliff -o CHANGELOG.md
+
+# 3. 提交发版
+git add -A
+git commit -m "chore(app): release v0.x.0"
+git tag v0.x.0
+git push origin main --tags
+```
+
+## CI/CD
+
+- **ci.yml** — PR/push 触发: lint + test + rust check + site build
+- **release.yml** — tag 触发: 跨平台构建 → Draft GitHub Release
+- **Vercel** — push 到 main 且 `packages/site/` 变更时自动部署官网
+
+## 版本号位置
+
+使用 `pnpm bump` 一键同步:
+1. `packages/app/package.json`
+2. `packages/app/src-tauri/Cargo.toml`
+3. `packages/app/src-tauri/tauri.conf.json`

@@ -1,0 +1,43 @@
+---
+description: AIbubu 项目总览与基本规范
+alwaysApply: true
+---
+
+# AIbubu 项目规范
+
+## 项目概述
+
+AI 步步 (AIbubu) 是一款 Tauri 2 桌面宠物应用，监测 AI 编码工具活跃度并量化为步数驱动桌面宠物。
+
+## Monorepo 结构
+
+- `packages/app/` — Tauri 桌面应用（Vue 3 前端 + Rust 后端）
+- `packages/site/` — Astro 官网
+- `scripts/` — 工具脚本
+
+## 常用命令
+
+- `pnpm dev` / `pnpm tauri dev` — 开发
+- `pnpm test` — 测试
+- `pnpm lint` — ESLint 检查
+- `pnpm format` — Prettier 格式化
+- `pnpm validate:skins` — 校验皮肤
+- `pnpm bump <patch|minor|major>` — 版本号同步更新
+
+## Commit 规范
+
+Conventional Commits，由 commitlint 强制执行。
+
+格式: `type(scope): description`
+
+允许的 scope: `app`, `site`, `skin`, `monitor`, `social`, `i18n`, `ci`, `deps`
+
+提交时使用 **panda-git-commit** skill 生成 commit message。
+
+## 通用编码规范
+
+- 始终用中文回复用户
+- 修改代码前先询问用户确认
+- 不要自动执行 git add / commit / push
+- 不使用 `SELECT *`，明确指定列名
+- 路径别名: `@/` → `packages/app/src/`

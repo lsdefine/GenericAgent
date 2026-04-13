@@ -1,0 +1,69 @@
+---
+description: 皮肤系统开发与资源管理规范
+globs: packages/app/public/skins/**,packages/app/src/**/skin*,packages/app/src/**/Skin*,scripts/validate-skins.js
+alwaysApply: false
+---
+
+# 皮肤系统规范
+
+## 目录结构
+
+```
+packages/app/public/skins/
+├── order.json            # 内置皮肤展示顺序
+├── vita/
+│   ├── skin.json         # 皮肤清单
+│   ├── pet.png           # 精灵图（头像）
+│   └── skin.png          # 动画精灵图
+├── doux/
+└── ...
+```
+
+皮肤通过扫描目录自动发现，无需手动注册。
+
+## 展示顺序
+
+内置皮肤的展示顺序由 `order.json` 控制，它是一个 JSON 字符串数组：
+
+```json
+["vita", "tard", "mort", "doux", "boy", "dinosaur", "glube", "line"]
+```
+
+- 调整顺序：只需修改数组中元素的位置
+- 新增皮肤：在数组中添加对应的 skin ID
+- `build.rs` 在编译时读取此文件生成 `BUILTIN_SKIN_IDS`
+- 皮肤 ID 即目录名，不带任何前缀，保持稳定
+
+## skin.json 必填字段
+
+- `name` — 皮肤名称
+- `author` — 作者
+- `animations` — 动画配置（至少包含 `idle`）
+
+## 动画状态
+
+有效状态: `idle`, `walk`, `run`, `sprint`
+
+每个动画需包含:
+- `file` — 引用的图片文件（必须实际存在）
+- `loop` — 是否循环
+- `sprite` — 精灵图参数: `frameWidth`, `frameHeight`, `frameCount`, `columns`, `fps`, `startFrame`
+
+## 支持的渲染格式
+
+- `sprite` — 精灵图（SpriteRenderer）
+- `lottie` — Lottie 动画（LottieRenderer）
+- 其他 — 静态图片（ImageRenderer）
+
+## 校验流程
+
+1. 修改皮肤资源后运行 `pnpm validate:skins`
+2. pre-commit hook 会自动执行校验
+
+## 添加新皮肤
+
+1. 创建目录 `packages/app/public/skins/<skin-id>/`
+2. 添加 `skin.json` + `pet.png`
+3. 在 `order.json` 数组中添加 `<skin-id>`
+4. 运行 `pnpm validate:skins`
+5. commit: `feat(skin): add <skin-name> skin`

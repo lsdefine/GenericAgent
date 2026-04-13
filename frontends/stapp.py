@@ -49,7 +49,16 @@ def render_sidebar():
         st.toast("下次将重新注入System Prompt")
     if st.button("🐱 桌面宠物"):
         kwargs = {'creationflags': 0x08} if sys.platform == 'win32' else {}
-        subprocess.Popen([sys.executable, os.path.join(os.path.dirname(__file__), 'desktop_pet.pyw')], **kwargs)
+        pet_script = os.path.join(os.path.dirname(__file__), 'desktop_pet_v2.pyw')
+        if not os.path.exists(pet_script):
+            pet_script = os.path.join(os.path.dirname(__file__), 'desktop_pet.pyw')
+
+        # Store pet process so we can kill it when GA exits
+        pet_proc = subprocess.Popen([sys.executable, pet_script], **kwargs)
+        if not hasattr(agent, '_pet_processes'):
+            agent._pet_processes = []
+        agent._pet_processes.append(pet_proc)
+
         if not hasattr(agent, '_turn_end_hooks'): agent._turn_end_hooks = {}
         def _pet_hook(ctx):
             parts = [f"🔄 Turn {ctx.get('turn','?')}"]

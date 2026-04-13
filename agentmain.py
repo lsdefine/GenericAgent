@@ -5,7 +5,7 @@ if sys.stderr is None: sys.stderr = open(os.devnull, "w")
 elif hasattr(sys.stderr, 'reconfigure'): sys.stderr.reconfigure(errors='replace')
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from llmcore import SiderLLMSession, LLMSession, ToolClient, ClaudeSession, MixinSession, NativeToolClient, NativeClaudeSession, NativeOAISession
+from llmcore import SiderLLMSession, LLMSession, ToolClient, ClaudeSession, MixinSession, NativeToolClient, NativeClaudeSession, build_multimodal_content, NativeOAISession
 from agent_loop import agent_runner_loop
 from ga import GenericAgentHandler, smart_format, get_global_memory, format_error, consume_file
 
@@ -15,6 +15,15 @@ def load_tool_schema(suffix=''):
     TS = open(os.path.join(script_dir, f'assets/tools_schema{suffix}.json'), 'r', encoding='utf-8').read()
     TOOLS_SCHEMA = json.loads(TS if os.name == 'nt' else TS.replace('powershell', 'bash'))
 load_tool_schema()
+
+def _pet_set_state(state):
+    """Send state change to desktop pet (non-blocking, silent fail)."""
+    def send():
+        try:
+            from urllib.request import urlopen
+            urlopen(f'http://127.0.0.1:51983/?state={state}', timeout=2)
+        except: pass
+    threading.Thread(target=send, daemon=True).start()
 
 mem_dir = os.path.join(script_dir, 'memory')
 if not os.path.exists(mem_dir): os.makedirs(mem_dir)
@@ -97,18 +106,8 @@ class GeneraticAgent:
     def run(self):
         while True:
             task = self.task_queue.get()
-            raw_query, source, images, display_queue = task["query"], task["source"], task.get("images") or [], task["output"]
-            if raw_query.startswith('/'):
-                if _sm := re.match(r'/session\.(\w+)=(.*)', raw_query.strip()):
-                    k, v = _sm.group(1), _sm.group(2)
-                    try: v = int(v)
-                    except ValueError:
-                        try: v = float(v)
-                        except ValueError: pass
-                    setattr(self.llmclient.backend, k, v)
-                    display_queue.put({'done': f"✅ session.{k} = {v!r}"})
-                self.task_queue.task_done(); continue
             self.is_running = True
+            raw_query, source, images, display_queue = task["query"], task["source"], task.get("images") or [], task["output"]
             rquery = smart_format(raw_query.replace('\n', ' '), max_str_len=200)
             self.history.append(f"[USER]: {rquery}")
             
@@ -125,28 +124,35 @@ class GeneraticAgent:
             if source == 'feishu' and len(self.history) > 1:   # 如果有历史记录且来自飞书，注入到首轮 user_input 中（支持/restore恢复上下文）
                 user_input = handler._get_anchor_prompt() + f"\n\n### 用户当前消息\n{raw_query}"
             initial_user_content = None
+            if images and isinstance(self.llmclient.backend, LLMSession):
+                initial_user_content = build_multimodal_content(user_input, images)
+            elif images:
+                print(f"[INFO] backend {type(self.llmclient.backend).__name__} does not support direct multimodal input, fallback to text attachment hints.")
             # although new handler, the **full** history is in llmclient, so it is full history!
             gen = agent_runner_loop(self.llmclient, sys_prompt, user_input, 
                                 handler, TOOLS_SCHEMA, max_turns=40, verbose=self.verbose,
                                 initial_user_content=initial_user_content)
             try:
-                full_resp = ""; last_pos = 0
+                full_resp = ""; last_pos = 0; _pet_walking = False
                 for chunk in gen:
-                    if consume_file(self.task_dir, '_stop'): self.abort() 
+                    if consume_file(self.task_dir, '_stop'): self.abort()
                     if self.stop_sig: break
                     full_resp += chunk
+                    if 'LLM Running' in chunk and not _pet_walking:
+                        _pet_set_state('walk'); _pet_walking = True
                     if len(full_resp) - last_pos > 50 or 'LLM Running' in chunk:
                         display_queue.put({'next': full_resp[last_pos:] if self.inc_out else full_resp, 'source': source})
                         last_pos = len(full_resp)
                 if self.inc_out and last_pos < len(full_resp): display_queue.put({'next': full_resp[last_pos:], 'source': source})
                 if '</summary>' in full_resp: full_resp = full_resp.replace('</summary>', '</summary>\n\n')
-                if '</file_content>' in full_resp: full_resp = re.sub(r'<file_content>\s*(.*?)\s*</file_content>', r'\n````\n<file_content>\n\1\n</file_content>\n````', full_resp, flags=re.DOTALL)                
+                if '</file_content>' in full_resp: full_resp = re.sub(r'<file_content>\s*(.*?)\s*</file_content>', r'\n````\n<file_content>\n\1\n</file_content>\n````', full_resp, flags=re.DOTALL)
                 display_queue.put({'done': full_resp, 'source': source})
                 self.history = handler.history_info
             except Exception as e:
                 print(f"Backend Error: {format_error(e)}")
                 display_queue.put({'done': full_resp + f'\n```\n{format_error(e)}\n```', 'source': source})
             finally:
+                _pet_set_state('idle')
                 if self.stop_sig:
                     print('User aborted the task.')
                     #with self.task_queue.mutex: self.task_queue.queue.clear()
@@ -159,6 +165,7 @@ if __name__ == '__main__':
     import argparse
     from datetime import datetime
     parser = argparse.ArgumentParser()
+    parser.add_argument('--scheduled', action='store_true', help='计划任务轮询模式')
     parser.add_argument('--task', metavar='IODIR', help='一次性任务模式(文件IO)')
     parser.add_argument('--reflect', metavar='SCRIPT', help='反射模式：加载监控脚本，check()触发时发任务')
     parser.add_argument('--input', help='任务内容')
@@ -233,6 +240,7 @@ if __name__ == '__main__':
                 try: on_done(result)
                 except Exception as e: print(f'[Reflect] on_done error: {e}')
             if getattr(mod, 'ONCE', False): print('[Reflect] ONCE=True, exiting.'); break
+    elif args.scheduled: print('moved to reflect mode')
     else:
         agent.inc_out = True
         while True:

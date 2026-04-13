@@ -1,0 +1,61 @@
+{
+  "name": "Tard",
+  "version": "1.0.0",
+  "author": "arks",
+  "source": "https://arks.itch.io/dino-characters",
+  "license": "CC0",
+  "description": "像素风小恐龙 Tard",
+  "style": "pixel",
+  "format": "sprite",
+  "size": { "width": 48, "height": 48 },
+  "animations": {
+    "idle": {
+      "file": "skin.png",
+      "loop": true,
+      "sprite": {
+        "frameWidth": 24,
+        "frameHeight": 24,
+        "frameCount": 4,
+        "columns": 24,
+        "fps": 6,
+        "startFrame": 0
+      }
+    },
+    "walk": {
+      "file": "skin.png",
+      "loop": true,
+      "sprite": {
+        "frameWidth": 24,
+        "frameHeight": 24,
+        "frameCount": 6,
+        "columns": 24,
+        "fps": 6,
+        "startFrame": 5
+      }
+    },
+    "run": {
+      "file": "skin.png",
+      "loop": true,
+      "sprite": {
+        "frameWidth": 24,
+        "frameHeight": 24,
+        "frameCount": 8,
+        "columns": 24,
+        "fps": 16,
+        "startFrame": 6
+      }
+    },
+    "sprint": {
+      "file": "skin.png",
+      "loop": true,
+      "sprite": {
+        "frameWidth": 24,
+        "frameHeight": 24,
+        "frameCount": 6,
+        "columns": 24,
+        "fps": 16,
+        "startFrame": 17
+      }
+    }
+  }
+}

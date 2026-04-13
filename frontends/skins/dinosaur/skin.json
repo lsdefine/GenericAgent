@@ -1,0 +1,60 @@
+{
+  "name": "Dinosaur",
+  "version": "1.0.0",
+  "author": "voidcord54",
+  "source": "https://voidcord54.itch.io/",
+  "description": "像素风小恐龙 Dinosaur",
+  "style": "pixel",
+  "format": "sprite",
+  "size": { "width": 64, "height": 64 },
+  "animations": {
+    "idle": {
+      "file": "skin.png",
+      "loop": true,
+      "sprite": {
+        "frameWidth": 128,
+        "frameHeight": 128,
+        "frameCount": 2,
+        "columns": 5,
+        "fps": 6,
+        "startFrame": 0
+      }
+    },
+    "walk": {
+      "file": "skin.png",
+      "loop": true,
+      "sprite": {
+        "frameWidth": 128,
+        "frameHeight": 128,
+        "frameCount": 2,
+        "columns": 5,
+        "fps": 4,
+        "startFrame": 2
+      }
+    },
+    "run": {
+      "file": "skin.png",
+      "loop": true,
+      "sprite": {
+        "frameWidth": 128,
+        "frameHeight": 128,
+        "frameCount": 2,
+        "columns": 5,
+        "fps": 8,
+        "startFrame": 2
+      }
+    },
+    "sprint": {
+      "file": "skin.png",
+      "loop": true,
+      "sprite": {
+        "frameWidth": 128,
+        "frameHeight": 128,
+        "frameCount": 2,
+        "columns": 5,
+        "fps": 16,
+        "startFrame": 2
+      }
+    }
+  }
+}

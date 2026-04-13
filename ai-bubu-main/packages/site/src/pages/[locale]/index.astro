@@ -1,0 +1,1038 @@
+---
+import Base from '../../layouts/Base.astro'
+import { t, localePath, type Locale } from '../../i18n'
+
+export function getStaticPaths() {
+  return [{ params: { locale: 'zh' } }, { params: { locale: 'en' } }]
+}
+
+const locale = Astro.params.locale as Locale
+const i18n = t(locale)
+
+const GITHUB_REPO = 'https://github.com/funAgent/ai-bubu'
+const RELEASES_URL = `${GITHUB_REPO}/releases/latest`
+
+let dlMac = ''
+let dlMacIntel = ''
+let dlWin = ''
+let dlLinux = ''
+let latestVersion = ''
+
+try {
+  const resp = await fetch('https://api.github.com/repos/funAgent/ai-bubu/releases/latest', {
+    headers: { Accept: 'application/vnd.github.v3+json' },
+  })
+  if (resp.ok) {
+    const data = await resp.json()
+    latestVersion = (data.tag_name || '').replace(/^v/, '')
+    for (const a of data.assets || []) {
+      const n = a.name.toLowerCase()
+      if (n.endsWith('.dmg') && n.includes('aarch64')) dlMac = a.browser_download_url
+      else if (n.endsWith('.dmg') && n.includes('x64')) dlMacIntel = a.browser_download_url
+      else if (n.endsWith('.msi')) dlWin = a.browser_download_url
+      else if (n.endsWith('.appimage')) dlLinux = a.browser_download_url
+    }
+  }
+} catch {
+  /* build-time fetch failed, use fallback URLs */
+}
+---
+
+<Base title={i18n.site.title} description={i18n.site.description}>
+  <script
+    type="application/ld+json"
+    is:inline
+    set:html={JSON.stringify({
+      '@context': 'https://schema.org',
+      '@type': 'SoftwareApplication',
+      name: 'AIbubu',
+      alternateName: 'AI 步步',
+      applicationCategory: 'DeveloperApplication',
+      operatingSystem: 'macOS, Windows, Linux',
+      url: 'https://aibubu.app',
+      downloadUrl: 'https://github.com/funAgent/ai-bubu/releases/latest',
+      offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
+      description: i18n.jsonLd.description,
+      screenshot: i18n.jsonLd.screenshot,
+    })}
+  />
+
+  <nav class="nav" aria-label="main">
+    <a href={localePath(locale, '/')} class="logo">
+      <span class="logo-label">{i18n.nav.brand}</span>
+    </a>
+    <div class="nav-end">
+      <button class="lang-btn" id="langToggle" type="button" aria-label="Switch language">
+        {i18n.nav.switchLang}
+      </button>
+      <a href={GITHUB_REPO} class="nav-link" target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </nav>
+
+  <main>
+    <section class="hero">
+      <div class="hero-demo">
+        <video autoplay muted loop playsinline preload="metadata" poster="/screenshot/demo.jpg">
+          <source src={i18n.hero.demoVideo} type="video/mp4" />
+        </video>
+      </div>
+
+      <h1>{i18n.hero.titleLine1}<br />{i18n.hero.titleLine2}</h1>
+
+      <p class="hero-desc">{i18n.hero.desc}</p>
+
+      <div class="hero-actions">
+        <a
+          href={dlMac || RELEASES_URL}
+          class="btn-primary"
+          id="downloadBtn"
+          data-dl-mac={dlMac}
+          data-dl-mac-intel={dlMacIntel}
+          data-dl-win={dlWin}
+          data-dl-linux={dlLinux}
+          data-dl-fallback={RELEASES_URL}
+          data-dl-text-mac={i18n.hero.downloadMac}
+          data-dl-text-win={i18n.hero.downloadWin}
+          data-dl-text-linux={i18n.hero.downloadLinux}
+        >
+          <span class="dl-icon" id="dlIcon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path
+                d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.32 2.32-2.14 4.45-3.74 4.25z"
+              >
+              </path>
+            </svg>
+          </span>
+          <span id="dlText">{i18n.hero.downloadMac}</span>
+        </a>
+        <a
+          href={localePath(locale, '/download')}
+          class="btn-ghost btn-all-platforms"
+          id="allPlatformsBtn"
+        >
+          <span>{i18n.hero.allPlatforms}</span>
+        </a>
+        <a href={GITHUB_REPO} class="btn-ghost" target="_blank" rel="noopener">GitHub</a>
+      </div>
+
+      <p
+        class="hero-meta"
+        id="heroMeta"
+        data-version={latestVersion}
+        data-tool-list={i18n.hero.toolList}
+      >
+        {latestVersion ? `v${latestVersion} · ` : `${i18n.hero.betaPrefix}`}{i18n.hero.toolList}
+      </p>
+    </section>
+
+    <section class="states" aria-label="Pet states">
+      <h2 class="sr-only">{locale === 'zh' ? '宠物状态' : 'Pet States'}</h2>
+      <div class="state-card">
+        <div class="state-visual">
+          <img src="/pet/walk.gif" alt={i18n.states.walk.alt} width="64" height="64" />
+        </div>
+        <h3>{i18n.states.walk.title}</h3>
+        <p set:html={i18n.states.walk.desc} />
+      </div>
+      <div class="state-card">
+        <div class="state-visual">
+          <img src="/pet/run.gif" alt={i18n.states.run.alt} width="64" height="64" />
+        </div>
+        <h3>{i18n.states.run.title}</h3>
+        <p set:html={i18n.states.run.desc} />
+      </div>
+      <div class="state-card">
+        <div class="state-visual">
+          <img src="/pet/sprint.gif" alt={i18n.states.sprint.alt} width="64" height="64" />
+        </div>
+        <h3>{i18n.states.sprint.title}</h3>
+        <p set:html={i18n.states.sprint.desc} />
+      </div>
+      <div class="state-card">
+        <div class="state-visual">
+          <img
+            src="/pet/together.gif"
+            alt={i18n.states.together.alt}
+            width="128"
+            height="64"
+            class="together-gif"
+          />
+        </div>
+        <h3>{i18n.states.together.title}</h3>
+        <p set:html={i18n.states.together.desc} />
+      </div>
+    </section>
+
+    <section class="features">
+      <h2>{i18n.features.title}</h2>
+      <div class="carousel" id="featCarousel">
+        <div class="carousel-track">
+          {
+            i18n.features.slides.map((slide, idx) => (
+              <div class="carousel-slide" data-index={idx}>
+                <div class="slide-frame">
+                  <img src={slide.img} alt={slide.alt} loading="lazy" />
+                </div>
+                <div class="slide-caption">
+                  <div class="slide-title">{slide.title}</div>
+                  <div class="slide-desc">{slide.desc}</div>
+                </div>
+              </div>
+            ))
+          }
+        </div>
+        <div class="carousel-dots">
+          {
+            i18n.features.slides.map((_, idx) => (
+              <button
+                class:list={['dot', { active: idx === 0 }]}
+                data-idx={idx}
+                type="button"
+                aria-label={`Slide ${idx + 1}`}
+              />
+            ))
+          }
+        </div>
+      </div>
+    </section>
+
+    <section class="chars">
+      <h2>{i18n.chars.title}</h2>
+      <div class="chars-row">
+        {
+          (['doux', 'vita', 'mort', 'tard'] as const).map((name) => (
+            <div class="char-item">
+              <div class={`char-sprite char-${name}`} role="img" aria-label={name} />
+              <span class="char-name">{name.charAt(0).toUpperCase() + name.slice(1)}</span>
+            </div>
+          ))
+        }
+      </div>
+      <p class="chars-note">{i18n.chars.note}</p>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="footer-row footer-links">
+      <span class="footer-brand">{i18n.nav.brand}</span>
+      <span class="footer-dot">·</span>
+      <a href={GITHUB_REPO} target="_blank" rel="noopener">GitHub</a>
+      <span class="footer-dot">·</span>
+      <a href={localePath(locale, '/privacy')}>{i18n.footer.privacy}</a>
+    </div>
+    <div class="footer-row footer-credits">
+      <span>{i18n.footer.credits}</span>&nbsp;
+      <a href="https://arks.itch.io/dino-characters" target="_blank" rel="noopener">arks</a>
+      (<a href="https://x.com/ArksDigital" target="_blank" rel="noopener">@ArksDigital</a>)
+    </div>
+
+    {
+      locale === 'zh' ? (
+        <div class="footer-social">
+          <div class="qr-group">
+            <div class="qr-item">
+              <img
+                src="/me/wechat_mp.jpg"
+                alt="AI 步步微信公众号二维码"
+                width="64"
+                height="64"
+                loading="lazy"
+              />
+              <span>公众号</span>
+            </div>
+            <div class="qr-item">
+              <img
+                src="/me/xiaohongshu.jpg"
+                alt="AI 步步小红书二维码"
+                width="64"
+                height="64"
+                loading="lazy"
+              />
+              <span>小红书</span>
+            </div>
+            <div class="qr-item">
+              <img
+                src="/me/douyin.jpg"
+                alt="AI 步步抖音二维码"
+                width="64"
+                height="64"
+                loading="lazy"
+              />
+              <span>抖音</span>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div class="footer-social footer-social-en">
+          <div class="footer-row">
+            <a href="https://x.com/funAgentApp" target="_blank" rel="noopener">
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+                aria-hidden="true"
+              >
+                <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+              </svg>
+              @funAgentApp
+            </a>
+            <span class="footer-dot">·</span>
+            <a href="https://x.com/hash-panda" target="_blank" rel="noopener">
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+                aria-hidden="true"
+              >
+                <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+              </svg>
+              @hash-panda
+            </a>
+            <span class="footer-dot">·</span>
+            <span>Developer</span>
+          </div>
+        </div>
+      )
+    }
+
+    <div class="footer-row">{i18n.footer.copyright}</div>
+  </footer>
+</Base>
+
+<script>
+  import { initLangToggle } from '../../scripts/lang-toggle'
+  initLangToggle()
+
+  const SVG_MAC =
+    '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.32 2.32-2.14 4.45-3.74 4.25z"/></svg>'
+  const SVG_WIN =
+    '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></svg>'
+  const SVG_LINUX =
+    '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12.504 0c-.155 0-.315.008-.48.021-4.226.333-3.105 4.807-3.17 6.298-.076 1.092-.3 1.953-1.05 3.02-.885 1.051-2.127 2.75-2.716 4.521-.278.832-.41 1.684-.287 2.489a.424.424 0 0 0-.11.135c-.26.268-.45.6-.663.839-.073.076-.263.238-.395.36-.522.478-.63.622-.83.822-.298.282-.36.358-.458.488a3.4 3.4 0 0 0-.36.627 1.67 1.67 0 0 0-.12.6c0 .12.015.24.04.358.058.27.16.502.265.71.12.24.252.428.37.586.14.188.27.33.37.444.067.067.12.12.16.152a.63.63 0 0 0 .12.09c.32.227.747.39 1.234.39.595 0 1.13-.203 1.414-.585.115-.16.234-.398.34-.638.106-.24.196-.485.263-.705a1.35 1.35 0 0 0 .075-.397c.003-.135-.017-.268-.043-.367a.7.7 0 0 0-.117-.252c.062.002.124.002.18 0a.78.78 0 0 0 .22-.04c.1-.04.199-.092.3-.162.11-.078.218-.176.32-.298.127-.158.238-.34.318-.508.082-.174.135-.338.155-.482.036-.21-.004-.394-.06-.535a1.02 1.02 0 0 0-.168-.324 4.88 4.88 0 0 1 2.382-.84c.504-.056.94-.034 1.316.046.374.08.686.204.94.378.11.075.22.162.326.267.067-.088.135-.196.215-.333.186-.32.39-.73.673-1.08a3.02 3.02 0 0 1 .479-.456c.17-.127.353-.228.534-.286.363-.117.614-.01.84.195.226.203.43.504.614.847.185.342.34.716.467 1.068a6.86 6.86 0 0 1 .384 1.336c.08.424.14.865.17 1.315.015.223.017.452.005.685a4.55 4.55 0 0 1-.057.66c-.047.27-.11.504-.173.685a2.3 2.3 0 0 1-.155.36c.09.07.175.142.253.218.29.276.5.6.655.936.155.335.25.69.295 1.035.044.344.04.68-.005.985-.046.304-.13.575-.236.79-.106.217-.24.38-.37.485a.763.763 0 0 1-.35.185.38.38 0 0 1-.12.015c-.11 0-.22-.028-.32-.084a.87.87 0 0 1-.27-.235c-.1-.13-.18-.276-.26-.446a10.24 10.24 0 0 1-.356-.893c.07.09.14.175.206.252.073.09.145.167.215.23.14.122.27.175.38.175.054 0 .106-.012.152-.04.047-.028.09-.072.115-.132.017-.038.034-.093.04-.158a1.16 1.16 0 0 0-.018-.258 3.7 3.7 0 0 0-.088-.42 5.2 5.2 0 0 0-.395-1.04 2.98 2.98 0 0 0-.447-.666 1.9 1.9 0 0 0-.508-.39 1.14 1.14 0 0 0-.543-.143c-.1 0-.196.02-.288.057a.96.96 0 0 0-.264.162c-.164.14-.31.34-.422.583-.05.108-.095.225-.134.35a2.84 2.84 0 0 0-.1.42 4.46 4.46 0 0 0-.047.54c-.004.17.003.35.02.536.014.186.04.378.08.572.077.38.19.757.33 1.09.14.332.305.614.478.82.173.205.35.334.504.383.03.012.055.016.08.016.107 0 .194-.083.27-.206.082-.13.147-.307.21-.526l.03-.108c.083-.31.177-.66.314-.98.138-.32.314-.62.55-.84.118-.106.247-.196.39-.26.142-.066.298-.106.466-.114.166-.008.328.016.482.068.154.052.3.134.434.242.23.19.42.44.57.73.153.29.265.62.34.97.074.35.11.715.11 1.075 0 .36-.036.717-.108 1.05-.072.335-.18.647-.316.91-.137.267-.302.48-.486.624a.84.84 0 0 1-.528.218.62.62 0 0 1-.194-.03c-.064-.02-.13-.052-.197-.095a1.57 1.57 0 0 1-.35-.32 4.78 4.78 0 0 1-.47-.72c-.09-.168-.19-.35-.27-.538.04.41.114.82.222 1.19.055.185.12.37.197.53.074.16.155.305.246.42.09.112.19.2.293.252.104.054.213.078.33.078.083 0 .168-.013.257-.038a1.2 1.2 0 0 0 .34-.152 2.17 2.17 0 0 0 .6-.567 3.67 3.67 0 0 0 .473-.973c.067-.2.123-.418.167-.64.043-.224.075-.45.095-.672.04-.443.032-.882-.018-1.28-.048-.4-.133-.76-.248-1.05a1.89 1.89 0 0 0-.328-.564c-.05-.058-.105-.11-.16-.158.1-.124.175-.27.227-.424.098-.29.14-.617.14-.95 0-.333-.04-.68-.118-1.01-.077-.33-.186-.652-.32-.935a3.02 3.02 0 0 0-.422-.672c.093-.144.16-.29.2-.44.088-.315.088-.653.016-.978a2.7 2.7 0 0 0-.283-.745 3.58 3.58 0 0 0-.526-.71c.35-.103.6-.257.79-.43.192-.178.33-.374.43-.56.102-.19.17-.37.21-.524.04-.153.06-.28.06-.364 0-.052-.004-.073-.004-.073s-.026.017-.072.048c-.046.03-.11.072-.197.118-.17.09-.406.192-.713.262a4.65 4.65 0 0 1-1.1.137c-.2 0-.41-.012-.625-.04a5.97 5.97 0 0 1-.837-.166c.142-.072.27-.155.384-.247.227-.19.38-.39.47-.567a1.04 1.04 0 0 0 .12-.454c0-.04-.003-.08-.008-.12-.023-.172-.08-.338-.164-.495a2.13 2.13 0 0 0-.296-.4 3.6 3.6 0 0 0-.52-.447c.123-.005.244-.017.362-.035.443-.068.85-.21 1.156-.416.306-.206.51-.468.604-.78.046-.15.07-.31.07-.47 0-.332-.098-.654-.27-.926a2.04 2.04 0 0 0-.66-.65c-.27-.17-.585-.28-.918-.336a3.47 3.47 0 0 0-.614-.059z"/></svg>'
+
+  type OSType = 'mac' | 'win' | 'linux'
+
+  function detectOS(): OSType {
+    const ua = navigator.userAgent.toLowerCase()
+    if (ua.includes('win')) return 'win'
+    if (ua.includes('linux') && !ua.includes('android')) return 'linux'
+    return 'mac'
+  }
+
+  const dlIconMap: Record<OSType, string> = { mac: SVG_MAC, win: SVG_WIN, linux: SVG_LINUX }
+
+  function applyDownloadBtn() {
+    const btn = document.getElementById('downloadBtn') as HTMLAnchorElement | null
+    if (!btn) return
+
+    const os = detectOS()
+
+    const dlText = document.getElementById('dlText')
+    const dlIcon = document.getElementById('dlIcon')
+    const textMap: Record<OSType, string> = {
+      mac: btn.dataset.dlTextMac || '',
+      win: btn.dataset.dlTextWin || '',
+      linux: btn.dataset.dlTextLinux || '',
+    }
+    if (dlText) dlText.textContent = textMap[os]
+    if (dlIcon) dlIcon.innerHTML = dlIconMap[os]
+
+    const urlMap: Record<OSType, string> = {
+      mac: btn.dataset.dlMac || '',
+      win: btn.dataset.dlWin || '',
+      linux: btn.dataset.dlLinux || '',
+    }
+    btn.href = urlMap[os] || btn.dataset.dlFallback || btn.href
+  }
+
+  applyDownloadBtn()
+
+  function applyVersionMeta() {
+    const metaEl = document.getElementById('heroMeta')
+    if (!metaEl) return
+    const ver = metaEl.dataset.version
+    const toolList = metaEl.dataset.toolList || ''
+    if (!ver) return
+    metaEl.textContent = `v${ver} · ${toolList}`
+  }
+
+  applyVersionMeta()
+  ;(function initCarousel() {
+    const carousel = document.getElementById('featCarousel')
+    if (!carousel) return
+
+    const slides = carousel.querySelectorAll<HTMLElement>('.carousel-slide')
+    const dots = carousel.querySelectorAll<HTMLElement>('.dot')
+    const total = slides.length
+    let current = 0
+    let timer: ReturnType<typeof setInterval>
+
+    function posFor(slideIdx: number, activeIdx: number): string {
+      const diff = (slideIdx - activeIdx + total) % total
+      if (diff === 0) return 'active'
+      if (diff === 1) return 'next'
+      if (diff === total - 1) return 'prev'
+      if (diff === 2) return 'far-next'
+      return 'far-prev'
+    }
+
+    function goTo(idx: number) {
+      current = ((idx % total) + total) % total
+      slides.forEach((s, i) => s.setAttribute('data-pos', posFor(i, current)))
+      dots.forEach((d, i) => d.classList.toggle('active', i === current))
+    }
+
+    function advance() {
+      goTo(current + 1)
+    }
+
+    function startAuto() {
+      timer = setInterval(advance, 4000)
+    }
+    function stopAuto() {
+      clearInterval(timer)
+    }
+
+    carousel.addEventListener('mouseenter', stopAuto)
+    carousel.addEventListener('mouseleave', startAuto)
+
+    dots.forEach((d) => {
+      d.addEventListener('click', () => {
+        const idx = parseInt(d.getAttribute('data-idx') || '0', 10)
+        stopAuto()
+        goTo(idx)
+        startAuto()
+      })
+    })
+
+    slides.forEach((s) => {
+      s.addEventListener('click', () => {
+        const pos = s.getAttribute('data-pos')
+        if (pos === 'prev') {
+          stopAuto()
+          goTo(current - 1)
+          startAuto()
+        }
+        if (pos === 'next') {
+          stopAuto()
+          goTo(current + 1)
+          startAuto()
+        }
+      })
+    })
+
+    goTo(0)
+    startAuto()
+  })()
+</script>
+
+<style>
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .nav {
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 24px 24px 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .logo-label {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+    letter-spacing: -0.3px;
+  }
+
+  .nav-end {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .lang-btn {
+    background: none;
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    color: var(--text-3);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-family: inherit;
+    transition: all 0.2s;
+  }
+
+  .lang-btn:hover {
+    border-color: rgba(0, 0, 0, 0.2);
+    color: var(--text-2);
+  }
+
+  .nav-link {
+    font-size: 13px;
+    color: var(--text-3);
+    font-weight: 500;
+    transition: color 0.2s;
+  }
+
+  .nav-link:hover {
+    color: var(--text);
+  }
+
+  .hero {
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 24px 24px 24px;
+    text-align: center;
+  }
+
+  .hero-demo {
+    position: relative;
+    display: inline-block;
+    margin-bottom: 32px;
+    animation: fadeDown 0.6s ease-out;
+  }
+
+  .hero-demo video {
+    width: min(466px, 90vw);
+    height: auto;
+    image-rendering: pixelated;
+    border-radius: 12px;
+  }
+
+  h1 {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: clamp(32px, 6vw, 48px);
+    font-weight: 700;
+    line-height: 1.1;
+    letter-spacing: -2px;
+    animation: fadeUp 0.6s ease-out;
+  }
+
+  .hero-desc {
+    margin-top: 24px;
+    font-size: 15px;
+    line-height: 1.75;
+    color: var(--text-2);
+    max-width: 560px;
+    margin-left: auto;
+    margin-right: auto;
+    animation: fadeUp 0.6s ease-out 0.06s both;
+  }
+
+  .hero-actions {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    flex-wrap: wrap;
+    margin-top: 40px;
+    animation: fadeUp 0.6s ease-out 0.12s both;
+  }
+
+  .btn-primary {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 24px;
+    background: var(--text);
+    color: var(--bg);
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 600;
+    transition: all 0.2s ease-out;
+  }
+
+  .btn-primary:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+  }
+
+  .btn-primary:active {
+    transform: translateY(0);
+  }
+
+  .btn-ghost {
+    display: inline-flex;
+    align-items: center;
+    padding: 12px 24px;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-2);
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 500;
+    transition: all 0.2s ease-out;
+  }
+
+  .btn-ghost:hover {
+    border-color: rgba(0, 0, 0, 0.2);
+    color: var(--text);
+  }
+
+  .hero-meta {
+    margin-top: 16px;
+    font-size: 12px;
+    color: var(--text-3);
+    letter-spacing: 0.2px;
+    animation: fadeUp 0.6s ease-out 0.18s both;
+  }
+
+  .states {
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 16px 24px 64px;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    animation: fadeUp 0.6s ease-out 0.24s both;
+  }
+
+  .states .sr-only {
+    grid-column: 1 / -1;
+  }
+
+  .state-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 24px 14px 20px;
+    text-align: center;
+    transition: all 0.25s ease-out;
+  }
+
+  .state-card:hover {
+    border-color: rgba(0, 0, 0, 0.12);
+    transform: translateY(-4px);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.06);
+  }
+
+  .state-visual {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 16px;
+  }
+
+  .state-visual img {
+    width: 64px;
+    height: 64px;
+    image-rendering: pixelated;
+  }
+
+  .state-visual .together-gif {
+    width: auto;
+    height: 64px;
+  }
+
+  .state-card h3 {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+    margin-bottom: 6px;
+  }
+
+  .state-card p {
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--text-2);
+  }
+
+  .features {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 16px 24px 64px;
+    text-align: center;
+    overflow: hidden;
+  }
+
+  .features h2 {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 24px;
+    font-weight: 700;
+    letter-spacing: -1px;
+    margin-bottom: 40px;
+  }
+
+  .carousel {
+    position: relative;
+    user-select: none;
+  }
+
+  .carousel-track {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    height: 480px;
+  }
+
+  .carousel-slide {
+    position: absolute;
+    width: 44%;
+    max-width: 380px;
+    border-radius: 20px;
+    overflow: hidden;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.04);
+    transition: all 0.65s cubic-bezier(0.22, 1, 0.36, 1);
+    cursor: pointer;
+    will-change: transform, opacity, filter;
+  }
+
+  .slide-frame {
+    overflow: hidden;
+    border-radius: 19px 19px 0 0;
+  }
+
+  .slide-frame img {
+    width: 100%;
+    height: auto;
+    display: block;
+  }
+
+  .slide-caption {
+    padding: 14px 18px 16px;
+    text-align: left;
+    background: var(--surface);
+  }
+
+  .slide-title {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: -0.3px;
+    margin-bottom: 3px;
+  }
+
+  .slide-desc {
+    font-size: 12px;
+    color: var(--text-2);
+    line-height: 1.5;
+  }
+
+  .carousel-slide[data-pos='active'] {
+    transform: translateX(0) scale(1);
+    opacity: 1;
+    filter: none;
+    z-index: 3;
+    box-shadow:
+      0 8px 40px rgba(0, 0, 0, 0.1),
+      0 2px 8px rgba(0, 0, 0, 0.04);
+  }
+
+  .carousel-slide[data-pos='prev'] {
+    transform: translateX(-68%) scale(0.88);
+    opacity: 0.55;
+    filter: blur(1.5px);
+    z-index: 2;
+  }
+
+  .carousel-slide[data-pos='next'] {
+    transform: translateX(68%) scale(0.88);
+    opacity: 0.55;
+    filter: blur(1.5px);
+    z-index: 2;
+  }
+
+  .carousel-slide[data-pos='far-prev'] {
+    transform: translateX(-130%) scale(0.75);
+    opacity: 0;
+    filter: blur(4px);
+    z-index: 1;
+    pointer-events: none;
+  }
+
+  .carousel-slide[data-pos='far-next'] {
+    transform: translateX(130%) scale(0.75);
+    opacity: 0;
+    filter: blur(4px);
+    z-index: 1;
+    pointer-events: none;
+  }
+
+  .carousel-dots {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin-top: 28px;
+  }
+
+  .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    border: none;
+    background: var(--text);
+    opacity: 0.15;
+    cursor: pointer;
+    padding: 0;
+    transition: all 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .dot.active {
+    opacity: 1;
+    background: var(--text);
+    transform: scale(1.3);
+    box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.08);
+  }
+
+  .chars {
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 48px 24px 80px;
+    text-align: center;
+    animation: fadeUp 0.6s ease-out 0.3s both;
+  }
+
+  .chars h2 {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 24px;
+    font-weight: 700;
+    letter-spacing: -1px;
+    margin-bottom: 40px;
+  }
+
+  .chars-row {
+    display: flex;
+    justify-content: center;
+    gap: 40px;
+    margin-bottom: 24px;
+  }
+
+  .char-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .char-sprite {
+    width: 72px;
+    height: 72px;
+    image-rendering: pixelated;
+    background-size: auto 72px;
+    background-position: 0 0;
+    background-repeat: no-repeat;
+    animation: sprite-idle 0.67s steps(4) infinite;
+    border-radius: 14px;
+    background-color: var(--bg);
+    padding: 0;
+    transition: background-color 0.2s;
+    border: 1px solid transparent;
+  }
+
+  .char-item:hover .char-sprite {
+    background-color: #f0f0f2;
+    border-color: var(--border);
+  }
+
+  .char-doux {
+    background-image: url('/skins/doux.png');
+  }
+  .char-vita {
+    background-image: url('/skins/vita.png');
+  }
+  .char-mort {
+    background-image: url('/skins/mort.png');
+  }
+  .char-tard {
+    background-image: url('/skins/tard.png');
+  }
+
+  @keyframes sprite-idle {
+    to {
+      background-position: -288px 0;
+    }
+  }
+
+  .char-name {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-3);
+    letter-spacing: 0.5px;
+  }
+
+  .chars-note {
+    font-size: 13px;
+    color: var(--text-3);
+  }
+
+  .footer {
+    border-top: 1px solid var(--border);
+    padding: 32px 24px calc(32px + env(safe-area-inset-bottom, 0px));
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text-3);
+    text-align: center;
+  }
+
+  .footer-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 4px 8px;
+  }
+
+  .footer-dot {
+    opacity: 0.4;
+  }
+
+  .footer-brand {
+    font-weight: 600;
+    color: var(--text-2);
+  }
+
+  .footer a {
+    transition: color 0.2s;
+  }
+  .footer a:hover {
+    color: var(--text-2);
+  }
+
+  .footer-credits a {
+    text-decoration: underline;
+    text-decoration-color: rgba(0, 0, 0, 0.15);
+    text-underline-offset: 2px;
+  }
+
+  .footer-credits a:hover {
+    text-decoration-color: rgba(0, 0, 0, 0.4);
+  }
+
+  .footer-social {
+    margin-top: 4px;
+  }
+
+  .qr-group {
+    display: flex;
+    gap: 24px;
+    justify-content: center;
+  }
+
+  .qr-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .qr-item img {
+    border-radius: 8px;
+    border: 1px solid var(--border);
+  }
+
+  .qr-item span {
+    font-size: 11px;
+    color: var(--text-3);
+  }
+
+  .footer-social-en .footer-row {
+    gap: 8px;
+  }
+
+  .footer-social-en a {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    transition: color 0.2s;
+  }
+
+  .footer-social-en a:hover {
+    color: var(--text-2);
+  }
+
+  @keyframes fadeUp {
+    from {
+      opacity: 0;
+      transform: translateY(20px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes fadeDown {
+    from {
+      opacity: 0;
+      transform: translateY(-12px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @media (max-width: 640px) {
+    .states {
+      grid-template-columns: repeat(2, 1fr);
+      max-width: 360px;
+      gap: 12px;
+    }
+
+    .state-card {
+      padding: 20px 12px 16px;
+    }
+
+    .carousel-track {
+      height: 360px;
+    }
+
+    .carousel-slide {
+      width: 68%;
+      max-width: 300px;
+    }
+
+    .carousel-slide[data-pos='prev'] {
+      transform: translateX(-58%) scale(0.84);
+      opacity: 0.4;
+    }
+
+    .carousel-slide[data-pos='next'] {
+      transform: translateX(58%) scale(0.84);
+      opacity: 0.4;
+    }
+
+    .chars-row {
+      gap: 24px;
+    }
+
+    .char-sprite {
+      width: 56px;
+      height: 56px;
+      background-size: auto 56px;
+    }
+
+    @keyframes sprite-idle {
+      to {
+        background-position: -224px 0;
+      }
+    }
+  }
+</style>

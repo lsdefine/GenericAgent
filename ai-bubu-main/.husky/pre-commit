@@ -1,0 +1,5 @@
+cargo fmt --manifest-path packages/app/src-tauri/Cargo.toml
+cargo test --manifest-path packages/app/src-tauri/Cargo.toml --lib
+node scripts/validate-skins.js
+node scripts/validate-providers.js
+npx lint-staged

@@ -1,0 +1,49 @@
+{
+  "name": "aibubu",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm --filter aibubu dev",
+    "build": "pnpm --filter aibubu build",
+    "tauri": "pnpm --filter aibubu tauri",
+    "dev:mock": "VITE_MOCK_PEERS=true pnpm --filter aibubu tauri dev",
+    "test": "pnpm --filter aibubu test",
+    "dev:site": "pnpm --filter aibubu-site dev",
+    "build:site": "pnpm --filter aibubu-site build",
+    "lint": "eslint packages/app/src packages/site/src --fix",
+    "lint:check": "eslint packages/app/src packages/site/src",
+    "format": "prettier --write \"packages/**/*.{ts,vue,js,json,css,html,astro}\"",
+    "validate:skins": "node scripts/validate-skins.js",
+    "bump": "node scripts/bump-version.js",
+    "prepare": "husky"
+  },
+  "lint-staged": {
+    "packages/app/src/**/*.{ts,vue}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "packages/site/src/**/*.{ts,js,astro}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,css,html,md}": [
+      "prettier --write"
+    ]
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^20.5.0",
+    "@commitlint/config-conventional": "^20.5.0",
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.1.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-astro": "^1.6.0",
+    "eslint-plugin-vue": "^10.8.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.4.0",
+    "prettier": "^3.8.1",
+    "prettier-plugin-astro": "^0.14.1",
+    "smol-toml": "^1.6.1",
+    "typescript-eslint": "^8.58.0"
+  },
+  "packageManager": "pnpm@10.18.3+sha512.bbd16e6d7286fd7e01f6b3c0b3c932cda2965c06a908328f74663f10a9aea51f1129eea615134bf992831b009eabe167ecb7008b597f40ff9bc75946aadfb08d"
+}

@@ -1,0 +1,77 @@
+{
+  "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-config-schema/schema.json",
+  "productName": "AIbubu",
+  "version": "0.4.3",
+  "identifier": "com.aibubu.app",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "macOSPrivateApi": true,
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "pet",
+        "title": "AI 步步",
+        "width": 80,
+        "height": 120,
+        "x": 600,
+        "y": 400,
+        "transparent": true,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "shadow": false,
+        "visible": true
+      },
+      {
+        "label": "social",
+        "title": "AI 步步",
+        "width": 520,
+        "height": 600,
+        "transparent": false,
+        "decorations": true,
+        "alwaysOnTop": false,
+        "skipTaskbar": false,
+        "resizable": false,
+        "fullscreen": false,
+        "maximizable": false,
+        "visible": false,
+        "url": "index.html"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: https://asset.localhost data: blob:; connect-src 'self' ipc: http://ipc.localhost https://github.com https://api.github.com"
+    },
+    "trayIcon": null
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": ["https://github.com/funAgent/ai-bubu/releases/latest/download/latest.json"],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDE1NjIwQTIyMTgyNTlCQUIKUldTcm15VVlJZ3BpRmI3UTBiNEpodnlwMDBCMWtXK3JmbExvSnhZZStnMjJFZFBoL1ZraE5tdlcK"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "createUpdaterArtifacts": true,
+    "targets": "all",
+    "resources": {
+      "../providers/*": "providers/"
+    },
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "14.0",
+      "signingIdentity": null
+    }
+  }
+}

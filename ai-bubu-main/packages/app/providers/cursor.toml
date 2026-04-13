@@ -1,0 +1,40 @@
+[meta]
+id = "cursor"
+name = "Cursor AI"
+category = "ide"
+priority = 10
+
+[detect]
+adapter = "sqlite"
+[detect.paths]
+macos = "${APP_SUPPORT}/Cursor/User/globalStorage/state.vscdb"
+linux = "${HOME}/.config/Cursor/User/globalStorage/state.vscdb"
+windows = "${APPDATA}/Cursor/User/globalStorage/state.vscdb"
+
+[activity]
+adapter = "sqlite"
+
+[activity.sqlite]
+latest_query = """
+SELECT
+  json_extract(value, '$.lastUpdatedAt') as ts,
+  json_extract(value, '$.status') as status,
+  json_extract(value, '$.totalLinesAdded') as lines_added,
+  json_extract(value, '$.filesChangedCount') as files_changed
+FROM cursorDiskKV
+WHERE key >= 'composerData:' AND key < 'composerDataa'
+ORDER BY json_extract(value, '$.lastUpdatedAt') DESC
+LIMIT 1
+"""
+timestamp_field = "ts"
+status_field = "status"
+metrics_fields = ["lines_added", "files_changed"]
+
+[activity.status_map]
+generating = "active_high"
+streaming = "active_high"
+
+[process_fallback]
+enabled = true
+names = ["cursor", "cursor helper"]
+cpu_active_threshold = 50.0

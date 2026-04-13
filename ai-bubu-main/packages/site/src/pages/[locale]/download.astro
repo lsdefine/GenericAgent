@@ -1,0 +1,387 @@
+---
+import Base from '../../layouts/Base.astro'
+import { t, localePath, type Locale } from '../../i18n'
+
+export function getStaticPaths() {
+  return [{ params: { locale: 'zh' } }, { params: { locale: 'en' } }]
+}
+
+const locale = Astro.params.locale as Locale
+const i18n = t(locale)
+
+const GITHUB_REPO = 'https://github.com/funAgent/ai-bubu'
+const RELEASES_URL = `${GITHUB_REPO}/releases/latest`
+
+interface Asset {
+  name: string
+  browser_download_url: string
+  size: number
+}
+
+let assets: Asset[] = []
+let latestVersion = ''
+
+try {
+  const resp = await fetch('https://api.github.com/repos/funAgent/ai-bubu/releases/latest', {
+    headers: { Accept: 'application/vnd.github.v3+json' },
+  })
+  if (resp.ok) {
+    const data = await resp.json()
+    latestVersion = (data.tag_name || '').replace(/^v/, '')
+    assets = data.assets || []
+  }
+} catch {
+  /* build-time fetch failed, links will fall back to GitHub releases page */
+}
+
+function findAsset(ext: string, arch?: string): Asset | undefined {
+  return assets.find((a) => {
+    const n = a.name.toLowerCase()
+    if (!n.endsWith(ext)) return false
+    return arch ? n.includes(arch) : true
+  })
+}
+
+function formatSize(bytes: number): string {
+  const mb = bytes / (1024 * 1024)
+  return `${mb.toFixed(1)} MB`
+}
+
+const p = i18n.download.platforms
+const platforms = [
+  {
+    id: 'mac-arm',
+    label: p.macArm.label,
+    desc: p.macArm.desc,
+    icon: 'mac',
+    asset: findAsset('.dmg', 'aarch64'),
+  },
+  {
+    id: 'mac-intel',
+    label: p.macIntel.label,
+    desc: p.macIntel.desc,
+    icon: 'mac',
+    asset: findAsset('.dmg', 'x64'),
+  },
+  { id: 'win', label: p.win.label, desc: p.win.desc, icon: 'win', asset: findAsset('.msi') },
+  {
+    id: 'linux',
+    label: p.linux.label,
+    desc: p.linux.desc,
+    icon: 'linux',
+    asset: findAsset('.appimage'),
+  },
+]
+---
+
+<Base title={i18n.download.pageTitle} description={i18n.download.description}>
+  <nav class="dl-nav" aria-label="download">
+    <div class="dl-nav-inner">
+      <a href={localePath(locale, '/')} class="dl-back">
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path d="M15 18l-6-6 6-6"></path>
+        </svg>
+        <span>{i18n.nav.backHome}</span>
+      </a>
+      <button class="lang-btn" id="langToggle" type="button" aria-label="Switch language">
+        {i18n.nav.switchLang}
+      </button>
+    </div>
+  </nav>
+
+  <main class="dl-page">
+    <h1>{i18n.download.title}</h1>
+    {latestVersion && <p class="dl-version">v{latestVersion}</p>}
+    <p class="dl-subtitle">{i18n.download.subtitle}</p>
+
+    <div class="dl-grid">
+      {
+        platforms.map((pl) => (
+          <a
+            href={pl.asset?.browser_download_url || RELEASES_URL}
+            class="dl-card"
+            data-platform={pl.id}
+            data-has-asset={pl.asset ? 'true' : 'false'}
+          >
+            <div class="dl-card-icon" data-icon={pl.icon} />
+            <div class="dl-card-info">
+              <h2 class="dl-card-title">{pl.label}</h2>
+              <p class="dl-card-desc">{pl.desc}</p>
+              {pl.asset && (
+                <span class="dl-card-meta">
+                  {pl.asset.name} · {formatSize(pl.asset.size)}
+                </span>
+              )}
+            </div>
+            <svg
+              class="dl-card-arrow"
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M12 5v14M5 12l7 7 7-7" />
+            </svg>
+          </a>
+        ))
+      }
+    </div>
+
+    <div class="dl-footer-links">
+      <a href={RELEASES_URL} target="_blank" rel="noopener">{i18n.download.githubLink}</a>
+    </div>
+  </main>
+</Base>
+
+<script>
+  import { initLangToggle } from '../../scripts/lang-toggle'
+  initLangToggle()
+</script>
+
+<style>
+  .dl-nav {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: rgba(249, 249, 249, 0.85);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .dl-nav-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    max-width: 680px;
+    margin: 0 auto;
+    padding: 12px 24px;
+  }
+
+  .dl-back {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 14px;
+    color: var(--text-2);
+    transition: color 0.2s;
+  }
+
+  .dl-back:hover {
+    color: var(--text);
+  }
+
+  .lang-btn {
+    font-size: 13px;
+    font-weight: 600;
+    padding: 4px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--text-2);
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .lang-btn:hover {
+    color: var(--text);
+    border-color: rgba(0, 0, 0, 0.15);
+  }
+
+  .dl-page {
+    max-width: 680px;
+    margin: 0 auto;
+    padding: 48px 24px 80px;
+    text-align: center;
+  }
+
+  .dl-page h1 {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 32px;
+    font-weight: 700;
+    letter-spacing: -1.5px;
+    animation: fadeUp 0.5s ease-out;
+  }
+
+  .dl-version {
+    margin-top: 8px;
+    font-size: 14px;
+    color: var(--accent);
+    font-weight: 600;
+    font-family: 'Space Grotesk', sans-serif;
+    animation: fadeUp 0.5s ease-out 0.04s both;
+  }
+
+  .dl-subtitle {
+    margin-top: 8px;
+    font-size: 15px;
+    color: var(--text-2);
+    animation: fadeUp 0.5s ease-out 0.08s both;
+  }
+
+  .dl-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 40px;
+    animation: fadeUp 0.5s ease-out 0.12s both;
+  }
+
+  .dl-card {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 20px 24px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    text-align: left;
+    transition: all 0.25s ease-out;
+    text-decoration: none;
+    color: inherit;
+  }
+
+  .dl-card:hover {
+    border-color: rgba(0, 0, 0, 0.15);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.06);
+  }
+
+  .dl-card[data-has-asset='false'] {
+    opacity: 0.5;
+    pointer-events: none;
+  }
+
+  .dl-card-icon {
+    width: 40px;
+    height: 40px;
+    flex-shrink: 0;
+    display: grid;
+    place-items: center;
+    background: rgba(0, 0, 0, 0.04);
+    border-radius: 10px;
+  }
+
+  .dl-card-icon[data-icon='mac']::after {
+    content: '';
+    width: 20px;
+    height: 20px;
+    background: currentColor;
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.32 2.32-2.14 4.45-3.74 4.25z'/%3E%3C/svg%3E");
+    mask-size: contain;
+    -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.32 2.32-2.14 4.45-3.74 4.25z'/%3E%3C/svg%3E");
+    -webkit-mask-size: contain;
+  }
+
+  .dl-card-icon[data-icon='win']::after {
+    content: '';
+    width: 18px;
+    height: 18px;
+    background: currentColor;
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801'/%3E%3C/svg%3E");
+    mask-size: contain;
+    -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801'/%3E%3C/svg%3E");
+    -webkit-mask-size: contain;
+  }
+
+  .dl-card-icon[data-icon='linux']::after {
+    content: '';
+    width: 18px;
+    height: 18px;
+    background: currentColor;
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z'/%3E%3C/svg%3E");
+    mask-size: contain;
+    -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z'/%3E%3C/svg%3E");
+    -webkit-mask-size: contain;
+  }
+
+  .dl-card-info {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .dl-card-title {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+  }
+
+  .dl-card-desc {
+    font-size: 13px;
+    color: var(--text-2);
+    margin-top: 2px;
+  }
+
+  .dl-card-meta {
+    display: inline-block;
+    margin-top: 6px;
+    font-size: 11px;
+    color: var(--text-3);
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    letter-spacing: 0.2px;
+  }
+
+  .dl-card-arrow {
+    flex-shrink: 0;
+    color: var(--text-3);
+    transition: all 0.2s;
+  }
+
+  .dl-card:hover .dl-card-arrow {
+    color: var(--accent);
+    transform: translateY(2px);
+  }
+
+  .dl-footer-links {
+    margin-top: 40px;
+    font-size: 13px;
+    color: var(--text-3);
+    animation: fadeUp 0.5s ease-out 0.16s both;
+  }
+
+  .dl-footer-links a {
+    color: var(--text-3);
+    text-decoration: underline;
+    text-decoration-color: rgba(0, 0, 0, 0.15);
+    text-underline-offset: 2px;
+    transition: all 0.2s;
+  }
+
+  .dl-footer-links a:hover {
+    color: var(--text-2);
+    text-decoration-color: rgba(0, 0, 0, 0.4);
+  }
+
+  @keyframes fadeUp {
+    from {
+      opacity: 0;
+      transform: translateY(16px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @media (max-width: 640px) {
+    .dl-card {
+      padding: 16px 18px;
+    }
+    .dl-page h1 {
+      font-size: 26px;
+    }
+  }
+</style>

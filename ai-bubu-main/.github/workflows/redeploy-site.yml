@@ -1,0 +1,14 @@
+name: Redeploy Website
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  redeploy:
+    name: Trigger Vercel Deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy
+        run: curl -s -X POST "${{ secrets.VERCEL_DEPLOY_HOOK }}"

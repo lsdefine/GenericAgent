@@ -90,6 +90,25 @@ def auto_make_url(base, path):
     if b.endswith(p): return b
     return f"{b}/{p}" if re.search(r'/v\d+(/|$)', b) else f"{b}/v1/{p}"
 
+def build_multimodal_content(prompt_text, image_paths):
+    parts = []
+    text = prompt_text if isinstance(prompt_text, str) else str(prompt_text or "")
+    if text.strip():
+        parts.append({"type": "text", "text": text})
+    else:
+        parts.append({"type": "text", "text": "请查看图片并理解用户意图。"})
+    for path in image_paths or []:
+        if not path or not os.path.isfile(path): continue
+        try:
+            mime = mimetypes.guess_type(path)[0] or "image/png"
+            if not mime.startswith("image/"): mime = "image/png"
+            with open(path, "rb") as f:
+                data_url = f"data:{mime};base64,{base64.b64encode(f.read()).decode('ascii')}"
+            parts.append({"type": "image_url", "image_url": {"url": data_url}})
+        except Exception as e:
+            print(f"[WARN] encode image failed {path}: {e}")
+    return parts
+
 class SiderLLMSession:
     def __init__(self, cfg):
         from sider_ai_api import Session   # 不使用sider的话没必要安装这个包
@@ -126,7 +145,6 @@ def _parse_claude_sse(resp_lines):
         elif evt_type == "content_block_start":
             block = evt.get("content_block", {})
             if block.get("type") == "text": current_block = {"type": "text", "text": ""}
-            elif block.get("type") == "thinking": current_block = {"type": "thinking", "thinking": ""}
             elif block.get("type") == "tool_use":
                 current_block = {"type": "tool_use", "id": block.get("id", ""), "name": block.get("name", ""), "input": {}}
                 tool_json_buf = ""
@@ -136,8 +154,6 @@ def _parse_claude_sse(resp_lines):
                 text = delta.get("text", "")
                 if current_block and current_block.get("type") == "text": current_block["text"] += text
                 if text: yield text
-            elif delta.get("type") == "thinking_delta":
-                if current_block and current_block.get("type") == "thinking": current_block["thinking"] += delta.get("thinking", "")
             elif delta.get("type") == "input_json_delta": tool_json_buf += delta.get("partial_json", "")
         elif evt_type == "content_block_stop":
             if current_block:
@@ -442,8 +458,7 @@ class BaseSession:
         if effort and not self.reasoning_effort: print(f"[WARN] Invalid reasoning_effort {effort!r}, ignored.")
         mode = str(cfg.get('api_mode', 'chat_completions')).strip().lower().replace('-', '_')
         self.api_mode = 'responses' if mode in ('responses', 'response') else 'chat_completions'
-        self.temperature = cfg.get('temperature', 1.0)
-        self.max_tokens = cfg.get('max_tokens', 8192)
+        self.temperature = cfg.get('temperature')
     def ask(self, prompt, stream=False):
         def _ask_gen():
             content = ''
@@ -465,11 +480,13 @@ class BaseSession:
         return _ask_gen() if stream else ''.join(list(_ask_gen()))
 
 class ClaudeSession(BaseSession):
-    def raw_ask(self, messages):
+    def raw_ask(self, messages, temperature=0.5, max_tokens=6144):
         model = self.default_model
+        ml = model.lower()
+        if 'kimi' in ml or 'moonshot' in ml: temperature = 1.0  # kimi/moonshot only accepts temp 1.0
+        elif 'minimax' in ml: temperature = max(0.01, min(temperature, 1.0))  # MiniMax requires temp in (0, 1]
         headers = {"x-api-key": self.api_key, "Content-Type": "application/json", "anthropic-version": "2023-06-01", "anthropic-beta": "prompt-caching-2024-07-31"}
-        payload = {"model": model, "messages": messages, "temperature": self.temperature, "max_tokens": self.max_tokens, "stream": True}
-        if self.reasoning_effort: payload["reasoning_effort"] = self.reasoning_effort
+        payload = {"model": model, "messages": messages, "temperature": temperature, "max_tokens": max_tokens, "stream": True}
         if self.system: payload["system"] = [{"type": "text", "text": self.system, "cache_control": {"type": "persistent"}}]
         try:
             with requests.post(auto_make_url(self.api_base, "messages"), headers=headers, json=payload, stream=True, timeout=(self.connect_timeout, self.read_timeout)) as r:
@@ -486,11 +503,11 @@ class ClaudeSession(BaseSession):
         return msgs
 
 class LLMSession(BaseSession):
-    def raw_ask(self, messages):
+    def raw_ask(self, messages, temperature=0.5):
         return (yield from _openai_stream(self.api_base, self.api_key, messages, self.default_model, self.api_mode,
-                                  temperature=self.temperature, reasoning_effort=self.reasoning_effort,
-                                  max_tokens=self.max_tokens, max_retries=self.max_retries, 
-                                  connect_timeout=self.connect_timeout, read_timeout=self.read_timeout, proxies=self.proxies))
+                                  temperature=temperature, reasoning_effort=self.reasoning_effort,
+                                  max_retries=self.max_retries, connect_timeout=self.connect_timeout,
+                                  read_timeout=self.read_timeout, proxies=self.proxies))
     def make_messages(self, raw_list): return _msgs_claude2oai(raw_list)
 
 def _fix_messages(messages):
@@ -519,9 +536,10 @@ class NativeClaudeSession(BaseSession):
         self._account_uuid = str(uuid.uuid4())
         self._device_id = uuid.uuid4().hex + uuid.uuid4().hex[:32]
         self.tools = None
-    def raw_ask(self, messages):
+    def raw_ask(self, messages, temperature=0.5, max_tokens=6144):
         messages = _fix_messages(messages)
         model = self.default_model
+        if self.temperature is not None: temperature = self.temperature
         beta_parts = ["claude-code-20250219", "interleaved-thinking-2025-05-14", "redact-thinking-2026-02-12", "prompt-caching-scope-2026-01-05"]
         if "[1m]" in model.lower():
             beta_parts.insert(1, "context-1m-2025-08-07"); model = model.replace("[1m]", "").replace("[1M]", "")
@@ -530,8 +548,7 @@ class NativeClaudeSession(BaseSession):
             "user-agent": "claude-cli/2.1.90 (external, cli)", "x-app": "cli"}
         if self.api_key.startswith("sk-ant-"): headers["x-api-key"] = self.api_key
         else: headers["authorization"] = f"Bearer {self.api_key}"
-        payload = {"model": model, "messages": messages, "temperature": self.temperature, "max_tokens": self.max_tokens, "stream": True}
-        if self.reasoning_effort: payload["reasoning_effort"] = self.reasoning_effort
+        payload = {"model": model, "messages": messages, "temperature": temperature, "max_tokens": max_tokens, "stream": True}
         payload["metadata"] = {"user_id": json.dumps({"device_id": self._device_id, "account_uuid": self._account_uuid, "session_id": self._session_id}, separators=(',', ':'))}
         if self.tools:
             claude_tools = openai_tools_to_claude(self.tools)
@@ -571,24 +588,21 @@ class NativeClaudeSession(BaseSession):
         content = "\n".join(text_parts).strip()
         tool_calls = [MockToolCall(b["name"], b.get("input", {}), id=b.get("id", "")) for b in content_blocks if b.get("type") == "tool_use"]
         if not tool_calls: tool_calls, content = _parse_text_tool_calls(content)
-        thinking_parts = [b["thinking"] for b in content_blocks if b.get("type") == "thinking"]
-        thinking = "\n".join(thinking_parts).strip()
-        if not thinking:
-            think_pattern = r"<think(?:ing)?>(.*?)</think(?:ing)?>"
-            think_match = re.search(think_pattern, content, re.DOTALL)
-            if think_match:
-                thinking = think_match.group(1).strip()
-                content = re.sub(think_pattern, "", content, flags=re.DOTALL)
+        think_pattern = r"<think(?:ing)?>(.*?)</think(?:ing)?>"; thinking = ''
+        think_match = re.search(think_pattern, content, re.DOTALL)
+        if think_match:
+            thinking = think_match.group(1).strip()
+            content = re.sub(think_pattern, "", content, flags=re.DOTALL)
         return MockResponse(thinking, content, tool_calls, str(content_blocks))
 
 class NativeOAISession(NativeClaudeSession):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-    def raw_ask(self, messages):
+    def raw_ask(self, messages, temperature=0.5, max_tokens=6144, **kw):
         """OpenAI streaming. yields text chunks, generator return = list[content_block]"""
         msgs = ([{"role": "system", "content": self.system}] if self.system else []) + _msgs_claude2oai(messages)
         return (yield from _openai_stream(self.api_base, self.api_key, msgs, self.default_model, self.api_mode,
-                                          temperature=self.temperature, max_tokens=self.max_tokens, 
+                                          temperature=temperature, max_tokens=max_tokens, 
                                           tools=self.tools, reasoning_effort=self.reasoning_effort,
                                           max_retries=self.max_retries, connect_timeout=self.connect_timeout,
                                           read_timeout=self.read_timeout, proxies=self.proxies))
@@ -805,9 +819,8 @@ class MixinSession:
         self.default_model = getattr(self._sessions[0], 'default_model', None)
         self._cur_idx, self._switched_at = 0, 0.0
     def __getattr__(self, name): return getattr(self._sessions[0], name)
-    _BROADCAST_ATTRS = frozenset({'system', 'tools', 'temperature', 'max_tokens', 'reasoning_effort'})
     def __setattr__(self, name, value):
-        if name in self._BROADCAST_ATTRS:
+        if name in ('system', 'tools'):
             for s in self._sessions:
                 v = openai_tools_to_claude(value) if name == 'tools' and type(s) is NativeClaudeSession else value
                 setattr(s, name, v)
@@ -888,6 +901,13 @@ class NativeToolClient:
             while True: 
                 chunk = next(gen); yield chunk
         except StopIteration as e: resp = e.value
-        if resp: _write_llm_log('Response', resp.raw)
+        if resp:
+            _write_llm_log('Response', resp.raw)
+            text = resp.content
+            think_match = re.search(r'<think(?:ing)?>(.*?)</think(?:ing)?>', text, re.DOTALL)
+            if think_match:
+                resp.thinking = think_match.group(1).strip()
+                text = re.sub(r'<think(?:ing)?>.*?</think(?:ing)?>', '', text, flags=re.DOTALL)
+            resp.content = text.strip()
         if resp and hasattr(resp, 'tool_calls') and resp.tool_calls: self._pending_tool_ids = [tc.id for tc in resp.tool_calls]
         return resp

@@ -1,0 +1,10 @@
+dist/
+node_modules/
+target/
+pnpm-lock.yaml
+*.png
+*.ico
+*.icns
+*.mp4
+*.zip
+*.woff2

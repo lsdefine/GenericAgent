@@ -1,0 +1,15 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "astro",
+  "installCommand": "pnpm install",
+  "buildCommand": "pnpm build:site",
+  "outputDirectory": "packages/site/dist",
+  "routes": [
+    { "src": "/sitemap-index.xml", "dest": "/sitemap-index.xml" },
+    { "src": "/sitemap-0.xml", "dest": "/sitemap-0.xml" },
+    { "src": "^/$", "status": 301, "headers": { "Location": "/zh/" } },
+    { "src": "^/download/?$", "status": 301, "headers": { "Location": "/zh/download" } },
+    { "src": "^/privacy/?$", "status": 301, "headers": { "Location": "/zh/privacy" } },
+    { "src": "^/install/?$", "status": 301, "headers": { "Location": "/zh/install" } }
+  ]
+}

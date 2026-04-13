@@ -20,7 +20,22 @@ def start_streamlit(port):
     global proc
     cmd = [sys.executable, "-m", "streamlit", "run", os.path.join(frontends_dir, "stapp.py"), "--server.port", str(port), "--server.address", "localhost", "--server.headless", "true"]
     proc = subprocess.Popen(cmd)
-    atexit.register(proc.kill)
+
+    def cleanup():
+        proc.kill()
+        # Also kill any desktop pet processes
+        try:
+            import signal
+            if os.name == 'nt':
+                subprocess.run(['taskkill', '/F', '/IM', 'python*', '/FI', 'WINDOWTITLE eq desktop_pet*'],
+                             stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+            else:
+                subprocess.run(['pkill', '-9', '-f', 'desktop_pet'],
+                             stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+        except:
+            pass
+
+    atexit.register(cleanup)
 
 def inject(text):
     window.evaluate_js(f"""

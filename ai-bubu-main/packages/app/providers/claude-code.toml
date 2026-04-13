@@ -1,0 +1,24 @@
+[meta]
+id = "claude-code"
+name = "Claude Code"
+category = "cli"
+priority = 9
+
+[detect]
+adapter = "jsonl"
+[detect.paths]
+macos = "${HOME}/.claude/projects/"
+linux = "${HOME}/.claude/projects/"
+windows = "${HOME}/.claude/projects/"
+
+[activity]
+adapter = "jsonl"
+
+[activity.jsonl]
+file_pattern = "*.jsonl"
+timestamp_field = "timestamp"
+
+[process_fallback]
+enabled = true
+names = ["claude"]
+parent_exclude = ["cursor", "code", "trae"]

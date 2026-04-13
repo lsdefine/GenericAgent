@@ -1,0 +1,134 @@
+---
+import { getLocale, switchLocalePath, type Locale } from '../i18n'
+
+interface Props {
+  title: string
+  description: string
+  canonical?: string
+  ogImage?: string
+}
+const { title, description, canonical, ogImage } = Astro.props
+const locale = getLocale(Astro.url)
+const siteUrl = 'https://aibubu.app'
+const canonicalUrl = canonical ?? new URL(Astro.url.pathname, siteUrl).href
+const ogImageUrl = ogImage ?? `${siteUrl}/og-image.png`
+
+const altLocale: Locale = locale === 'zh' ? 'en' : 'zh'
+const altPath = switchLocalePath(Astro.url, altLocale)
+const selfUrl = canonicalUrl
+const altUrl = new URL(altPath, siteUrl).href
+const defaultUrl = new URL('/zh/', siteUrl).href
+
+const ogLocaleMap: Record<Locale, string> = { zh: 'zh_CN', en: 'en_US' }
+---
+
+<!doctype html>
+<html lang={locale}>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#f9f9f9" />
+    <meta name="description" content={description} />
+    <title>{title}</title>
+    <link rel="canonical" href={canonicalUrl} />
+    <link rel="alternate" hreflang={locale} href={selfUrl} />
+    <link rel="alternate" hreflang={altLocale} href={altUrl} />
+    <link rel="alternate" hreflang="x-default" href={defaultUrl} />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonicalUrl} />
+    <meta property="og:image" content={ogImageUrl} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:locale" content={ogLocaleMap[locale]} />
+    <meta property="og:locale:alternate" content={ogLocaleMap[altLocale]} />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={ogImageUrl} />
+
+    <!-- Google Analytics -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-QT2GC953J2" is:inline></script>
+    <script is:inline>
+      window.dataLayer = window.dataLayer || []
+      function gtag() {
+        // eslint-disable-next-line prefer-rest-params
+        dataLayer.push(arguments)
+      }
+      gtag('js', new Date())
+      gtag('config', 'G-QT2GC953J2')
+    </script>
+
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style is:global>
+      *,
+      *::before,
+      *::after {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      :root {
+        --bg: #f9f9f9;
+        --surface: #ffffff;
+        --border: rgba(0, 0, 0, 0.07);
+        --text: #1a1a1e;
+        --text-2: #6b6b76;
+        --text-3: #9b9ba6;
+        --accent: #6366f1;
+      }
+
+      html {
+        font-family:
+          'Inter',
+          -apple-system,
+          BlinkMacSystemFont,
+          system-ui,
+          sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        scroll-behavior: smooth;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      body {
+        min-height: 100vh;
+        overflow-x: hidden;
+      }
+
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+
+      :focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          animation-duration: 0.01ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.01ms !important;
+          scroll-behavior: auto !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <slot />
+  </body>
+</html>

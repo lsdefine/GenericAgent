@@ -1,0 +1,104 @@
+name: Verify Signing Key
+
+on:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    name: Verify Tauri Signing Key
+    runs-on: ubuntu-latest
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Check secrets presence
+        shell: bash
+        run: |
+          echo "=== Step 1: Check if secrets are set ==="
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY is NOT set"
+            exit 1
+          fi
+          CHAR_COUNT=${#TAURI_SIGNING_PRIVATE_KEY}
+          LINE_COUNT=$(echo "$TAURI_SIGNING_PRIVATE_KEY" | wc -l | tr -d ' ')
+          echo "Private key: ${CHAR_COUNT} chars, ${LINE_COUNT} lines"
+
+          if echo "$TAURI_SIGNING_PRIVATE_KEY" | head -1 | grep -q "^untrusted comment:"; then
+            echo "Format: OK (starts with 'untrusted comment:')"
+          else
+            echo "::error::Key does NOT start with 'untrusted comment:' — malformed"
+            exit 1
+          fi
+
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" ]; then
+            echo "Password: NOT set (empty)"
+          else
+            echo "Password: set (${#TAURI_SIGNING_PRIVATE_KEY_PASSWORD} chars)"
+          fi
+
+      - name: Install minisign
+        run: |
+          echo "=== Step 2: Install minisign ==="
+          sudo apt-get update -qq && sudo apt-get install -y -qq minisign
+
+      - name: Extract and prepare keys
+        shell: bash
+        run: |
+          echo "=== Step 3: Extract keys ==="
+
+          # Write the private key to a file (minisign format)
+          echo "$TAURI_SIGNING_PRIVATE_KEY" > /tmp/test_privkey.key
+          echo "Private key file written ($(wc -c < /tmp/test_privkey.key) bytes)"
+
+          # Extract public key from tauri.conf.json (base64-encoded)
+          PUBKEY_B64=$(python3 -c "
+          import json, sys
+          with open('packages/app/src-tauri/tauri.conf.json') as f:
+              conf = json.load(f)
+          print(conf['plugins']['updater']['pubkey'])
+          ")
+          echo "$PUBKEY_B64" | base64 -d > /tmp/test_pubkey.pub
+          echo "Public key decoded from tauri.conf.json:"
+          cat /tmp/test_pubkey.pub
+
+      - name: Sign a test file and verify
+        shell: bash
+        run: |
+          echo "=== Step 4: Sign test file ==="
+          echo "hello tauri updater" > /tmp/testfile.txt
+
+          # Sign with the private key
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" ]; then
+            minisign -S -s /tmp/test_privkey.key -m /tmp/testfile.txt -t "test signature"
+          else
+            echo "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" | minisign -S -s /tmp/test_privkey.key -m /tmp/testfile.txt -t "test signature"
+          fi
+
+          if [ $? -ne 0 ]; then
+            echo "::error::Signing FAILED — private key or password is invalid"
+            exit 1
+          fi
+          echo "Signing succeeded! Signature file created."
+          echo "Signature content:"
+          cat /tmp/testfile.txt.minisig
+
+          echo ""
+          echo "=== Step 5: Verify signature with public key ==="
+          minisign -V -p /tmp/test_pubkey.pub -m /tmp/testfile.txt
+
+          if [ $? -eq 0 ]; then
+            echo ""
+            echo "========================================"
+            echo "  ALL CHECKS PASSED"
+            echo "  - Private key: valid"
+            echo "  - Password: correct"
+            echo "  - Public/private key pair: matched"
+            echo "  - Updater signing: ready to use"
+            echo "========================================"
+          else
+            echo "::error::Verification FAILED — public key in tauri.conf.json does NOT match the private key"
+            exit 1
+          fi

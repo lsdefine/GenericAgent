@@ -157,10 +157,11 @@ def build_bubble_image(message, max_width=220):
     font = _load_default_font(font_size)
     draw = ImageDraw.Draw(bubble)
 
-    pad_x = max(10, bubble.width // 18)
+    pad_left = max(10, bubble.width // 18)
+    pad_right = max(10, bubble.width // 18) + max(6, bubble.width // 14)
     pad_top = max(8, bubble.height // 10)
     pad_bottom = max(18, bubble.height // 4)
-    text_area_width = max(40, bubble.width - pad_x * 2)
+    text_area_width = max(40, bubble.width - pad_left - pad_right)
 
     lines = _wrap_text_for_width(draw, message, font, text_area_width)
     ascent, descent = font.getmetrics() if hasattr(font, 'getmetrics') else (font_size, font_size // 4)
@@ -180,7 +181,7 @@ def build_bubble_image(message, max_width=220):
     for line in lines:
         bbox = draw.textbbox((0, 0), line, font=font)
         text_width = bbox[2] - bbox[0]
-        x = (bubble.width - text_width) / 2
+        x = pad_left + (text_area_width - text_width) / 2
         draw.text((x, y), line, font=font, fill=(32, 32, 32, 255))
         y += line_height
 
@@ -410,7 +411,7 @@ if sys.platform == 'darwin':
                 self.frame_idx = (self.frame_idx + 1) % len(frames)
 
         def set_state(self, state):
-            """Change animation state"""
+            """Change animation state (must be called on main thread)"""
             if state in self.animations and state != self.current_state:
                 self.current_state = state
                 self.frame_idx = 0
@@ -425,6 +426,10 @@ if sys.platform == 'darwin':
                     True
                 )
                 print(f"→ State: {state}")
+
+        def set_state_safe(self, state):
+            """Thread-safe wrapper for set_state"""
+            AppHelper.callAfter(lambda: self.set_state(state))
 
         def show_toast(self, message):
             """Show toast message above pet"""
@@ -531,7 +536,7 @@ if sys.platform == 'darwin':
 
                     if 'state' in params:
                         state = params['state'][0]
-                        pet.set_state(state)
+                        pet.set_state_safe(state)
                         self.send_response(200)
                         self.end_headers()
                         self.wfile.write(b'ok')

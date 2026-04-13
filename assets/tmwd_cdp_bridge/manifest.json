@@ -1,0 +1,39 @@
+{
+  "manifest_version": 3,
+  "name": "TMWD CDP Bridge",
+  "version": "2.0",
+  "description": "Cookie viewer + CDP bridge",
+  "permissions": [
+    "cookies",
+    "tabs",
+    "activeTab",
+    "debugger",
+    "scripting",
+    "alarms",
+    "declarativeNetRequest",
+    "management"
+  ],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["disable_dialogs.js"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "world": "MAIN"
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["config.js", "content.js"],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "TMWD CDP Bridge"
+  }
+}

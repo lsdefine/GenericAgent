@@ -1,0 +1,46 @@
+---
+description: Vue 3 前端组件与 TypeScript 开发规范
+globs: packages/app/src/**/*.{vue,ts}
+alwaysApply: false
+---
+
+# Vue 前端开发规范
+
+## TypeScript
+
+- 使用 `import type` 进行类型导入: `import type { Foo } from './foo'`
+- 不使用 `any`，必要时用 `unknown` 替代
+- 不使用 `console.log`，用 `console.warn` / `console.error`
+- 未使用的变量以 `_` 前缀命名
+
+## Vue 组件
+
+- 组件命名: PascalCase（`PetCanvas.vue`）
+- composable 以 `use` 前缀命名（`useActivityScore.ts`）
+- 单文件组件使用 `<script setup lang="ts">`
+- props 使用 `defineProps<>()` 泛型语法
+- emits 使用 `defineEmits<>()` 泛型语法
+
+## 状态管理
+
+- 使用 Pinia store，文件放在 `src/stores/`
+- store 命名: `use<Name>Store`（`useSkinStore`）
+- 跨组件通信优先使用 store，而非事件总线
+
+## Tauri 交互
+
+- 前端调用 Rust 命令: `import { invoke } from '@tauri-apps/api/core'`
+- 监听 Rust 事件: `import { listen } from '@tauri-apps/api/event'`
+- 持久化存储: 优先使用 Tauri Store plugin
+
+## 样式
+
+- 使用 Vue SFC `<style scoped>` 局部样式
+- 全局样式在 `src/styles/main.css`
+- 颜色使用 CSS 变量（`var(--color-xxx)`）
+
+## 测试
+
+- 测试文件与源文件同目录: `foo.ts` → `foo.test.ts`
+- 使用 Vitest + happy-dom
+- 覆盖范围: `src/utils/`, `src/stores/`

@@ -1,0 +1,71 @@
+[
+  {"type": "function", "function": {
+    "name": "code_run",
+    "description": "Code executor. Prefer python. No concurrent calls. Prefer code in ```python/powershell blocks in reply body to avoid escaping. No hardcoding bulk data",
+    "parameters": {"type": "object", "properties": {
+      "script": {"type": "string", "description": "[Mutually exclusive] NEVER use this param when use reply code block."},
+      "type": {"type": "string", "enum": ["python", "powershell"], "description": "Code type", "default": "python"},
+      "timeout": {"type": "integer", "description": "in seconds", "default": 60},
+      "cwd": {"type": "string", "description": "Working directory, defaults to cwd"}}}
+  }},
+  {"type": "function", "function": {
+    "name": "file_read",
+    "description": "Read file. Read before modify for latest context and line numbers",
+    "parameters": {"type": "object", "properties": {
+      "path": {"type": "string", "description": "Relative or absolute"},
+      "start": {"type": "integer", "description": "Start line number (1-based)", "default": 1},
+      "count": {"type": "integer", "description": "Number of lines to read", "default": 200},
+      "keyword": {"type": "string", "description": "[Optional] If provided, returns first match (case-insensitive) with context"},
+      "show_linenos": {"type": "boolean", "description": "Show line numbers", "default": true}}}
+  }},
+  {"type": "function", "function": {
+    "name": "file_patch",
+    "description": "Replace unique old_content with new_content. Exact match required (whitespace/indentation). On failure, file_read to recheck",
+    "parameters": {"type": "object", "properties": {
+      "path": {"type": "string", "description": "File path"},
+      "old_content": {"type": "string", "description": "Original text block to replace (must be unique)"},
+      "new_content": {"type": "string", "description": "New content. Supports {{file:path:startLine:endLine}} to ref file lines, auto-expanded"}}}
+  }},
+  {"type": "function", "function": {
+    "name": "file_write",
+    "description": "Create/overwrite/append files. ONLY for HUGE edits. Content in <file_content> tags or reply code blocks. Supports {{file:path:startLine:endLine}}, auto-expanded",
+    "parameters": {"type": "object", "properties": {
+      "path": {"type": "string", "description": "File path"},
+      "mode": {"type": "string", "enum": ["overwrite", "append", "prepend"], "description": "Write mode", "default": "append"}}}
+  }},
+  {"type": "function", "function": {
+    "name": "web_scan",
+    "description": "Get simplified HTML and tab list. Removes hidden/floating/covered elements. Call after switching pages",
+    "parameters": {"type": "object", "properties": {
+      "tabs_only": {"type": "boolean", "description": "Show tab list only, no HTML", "default": false},
+      "switch_tab_id": {"type": "string", "description": "[Optional] Tab ID to switch to"},
+      "text_only": {"type": "boolean", "description": "Plain text only, no HTML", "default": false}}}
+  }},
+  {"type": "function", "function": {
+    "name": "web_execute_js",
+    "description": "Execute JS to control browser. No guessing. Act accurately to reduce web_scan calls. Put code in ```javascript blocks in reply body to avoid escaping",
+    "parameters": {"type": "object", "properties": {
+      "script": {"type": "string", "description": "[Mutually exclusive] JS code or script path. NEVER use this param when use reply code block"},
+      "save_to_file": {"type": "string", "description": "file path; **only** for long result", "default": ""},
+      "no_monitor": {"type": "boolean", "description": "Skip page change monitoring, saves 2-3s. Only for reads, not for page actions", "default": false}}}
+  }},
+  {"type": "function", "function": {
+    "name": "update_working_checkpoint",
+    "description": "Short-term working notepad, auto-injected each turn to prevent info loss in long tasks. Call during early/mid stages, not at end. When: (1) after reading SOP, store user needs & key constraints (skip for simple 1-2 step tasks); (2) before subtask switch or context flush; (3) after repeated failures, re-read SOP and must store new findings; (4) on new task, update content, clear old progress but keep valid constraints.\n\nDon't call: simple tasks (1-2 steps), task completed (use long-term memory tool)",
+    "parameters": {"type": "object", "properties": {
+      "key_info": {"type": "string", "description": "Replaces current notepad (<200 tokens). Incremental update: review existing, keep valid, add/remove/modify. Store: pitfalls, user requirements, key params/findings, file paths, progress, next steps. Don't store: ephemeral info, obvious context, old task info when user switched tasks. Prefer over-updating over losing key info"},
+      "related_sop": {"type": "string", "description": "Related SOP names, tips for further re-read"}}}
+  }},
+  {"type": "function", "function": {
+    "name": "ask_user",
+    "description": "Interrupt task to ask user when needing decisions, extra info, or facing unresolvable blockers",
+    "parameters": {"type": "object", "properties": {
+      "question": {"type": "string", "description": "Question for the user"},
+      "candidates": {"type": "array", "items": {"type": "string"}, "description": "Optional quick-select choices for the user"}}}
+  }},
+  {"type": "function", "function": {
+    "name": "start_long_term_update",
+    "description": "Start distilling long-term memory. Call when discovering info worth remembering (env facts/user prefs/lessons learned). Skip if memory already updated or in autonomous flow. Must call for tasks taking 15+ turns",
+    "parameters": {"type": "object", "properties": {}}}
+  }
+]

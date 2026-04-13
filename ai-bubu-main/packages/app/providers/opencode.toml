@@ -1,0 +1,21 @@
+[meta]
+id = "opencode"
+name = "OpenCode"
+category = "cli"
+priority = 8
+
+[detect]
+adapter = "file_mtime"
+[detect.paths]
+macos = "${HOME}/.local/state/opencode/"
+linux = "${HOME}/.local/state/opencode/"
+windows = "${HOME}/.local/state/opencode/"
+
+[activity]
+adapter = "file_mtime"
+[activity.file_mtime]
+watch_pattern = "prompt-history.jsonl"
+
+[process_fallback]
+enabled = true
+names = ["opencode"]

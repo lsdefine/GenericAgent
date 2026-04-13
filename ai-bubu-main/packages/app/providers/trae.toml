@@ -1,0 +1,15 @@
+[meta]
+id = "trae"
+name = "Trae AI"
+category = "ide"
+priority = 8
+
+[detect]
+adapter = "process"
+
+[activity]
+adapter = "process"
+
+[activity.process]
+names = ["trae", "trae helper"]
+cpu_active_threshold = 15.0

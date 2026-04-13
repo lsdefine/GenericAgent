@@ -1,0 +1,71 @@
+[
+  {"type": "function", "function": {
+    "name": "code_run",
+    "description": "代码执行器。优先使用python。禁同时调用多个。为免转义问题，代码放正文 ```python/powershell 块中。禁硬编码大量数据",
+    "parameters": {"type": "object", "properties": {
+      "script": {"type": "string", "description": "[Optional] 要执行的代码。为免转义建议留空，改用正文代码块（与此参数互斥）"},
+      "type": {"type": "string", "enum": ["python", "powershell"], "description": "代码类型", "default": "python"},
+      "timeout": {"type": "integer", "description": "执行超时时间（秒）", "default": 60},
+      "cwd": {"type": "string", "description": "工作目录，默认为当前工作目录"}}}
+  }},
+  {"type": "function", "function": {
+    "name": "file_read",
+    "description": "读取文件内容。建议在修改文件前先读取，以确保获取最新的上下文和行号。支持分页读取或关键字搜索",
+    "parameters": {"type": "object", "properties": {
+      "path": {"type": "string", "description": "文件相对或绝对路径"},
+      "start": {"type": "integer", "description": "起始行号（从 1 开始）", "default": 1},
+      "count": {"type": "integer", "description": "读取的行数", "default": 200},
+      "keyword": {"type": "string", "description": "可选搜索关键字。如果提供，将返回第一个匹配项（忽略大小写）及其周边的内容"},
+      "show_linenos": {"type": "boolean", "description": "是否显示行号，建议开启以辅助 file_patch 定位", "default": true}}}
+  }},
+  {"type": "function", "function": {
+    "name": "file_patch",
+    "description": "精细化局部文件修改。在文件中寻找唯一的 old_content 块并替换为 new_content。要求 old_content 必须在文件中唯一存在，且空格、缩进、换行必须与原文件完全一致。如果匹配失败，请使用 file_read 重新确认文件内容",
+    "parameters": {"type": "object", "properties": {
+      "path": {"type": "string", "description": "文件路径"},
+      "old_content": {"type": "string", "description": "文件中需要被替换的原始文本块（需确保唯一性）"},
+      "new_content": {"type": "string", "description": "替换后的新文本内容。支持 {{file:路径:起始行:结束行}} 语法引用文件内容，写入前自动展开"}}}
+  }},
+  {"type": "function", "function": {
+    "name": "file_write",
+    "description": "用于文件的新建、全量覆盖或追加写入。对于精细的代码修改，应优先使用 file_patch。注意：要写入的内容必须放在回复正文的 <file_content> 标签或代码块中。写入内容支持 {{file:路径:起始行:结束行}} 语法引用文件片段，写入前自动展开",
+    "parameters": {"type": "object", "properties": {
+      "path": {"type": "string", "description": "文件路径"},
+      "mode": {"type": "string", "enum": ["overwrite", "append", "prepend"], "description": "写入模式覆盖、追加或在开头追加", "default": "overwrite"}}}
+  }},
+  {"type": "function", "function": {
+    "name": "web_scan",
+    "description": "获取当前页面的简化HTML内容和标签页列表。会移除隐藏/浮动/被遮盖的元素。切换页面后一般应先调用查看",
+    "parameters": {"type": "object", "properties": {
+      "tabs_only": {"type": "boolean", "description": "仅返回标签页列表和当前标签信息，不获取HTML内容", "default": false},
+      "switch_tab_id": {"type": "string", "description": "可选的标签页 ID。如果提供，系统将在扫描前切换到该标签页"},
+      "text_only": {"type": "boolean", "description": "只要纯文本不要HTML信息", "default": false}}}
+  }},
+  {"type": "function", "function": {
+    "name": "web_execute_js",
+    "description": "执行 JS 控制浏览器。禁止猜测，准确操作以减少 web_scan 调用。为免转义问题，代码优先考虑放回复正文 ```javascript 块",
+    "parameters": {"type": "object", "properties": {
+      "script": {"type": "string", "description": "[Optional] JS代码或路径。为免转义建议留空，改用正文代码块（与此参数互斥）"},
+      "save_to_file": {"type": "string", "description": "结果存文件，适合返回值较长时", "default": ""},
+      "no_monitor": {"type": "boolean", "description": "跳过页面变更监控，省2-3秒。仅在纯读取信息时设置，页面操作时不要设置", "default": false}}}
+  }},
+  {"type": "function", "function": {
+    "name": "update_working_checkpoint",
+    "description": "短期工作便签，每轮自动注入上下文，防长任务信息丢失。前中期调用，非结束时。何时调用：(1)任务开始读SOP后，存用户需求和关键约束/参数（简单1-2步任务除外）；(2)子任务切换或上下文即将被冲刷前；(3)多次重试失败后，重读SOP并必须调用存储新发现；(4)切换新任务时更新内容，清旧进度但保留仍有效的约束。\n\n何时不调用：简单任务（1-2步且无严重约束）、任务已完成时（应当用长期结算工具）",
+    "parameters": {"type": "object", "properties": {
+      "key_info": {"type": "string", "description": "替换当前便签（<200 tokens）。增量更新：先回顾现有内容，保留仍有效的，再增删改。存：要避的坑、用户原始需求、关键参数/发现、文件路径、当前进度、下一步计划。不存：马上要用用完即丢的、上下文中显而易见的、用户已换全新任务时的旧任务信息。宁多更新不丢关键"},
+      "related_sop": {"type": "string", "description": "相关sop名称，可以多个，必要时需要再读"}}}
+  }},
+  {"type": "function", "function": {
+    "name": "ask_user",
+    "description": "当需要用户决策、提供额外信息或遇到无法自动解决的阻碍时，调用此工具中断任务并提问",
+    "parameters": {"type": "object", "properties": {
+      "question": {"type": "string", "description": "向用户提出的明确问题"},
+      "candidates": {"type": "array", "items": {"type": "string"}, "description": "提供给用户的可选快捷选项列表"}}}
+  }},
+  {"type": "function", "function": {
+    "name": "start_long_term_update",
+    "description": "准备开始提炼记忆。发现值得长期记忆的信息（环境事实/用户偏好/避坑经验）时调用此工具。已记忆更新或在自主流程内时无需调用。超15轮完成的任务必须调用以沉淀经验",
+    "parameters": {"type": "object", "properties": {}}}
+  }
+]

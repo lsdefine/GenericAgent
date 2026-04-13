@@ -1,0 +1,64 @@
+---
+description: Tauri 2 Rust 后端开发规范
+globs: packages/app/src-tauri/**/*.rs
+alwaysApply: false
+---
+
+# Tauri Rust 开发规范
+
+## 代码质量
+
+- 必须通过 `cargo fmt` 和 `cargo clippy -- -D warnings`
+- 使用 `Result` 和 `?` 运算符处理错误，避免 `unwrap()`
+- 公开 API 添加文档注释 (`///`)
+
+## Tauri 命令
+
+- 命令函数使用 `#[tauri::command]` 宏
+- 在 `lib.rs` 中通过 `invoke_handler` 注册
+- 命令参数和返回值必须实现 `Serialize` / `Deserialize`
+- 异步命令返回 `Result<T, String>`
+
+## 项目结构
+
+```
+src-tauri/src/
+├── lib.rs          # 入口，命令注册
+├── tray.rs         # 系统托盘
+├── steps.rs        # 步数持久化 (SQLite)
+├── skin_import.rs  # 皮肤导入
+├── monitor/        # 活跃度监测引擎
+│   ├── mod.rs      # MonitorEngine
+│   ├── scoring.rs  # 评分状态机
+│   ├── config.rs   # Provider 配置加载
+│   └── adapters/   # 适配器（sqlite, jsonl, process 等）
+└── social/         # 局域网社交
+    ├── mod.rs      # 社交模块入口
+    ├── discovery.rs # UDP 发现
+    └── protocol.rs  # 协议定义
+```
+
+## 监测适配器
+
+- Provider 配置文件: `packages/app/providers/*.toml`
+- 支持的适配器类型: `sqlite`, `jsonl`, `process`, `vscode_ext`, `file_mtime`
+- 路径变量: `${HOME}`, `${APP_SUPPORT}`, `${APPDATA}`
+- 修改 provider 后需在 macOS/Windows/Linux 测试路径兼容性
+
+## 数据持久化
+
+- 步数数据使用 SQLite（`rusqlite`）
+- 设置使用 Tauri Store plugin
+- 数据库文件在用户 app data 目录
+
+## 局域网社交
+
+- UDP 广播端口: 23456
+- 协议版本: `0.1.0`
+- 心跳包含: peer_id, nickname, daily_steps, activity_score, movement_state, pet_skin
+
+## 安全
+
+- CSP 策略在 `tauri.conf.json` 中配置
+- 添加外部资源访问需更新 CSP
+- 文件系统访问需在 capabilities 中声明

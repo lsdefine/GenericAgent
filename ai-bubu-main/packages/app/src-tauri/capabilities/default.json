@@ -1,0 +1,30 @@
+{
+  "identifier": "default",
+  "description": "Capability for all windows",
+  "windows": ["pet", "social"],
+  "permissions": [
+    "core:default",
+    "core:window:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-set-ignore-cursor-events",
+    "core:window:allow-show",
+    "core:window:allow-hide",
+    "core:window:allow-close",
+    "core:window:allow-set-position",
+    "core:window:allow-set-size",
+    "core:window:allow-set-always-on-top",
+    "core:window:allow-outer-position",
+    "core:window:allow-scale-factor",
+    "core:window:allow-set-title",
+    "core:window:allow-set-theme",
+    "core:window:allow-set-visible-on-all-workspaces",
+    "core:webview:allow-webview-close",
+    "autostart:default",
+    "store:default",
+    "dialog:allow-open",
+    "fs:allow-resource-read-recursive",
+    "opener:default",
+    "updater:default",
+    "process:allow-restart"
+  ]
+}

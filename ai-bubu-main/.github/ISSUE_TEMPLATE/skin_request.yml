@@ -1,0 +1,53 @@
+name: Skin Request
+description: Request or suggest a new skin
+title: "[Skin] "
+labels: ["skin"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Want a new skin for AIbubu? Describe it here, or submit a PR with the skin assets!
+
+  - type: input
+    id: name
+    attributes:
+      label: Skin Name
+      placeholder: e.g. Pixel Cat
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Describe the skin's style, theme, and animations.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reference
+    attributes:
+      label: Reference / Artwork
+      description: Links to reference images, original artwork, or inspiration.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: style
+    attributes:
+      label: Art Style
+      options:
+        - Pixel art
+        - Vector / Flat
+        - Lottie animation
+        - Other
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: licensing
+    attributes:
+      label: Licensing
+      options:
+        - label: I confirm the artwork is original or properly licensed for open-source use
+          required: true

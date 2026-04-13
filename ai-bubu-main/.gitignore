@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+packages/app/src-tauri/target/
+
+# Astro
+packages/site/.astro/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# macOS
+.DS_Store
+
+# Rust
+*.pdb
+
+# Tauri auto-generated schemas
+packages/app/src-tauri/gen/schemas/
+
+# Logs
+*.log
+
+# Claude
+.claude/
+
+# Marketing materials
+marketing/
+
+# Env
+.env
+.env.local
+
+*.local.*

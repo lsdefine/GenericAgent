@@ -1,0 +1,41 @@
+{
+  "name": "aibubu",
+  "private": true,
+  "version": "0.4.3",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.10.1",
+    "@tauri-apps/plugin-autostart": "^2",
+    "@tauri-apps/plugin-dialog": "^2.6.0",
+    "@tauri-apps/plugin-fs": "^2.4.5",
+    "@tauri-apps/plugin-opener": "^2.5.3",
+    "@tauri-apps/plugin-process": "^2.3.1",
+    "@tauri-apps/plugin-store": "^2",
+    "@tauri-apps/plugin-updater": "^2.10.0",
+    "@vueuse/core": "^13",
+    "lottie-web": "^5",
+    "pinia": "^3",
+    "vue": "^3.5"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.10.1",
+    "@vitejs/plugin-vue": "^5",
+    "@vitest/coverage-v8": "^4.1.2",
+    "@vue/test-utils": "^2.4.6",
+    "happy-dom": "^20.8.9",
+    "terser": "^5.46.1",
+    "typescript": "^5.7",
+    "vite": "^6",
+    "vitest": "^4.1.2",
+    "vue-tsc": "^2"
+  }
+}

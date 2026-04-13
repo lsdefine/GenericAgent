@@ -1,0 +1,44 @@
+---
+description: Astro 官网开发规范
+globs: packages/site/**/*.{astro,ts,js,css}
+alwaysApply: false
+---
+
+# 官网开发规范
+
+## 技术栈
+
+- Astro 6，纯静态输出
+- 部署到 Vercel（配置在根 `vercel.json`）
+- 域名: aibubu.app
+
+## 开发命令
+
+- `pnpm dev:site` — 开发服务器
+- `pnpm build:site` — 构建
+- `pnpm preview:site` — 预览
+
+## i18n
+
+- 支持中文 (zh) / 英文 (en)
+- 使用 `data-i18n` 属性进行文本切换
+- 图片/视频区分语言版本: `today.jpg` (zh) / `today_en.jpg` (en)
+- 语言偏好存储在 localStorage `aibubu-lang`
+
+## 样式
+
+- 全局 CSS 在 `Base.astro` layout 中
+- 字体: Inter + Space Grotesk
+- CSS 变量: `--bg`, `--text`, `--surface`, `--border` 等
+
+## 资源
+
+- 图片放在 `packages/site/public/`
+- 截图按语言命名: `screenshot/today.jpg`, `screenshot/today_en.jpg`
+- Demo 视频: `demo/demo.mp4`, `demo/demo_en.mp4`
+
+## GitHub 链接
+
+仓库地址: `https://github.com/funAgent/ai-bubu`
+
+修改仓库相关链接时注意同步更新 index.astro、install.astro、privacy.astro。

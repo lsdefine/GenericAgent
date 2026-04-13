@@ -1,0 +1,95 @@
+temp/
+tmp/
+
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+build/
+dist/
+*.egg-info/
+
+.streamlit/
+
+.vscode/
+.idea/
+*.swp
+*.swo
+
+.DS_Store
+Thumbs.db
+
+*.log
+.env
+auth.json
+model_responses.txt
+
+# Sensitive files (API keys, credentials)
+mykey.py
+
+tasks/
+
+*.zip
+
+memory/*
+!memory/memory_management_sop.md
+
+# Allow tracking of specific SOPs
+!memory/web_setup_sop.md
+!memory/autonomous_operation_sop.md
+!memory/autonomous_operation_sop/
+!memory/autonomous_operation_sop/**
+!memory/scheduled_task_sop.md
+
+# L4 session archiver (only the script, not archives)
+!memory/L4_raw_sessions/
+memory/L4_raw_sessions/*
+!memory/L4_raw_sessions/compress_session.py
+
+# ljqCtrl related tools
+!memory/ljqCtrl.py
+!memory/ljqCtrl_sop.md
+
+# procmem_scanner related tools
+!memory/procmem_scanner.py
+!memory/procmem_scanner_sop.md
+
+# TMWebDriver SOP
+!memory/tmwebdriver_sop.md
+
+# Subagent SOP
+!memory/subagent_sop.md
+
+# Plan SOP
+!memory/plan_sop.md
+
+# Skill Search SOP
+!memory/skill_search/
+!memory/skill_search/**
+
+
+# ADB UI tool
+!memory/adb_ui.py
+
+# Keychain
+!memory/keychain.py
+
+# Visual Studio
+.vs/
+restore_commit.txt
+
+sche_tasks/
+# CDP Bridge 密钥配置（首次运行自动生成）
+assets/tmwd_cdp_bridge/config.js
+assets/copilot_proxy.pyw
+**log.*
+
+# Reflect (ignore new files, whitelist existing)
+reflect/*
+!reflect/autonomous.py
+!reflect/scheduler.py
+
+# Universal: never track __pycache__ anywhere
+**/__pycache__/

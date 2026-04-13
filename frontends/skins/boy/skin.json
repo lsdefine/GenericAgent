@@ -1,0 +1,63 @@
+{
+  "name": "Boy",
+  "version": "1.0.0",
+  "author": "pzuh",
+  "source": "https://pzuh.itch.io/temple-run-game-sprites",
+  "description": "Boy 角色皮肤",
+  "style": "pixel",
+  "format": "sprite",
+  "size": {
+    "width": 40,
+    "height": 61
+  },
+  "animations": {
+    "idle": {
+      "file": "skin.png",
+      "loop": true,
+      "sprite": {
+        "frameWidth": 64,
+        "frameHeight": 98,
+        "frameCount": 10,
+        "columns": 40,
+        "fps": 6,
+        "startFrame": 0
+      }
+    },
+    "walk": {
+      "file": "skin.png",
+      "loop": true,
+      "sprite": {
+        "frameWidth": 64,
+        "frameHeight": 98,
+        "frameCount": 10,
+        "columns": 40,
+        "fps": 3,
+        "startFrame": 20
+      }
+    },
+    "run": {
+      "file": "skin.png",
+      "loop": true,
+      "sprite": {
+        "frameWidth": 64,
+        "frameHeight": 98,
+        "frameCount": 10,
+        "columns": 40,
+        "fps": 10,
+        "startFrame": 20
+      }
+    },
+    "sprint": {
+      "file": "skin.png",
+      "loop": true,
+      "sprite": {
+        "frameWidth": 64,
+        "frameHeight": 98,
+        "frameCount": 10,
+        "columns": 40,
+        "fps": 24,
+        "startFrame": 20
+      }
+    }
+  }
+}

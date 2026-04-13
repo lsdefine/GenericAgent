@@ -1,0 +1,60 @@
+{
+  "name": "Line",
+  "version": "1.0.0",
+  "author": "itch.io",
+  "source": "https://itch.io",
+  "description": "Line 角色皮肤",
+  "style": "pixel",
+  "format": "sprite",
+  "size": { "width": 39, "height": 46 },
+  "animations": {
+    "idle": {
+      "file": "skin.png",
+      "loop": true,
+      "sprite": {
+        "frameWidth": 156,
+        "frameHeight": 185,
+        "frameCount": 4,
+        "columns": 28,
+        "fps": 6,
+        "startFrame": 0
+      }
+    },
+    "walk": {
+      "file": "skin.png",
+      "loop": true,
+      "sprite": {
+        "frameWidth": 156,
+        "frameHeight": 185,
+        "frameCount": 8,
+        "columns": 28,
+        "fps": 6,
+        "startFrame": 4
+      }
+    },
+    "run": {
+      "file": "skin.png",
+      "loop": true,
+      "sprite": {
+        "frameWidth": 156,
+        "frameHeight": 185,
+        "frameCount": 8,
+        "columns": 28,
+        "fps": 10,
+        "startFrame": 12
+      }
+    },
+    "sprint": {
+      "file": "skin.png",
+      "loop": true,
+      "sprite": {
+        "frameWidth": 156,
+        "frameHeight": 185,
+        "frameCount": 8,
+        "columns": 28,
+        "fps": 24,
+        "startFrame": 12
+      }
+    }
+  }
+}

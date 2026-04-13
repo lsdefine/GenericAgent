@@ -1,0 +1,60 @@
+{
+  "name": "Glube",
+  "version": "1.0.0",
+  "author": "SketchesWithKevin",
+  "source": "https://sketcheswithkevin.itch.io/glube-platformer",
+  "description": "像素风小怪兽 Glube",
+  "style": "pixel",
+  "format": "sprite",
+  "size": { "width": 65, "height": 38 },
+  "animations": {
+    "idle": {
+      "file": "idle.png",
+      "loop": true,
+      "sprite": {
+        "frameWidth": 44,
+        "frameHeight": 31,
+        "frameCount": 6,
+        "columns": 6,
+        "fps": 6,
+        "startFrame": 0
+      }
+    },
+    "walk": {
+      "file": "walk.png",
+      "loop": true,
+      "sprite": {
+        "frameWidth": 65,
+        "frameHeight": 32,
+        "frameCount": 8,
+        "columns": 8,
+        "fps": 6,
+        "startFrame": 0
+      }
+    },
+    "run": {
+      "file": "run.png",
+      "loop": true,
+      "sprite": {
+        "frameWidth": 65,
+        "frameHeight": 32,
+        "frameCount": 8,
+        "columns": 8,
+        "fps": 12,
+        "startFrame": 0
+      }
+    },
+    "sprint": {
+      "file": "run.png",
+      "loop": true,
+      "sprite": {
+        "frameWidth": 65,
+        "frameHeight": 32,
+        "frameCount": 8,
+        "columns": 8,
+        "fps": 24,
+        "startFrame": 0
+      }
+    }
+  }
+}

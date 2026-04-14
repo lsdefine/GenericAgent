@@ -1,5 +1,6 @@
 """Desktop Pet with Skin System — Cross-platform with True Transparency"""
 import os
+import re
 import sys
 import json
 import threading
@@ -204,9 +205,21 @@ def _load_default_font(size):
     return ImageFont.load_default()
 
 
+def _normalize_bubble_text(text):
+    """Normalize text for fonts that cannot render some symbols."""
+    text = (text or '').strip()
+    lines = text.replace('\r\n', '\n').replace('\r', '\n').split('\n')
+    if lines:
+        turn_match = re.match(r'^\s*🔄?\s*Turn\s+(\d+)\s*$', lines[0], flags=re.IGNORECASE)
+        if turn_match:
+            rest = '\n'.join(line.strip() for line in lines[1:] if line.strip())
+            return f"Turn {turn_match.group(1)}: {rest}" if rest else f"Turn {turn_match.group(1)}:"
+    return text.replace('🔄 Turn', 'Turn').replace('🔄', '').strip()
+
+
 def _wrap_text_for_width(draw, text, font, max_width):
     """Wrap text to fit inside max_width."""
-    text = (text or '').strip()
+    text = _normalize_bubble_text(text)
     if not text:
         return ['']
 
@@ -253,11 +266,11 @@ def build_bubble_image(message, max_width=220):
     font = _load_default_font(font_size)
     draw = ImageDraw.Draw(bubble)
 
-    pad_left = max(10, bubble.width // 18)
-    pad_right = max(10, bubble.width // 18) + max(6, bubble.width // 14)
+    pad_left = max(12, bubble.width // 16)
+    pad_right = max(16, bubble.width // 10)
     pad_top = max(8, bubble.height // 10)
-    pad_bottom = max(18, bubble.height // 4)
-    text_area_width = max(40, bubble.width - pad_left - pad_right)
+    pad_bottom = max(20, bubble.height // 3)
+    text_area_width = max(36, bubble.width - pad_left - pad_right)
 
     lines = _wrap_text_for_width(draw, message, font, text_area_width)
     ascent, descent = font.getmetrics() if hasattr(font, 'getmetrics') else (font_size, font_size // 4)

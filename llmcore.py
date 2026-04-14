@@ -94,9 +94,9 @@ class SiderLLMSession:
     def __init__(self, cfg):
         from sider_ai_api import Session   # 不使用sider的话没必要安装这个包
         self._core = Session(cookie=cfg['apikey'], proxies=proxies)   
-        self.default_model = cfg.get('model', 'gemini-3.0-flash')
+        self.model = cfg.get('model', 'gemini-3.0-flash')
     def ask(self, prompt, stream=False):
-        model = self.default_model
+        model = self.model
         if len(prompt) > 28000: 
             print(f"[Warn] Prompt too long ({len(prompt)} chars), truncating.")
             prompt = prompt[-28000:]
@@ -425,33 +425,46 @@ class BaseSession:
     def __init__(self, cfg):
         self.api_key = cfg['apikey']
         self.api_base = cfg['apibase'].rstrip('/')
-        self.default_model = cfg.get('model', '')
+        self.model = cfg.get('model', '')
         self.context_win = cfg.get('context_win', 24000)
         self.history = []
         self.lock = threading.Lock()
         self.system = ""
-        self.name = cfg.get('name', self.default_model)
+        self.name = cfg.get('name', self.model)
         proxy = cfg.get('proxy')
         self.proxies = {"http": proxy, "https": proxy} if proxy else None
         self.max_retries = max(0, int(cfg.get('max_retries', 1)))
         self.connect_timeout = max(1, int(cfg.get('timeout', 5)))
         self.read_timeout = max(5, int(cfg.get('read_timeout', 30)))
-        effort = cfg.get('reasoning_effort')
-        effort = None if effort is None else str(effort).strip().lower()
-        self.reasoning_effort = effort if effort in ('none', 'minimal', 'low', 'medium', 'high', 'xhigh') else None
-        if effort and not self.reasoning_effort: print(f"[WARN] Invalid reasoning_effort {effort!r}, ignored.")
+        def _enum(key, valid):
+            v = cfg.get(key); v = None if v is None else str(v).strip().lower()
+            return v if not v or v in valid else print(f"[WARN] Invalid {key} {v!r}, ignored.")
+        self.reasoning_effort = _enum('reasoning_effort', {'none', 'minimal', 'low', 'medium', 'high', 'xhigh'})
+        self.thinking_type = _enum('thinking_type', {'adaptive', 'enabled', 'disabled'})
+        self.thinking_budget_tokens = cfg.get('thinking_budget_tokens')
         mode = str(cfg.get('api_mode', 'chat_completions')).strip().lower().replace('-', '_')
         self.api_mode = 'responses' if mode in ('responses', 'response') else 'chat_completions'
         self.temperature = cfg.get('temperature', 1.0)
         self.max_tokens = cfg.get('max_tokens', 8192)
+    def _apply_claude_thinking(self, payload):
+        if self.thinking_type:
+            thinking = {"type": self.thinking_type}
+            if self.thinking_type == 'enabled':
+                if self.thinking_budget_tokens is None: print("[WARN] thinking_type='enabled' requires thinking_budget_tokens, ignored.")
+                else:
+                    thinking["budget_tokens"] = self.thinking_budget_tokens; payload["thinking"] = thinking
+            else: payload["thinking"] = thinking
+        if self.reasoning_effort:
+            effort = {'low': 'low', 'medium': 'medium', 'high': 'high', 'xhigh': 'max'}.get(self.reasoning_effort)
+            if effort: payload["output_config"] = {"effort": effort}
+            else: print(f"[WARN] reasoning_effort {self.reasoning_effort!r} is unsupported for Claude output_config.effort, ignored.")
     def ask(self, prompt, stream=False):
         def _ask_gen():
-            content = ''
             with self.lock:
                 self.history.append({"role": "user", "content": [{"type": "text", "text": prompt}]})
                 trim_messages_history(self.history, self.context_win)
                 messages = self.make_messages(self.history)
-            content_blocks = None
+            content_blocks = None; content = ''
             gen = self.raw_ask(messages)
             try:
                 while True: chunk = next(gen); content += chunk; yield chunk
@@ -466,10 +479,9 @@ class BaseSession:
 
 class ClaudeSession(BaseSession):
     def raw_ask(self, messages):
-        model = self.default_model
         headers = {"x-api-key": self.api_key, "Content-Type": "application/json", "anthropic-version": "2023-06-01", "anthropic-beta": "prompt-caching-2024-07-31"}
-        payload = {"model": model, "messages": messages, "temperature": self.temperature, "max_tokens": self.max_tokens, "stream": True}
-        if self.reasoning_effort: payload["reasoning_effort"] = self.reasoning_effort
+        payload = {"model": self.model, "messages": messages, "temperature": self.temperature, "max_tokens": self.max_tokens, "stream": True}
+        self._apply_claude_thinking(payload)
         if self.system: payload["system"] = [{"type": "text", "text": self.system, "cache_control": {"type": "persistent"}}]
         try:
             with requests.post(auto_make_url(self.api_base, "messages"), headers=headers, json=payload, stream=True, timeout=(self.connect_timeout, self.read_timeout)) as r:
@@ -487,7 +499,7 @@ class ClaudeSession(BaseSession):
 
 class LLMSession(BaseSession):
     def raw_ask(self, messages):
-        return (yield from _openai_stream(self.api_base, self.api_key, messages, self.default_model, self.api_mode,
+        return (yield from _openai_stream(self.api_base, self.api_key, messages, self.model, self.api_mode,
                                   temperature=self.temperature, reasoning_effort=self.reasoning_effort,
                                   max_tokens=self.max_tokens, max_retries=self.max_retries, 
                                   connect_timeout=self.connect_timeout, read_timeout=self.read_timeout, proxies=self.proxies))
@@ -521,7 +533,7 @@ class NativeClaudeSession(BaseSession):
         self.tools = None
     def raw_ask(self, messages):
         messages = _fix_messages(messages)
-        model = self.default_model
+        model = self.model
         beta_parts = ["claude-code-20250219", "interleaved-thinking-2025-05-14", "redact-thinking-2026-02-12", "prompt-caching-scope-2026-01-05"]
         if "[1m]" in model.lower():
             beta_parts.insert(1, "context-1m-2025-08-07"); model = model.replace("[1m]", "").replace("[1M]", "")
@@ -531,7 +543,7 @@ class NativeClaudeSession(BaseSession):
         if self.api_key.startswith("sk-ant-"): headers["x-api-key"] = self.api_key
         else: headers["authorization"] = f"Bearer {self.api_key}"
         payload = {"model": model, "messages": messages, "temperature": self.temperature, "max_tokens": self.max_tokens, "stream": True}
-        if self.reasoning_effort: payload["reasoning_effort"] = self.reasoning_effort
+        self._apply_claude_thinking(payload)
         payload["metadata"] = {"user_id": json.dumps({"device_id": self._device_id, "account_uuid": self._account_uuid, "session_id": self._session_id}, separators=(',', ':'))}
         if self.tools:
             claude_tools = openai_tools_to_claude(self.tools)
@@ -587,7 +599,7 @@ class NativeOAISession(NativeClaudeSession):
     def raw_ask(self, messages):
         """OpenAI streaming. yields text chunks, generator return = list[content_block]"""
         msgs = ([{"role": "system", "content": self.system}] if self.system else []) + _msgs_claude2oai(messages)
-        return (yield from _openai_stream(self.api_base, self.api_key, msgs, self.default_model, self.api_mode,
+        return (yield from _openai_stream(self.api_base, self.api_key, msgs, self.model, self.api_mode,
                                           temperature=self.temperature, max_tokens=self.max_tokens, 
                                           tools=self.tools, reasoning_effort=self.reasoning_effort,
                                           max_retries=self.max_retries, connect_timeout=self.connect_timeout,
@@ -642,8 +654,6 @@ class ToolClient:
             self.last_tools = ''; raw_text = raw_text[:-len(summarytag)]
         _write_llm_log('Response', raw_text)
         return self._parse_mixed_response(raw_text)
-
-    #def _should_use_structured_messages(self, messages): return isinstance(self.backend, LLMSession) and any(isinstance(m.get("content"), list) for m in messages)
 
     def _estimate_content_len(self, content):
         if isinstance(content, str): return len(content)
@@ -802,7 +812,7 @@ class MixinSession:
         import copy; self._sessions[0] = copy.copy(self._sessions[0])
         self._orig_raw_asks = [s.raw_ask for s in self._sessions]
         self._sessions[0].raw_ask = self._raw_ask
-        self.default_model = getattr(self._sessions[0], 'default_model', None)
+        self.model = getattr(self._sessions[0], 'model', None)
         self._cur_idx, self._switched_at = 0, 0.0
     def __getattr__(self, name): return getattr(self._sessions[0], name)
     _BROADCAST_ATTRS = frozenset({'system', 'tools', 'temperature', 'max_tokens', 'reasoning_effort'})

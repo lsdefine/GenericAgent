@@ -231,7 +231,7 @@ class TestMiniMaxLLMSessionConfig(unittest.TestCase):
             'read_timeout': 120,
         }
         session = LLMSession(cfg)
-        self.assertEqual(session.default_model, 'MiniMax-M2.7')
+        self.assertEqual(session.model, 'MiniMax-M2.7')
         self.assertEqual(session.api_base, 'https://api.minimax.io/v1')
         self.assertEqual(session.context_win, 50000)
         self.assertEqual(session.max_retries, 2)
@@ -246,7 +246,7 @@ class TestMiniMaxLLMSessionConfig(unittest.TestCase):
             'model': 'MiniMax-M2.7-highspeed',
         }
         session = LLMSession(cfg)
-        self.assertEqual(session.default_model, 'MiniMax-M2.7-highspeed')
+        self.assertEqual(session.model, 'MiniMax-M2.7-highspeed')
 
 
 class TestMiniMaxNativeToolClientThinkTag(unittest.TestCase):

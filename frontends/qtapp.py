@@ -1222,7 +1222,7 @@ class ChatPanel(QWidget):
 
         for idx, tc in enumerate(self.agent.llmclients):
             b = tc.backend
-            name = f"{type(b).__name__}/{b.default_model}"
+            name = f"{type(b).__name__}/{b.model}"
             is_current = idx == self.agent.llm_no
 
             row = QWidget()
@@ -1296,9 +1296,9 @@ class ChatPanel(QWidget):
             reply = backend.ask("你好", stream=False)
             text = str(reply).strip() if reply else ""
             ok = len(text) > 0 and not text.startswith("Error") and not text.startswith("[")
-            print(f"[HealthCheck] Backend #{idx} {type(backend).__name__}/{backend.default_model}: {'OK' if ok else 'FAIL'} -> {text[:60]}")
+            print(f"[HealthCheck] Backend #{idx} {type(backend).__name__}/{backend.model}: {'OK' if ok else 'FAIL'} -> {text[:60]}")
         except Exception as e:
-            print(f"[HealthCheck] Backend #{idx} {type(backend).__name__}/{backend.default_model}: ERROR -> {e}")
+            print(f"[HealthCheck] Backend #{idx} {type(backend).__name__}/{backend.model}: ERROR -> {e}")
             ok = False
         if hasattr(backend, 'raw_msgs') and backend.raw_msgs:
             backend.raw_msgs = [m for m in backend.raw_msgs if m.get("prompt") != "你好"]

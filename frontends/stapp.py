@@ -47,7 +47,7 @@ def render_sidebar():
         kwargs = {'creationflags': 0x08} if sys.platform == 'win32' else {}
         pet_script = os.path.join(os.path.dirname(__file__), 'desktop_pet_v2.pyw')
         if not os.path.exists(pet_script): pet_script = os.path.join(os.path.dirname(__file__), 'desktop_pet.pyw')
-        subprocess.Popen([sys.executable, pet_script], **kwargs)
+        subprocess.Popen([sys.executable, pet_script, '--parent-pid', str(os.getpid()), '--window-title', 'GenericAgent'], **kwargs)
         def _pet_req(q): threading.Thread(target=lambda: urlopen(f'http://127.0.0.1:51983/?{q}', timeout=2), daemon=True).start()
         agent._pet_req = _pet_req
         if not hasattr(agent, '_turn_end_hooks'): agent._turn_end_hooks = {}

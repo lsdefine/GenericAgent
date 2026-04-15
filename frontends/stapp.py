@@ -13,6 +13,16 @@ import streamlit as st
 import time, json, re, threading, queue
 from agentmain import GeneraticAgent
 
+PROJECT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+PET_PORT_FILE = os.path.join(PROJECT_DIR, 'temp', 'desktop_pet_port.txt')
+
+
+def read_pet_port():
+    try:
+        return int(open(PET_PORT_FILE, encoding='utf-8').read().strip())
+    except Exception:
+        return None
+
 st.set_page_config(page_title="Cowork", layout="wide")
 
 @st.cache_resource
@@ -50,7 +60,9 @@ def render_sidebar():
         subprocess.Popen([sys.executable, pet_script], **kwargs)
         def _pet_req(q):
             def _do():
-                try: urlopen(f'http://127.0.0.1:51983/?{q}', timeout=2)
+                port = read_pet_port()
+                if not port: return
+                try: urlopen(f'http://127.0.0.1:{port}/?{q}', timeout=2)
                 except Exception: pass
             threading.Thread(target=_do, daemon=True).start()
         agent._pet_req = _pet_req

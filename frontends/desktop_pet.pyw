@@ -1,10 +1,47 @@
 """Desktop Pet with HTTP Toast — ~90 lines"""
-import tkinter as tk, threading, random, os, sys
+import tkinter as tk, threading, random, os, sys, socket
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
-PORT = 51983
-GIF = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), 'pet.gif')
+DEFAULT_PORT = 51983
+SCRIPT_DIR = os.path.dirname(os.path.abspath(sys.argv[0]))
+PROJECT_DIR = os.path.dirname(SCRIPT_DIR)
+PORT_FILE = os.path.join(PROJECT_DIR, 'temp', 'desktop_pet_port.txt')
+PORT = DEFAULT_PORT
+GIF = os.path.join(SCRIPT_DIR, 'pet.gif')
+
+
+def _read_saved_port():
+    try:
+        return int(open(PORT_FILE, encoding='utf-8').read().strip())
+    except Exception:
+        return None
+
+
+def _write_saved_port(port):
+    os.makedirs(os.path.dirname(PORT_FILE), exist_ok=True)
+    with open(PORT_FILE, 'w', encoding='utf-8') as f:
+        f.write(str(port))
+
+
+def _can_bind(port):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.bind(('127.0.0.1', port))
+        return True
+    except OSError:
+        return False
+    finally:
+        sock.close()
+
+
+def _pick_port(preferred=DEFAULT_PORT, lo=45183, hi=45283):
+    if _can_bind(preferred):
+        return preferred
+    for port in range(lo, hi + 1):
+        if _can_bind(port):
+            return port
+    raise OSError('No usable local port found for desktop pet')
 
 class Pet:
     def __init__(self):
@@ -85,9 +122,24 @@ class Pet:
             def log_message(self, *a): pass
         HTTPServer.allow_reuse_address = False
         srv = HTTPServer(('127.0.0.1', PORT), H)
+        _write_saved_port(PORT)
         t = threading.Thread(target=srv.serve_forever, daemon=True)
         t.start()
         print(f'Toast server: http://127.0.0.1:{PORT}/?msg=hello')
 
 if __name__ == '__main__':
+    existing_port = _read_saved_port()
+    if existing_port:
+        _s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            _s.connect(('127.0.0.1', existing_port))
+            _s.close()
+            print(f'⚠ Pet already running on port {existing_port}, exiting.')
+            sys.exit(0)
+        except OSError:
+            pass
+        finally:
+            _s.close()
+    PORT = _pick_port()
+    print(f'Using pet port: {PORT}')
     Pet()

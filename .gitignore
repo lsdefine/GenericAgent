@@ -76,6 +76,10 @@ memory/L4_raw_sessions/*
 # Keychain
 !memory/keychain.py
 
+# Exa search skill
+!memory/exa_search.py
+!memory/exa_search_sop.md
+
 # Vision / OCR / UI detection tools
 !memory/ocr_utils.py
 !memory/vision_sop.md

@@ -9,7 +9,6 @@ except: pass
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import streamlit as st
-import streamlit.components.v1 as components
 import time, json, re, threading, queue
 from datetime import datetime
 from agentmain import GeneraticAgent
@@ -951,8 +950,8 @@ init_session_state()
 # Inject Anthropic theme
 st.markdown(ANTHROPIC_CSS, unsafe_allow_html=True)
 st.markdown(build_dynamic_font_css(110.0), unsafe_allow_html=True)
-components.html(ANTHROPIC_SELECTBOX_SCRIPT, height=0, width=0)
-components.html(build_header_agent_badge_script(), height=0, width=0)
+st.iframe(ANTHROPIC_SELECTBOX_SCRIPT, height=1, width=1)
+st.iframe(build_header_agent_badge_script(), height=1, width=1)
 
 st.session_state.agent_name = 'Generic Agent'
 with st.chat_message("assistant"):

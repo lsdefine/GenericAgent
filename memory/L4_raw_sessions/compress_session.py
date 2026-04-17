@@ -219,7 +219,8 @@ def batch_process(src, l4_dir=None, dry_run=True):
 
     # Phase 4: Delete raw files
     to_del = [rp for *_, rp in results]
-    for fname, _ in skipped:
+    for fname, reason in skipped:
+        if 'recent' in reason: continue  # active session still being written
         m = [f for f in raw_files if os.path.basename(f) == fname]
         if m: to_del.append(m[0])
     deleted = 0

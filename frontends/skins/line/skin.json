@@ -6,7 +6,7 @@
   "description": "Line 角色皮肤",
   "style": "pixel",
   "format": "sprite",
-  "size": { "width": 39, "height": 46 },
+  "size": { "width": 128, "height": 128 },
   "animations": {
     "idle": {
       "file": "skin.png",

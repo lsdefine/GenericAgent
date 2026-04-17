@@ -20,7 +20,8 @@ def code_run(code, code_type="python", timeout=60, cwd=None, code_cwd=None, stop
     if code_type == "python":
         tmp_file = tempfile.NamedTemporaryFile(suffix=".ai.py", delete=False, mode='w', encoding='utf-8', dir=code_cwd)
         cr_header = os.path.join(script_dir, 'assets', 'code_run_header.py')
-        if os.path.exists(cr_header): tmp_file.write(open(cr_header, encoding='utf-8').read())
+        if os.path.exists(cr_header):
+            with open(cr_header, encoding='utf-8') as _h: tmp_file.write(_h.read())
         tmp_file.write(code)
         tmp_path = tmp_file.name
         tmp_file.close()
@@ -384,8 +385,10 @@ class GenericAgentHandler(BaseHandler):
         try:
             new_content = expand_file_refs(blocks, base_dir=self.cwd)
             if mode == "prepend":
-                old = open(path, 'r', encoding="utf-8").read() if os.path.exists(path) else ""
-                open(path, 'w', encoding="utf-8").write(new_content + old)
+                if os.path.exists(path):
+                    with open(path, 'r', encoding="utf-8") as f: old = f.read()
+                else: old = ""
+                with open(path, 'w', encoding="utf-8") as f: f.write(new_content + old)
             else:
                 with open(path, 'a' if mode == "append" else 'w', encoding="utf-8") as f: f.write(new_content)
             yield f"[Status] ✅ {mode.capitalize()} 成功 ({len(new_content)} bytes)\n"
@@ -421,7 +424,8 @@ class GenericAgentHandler(BaseHandler):
         print(f"[Info] Entered plan mode with plan file: {plan_path}"); return plan_path
     def _check_plan_completion(self):
         if not os.path.isfile(p:=self._in_plan_mode() or ''): return None
-        try: return len(re.findall(r'\[ \]', open(p, encoding='utf-8', errors='replace').read()))
+        try:
+            with open(p, encoding='utf-8', errors='replace') as f: return len(re.findall(r'\[ \]', f.read()))
         except: return None
     
     def do_update_working_checkpoint(self, args, response):

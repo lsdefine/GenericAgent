@@ -7,7 +7,7 @@
   "description": "像素风小恐龙 Mort",
   "style": "pixel",
   "format": "sprite",
-  "size": { "width": 48, "height": 48 },
+  "size": { "width": 128, "height": 128 },
   "animations": {
     "idle": {
       "file": "skin.png",

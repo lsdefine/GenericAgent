@@ -6,6 +6,10 @@ from Crypto.Cipher import AES
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _TEMP_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'temp')
 from agentmain import GeneraticAgent
+from llmcore import mykeys
+from chatapp_common import public_access
+
+ALLOWED = {str(x).strip() for x in mykeys.get('wechat_allowed_users', []) if str(x).strip()}
 
 # ── WxBotClient (inline from wx_bot_client.py) ──
 API = 'https://ilinkai.weixin.qq.com'
@@ -233,6 +237,9 @@ def on_message(bot, msg):
     text = bot.extract_text(msg).strip()
     uid = msg.get('from_user_id', '')
     ctx = msg.get('context_token', '')
+    if not public_access(ALLOWED) and uid not in ALLOWED:
+        print(f'[WX] unauthorized user: {uid}', file=sys.__stdout__)
+        return
     media_paths = _dl_media(msg.get('item_list', []))
     if not text and not media_paths: return
     if media_paths:

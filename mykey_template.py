@@ -392,6 +392,7 @@ native_oai_config = {
 # wecom_secret = 'your_bot_secret'
 # wecom_allowed_users = ['your_user_id']            # 留空或 ['*'] 表示允许所有企业微信用户
 # wecom_welcome_message = '你好，我在线上。'
+# wechat_allowed_users = ['from_user_id']           # 留空或 ['*'] 表示允许所有微信用户
 # dingtalk_client_id = 'your_app_key'
 # dingtalk_client_secret = 'your_app_secret'
 # dingtalk_allowed_users = ['your_staff_id']        # 留空或 ['*'] 表示允许所有钉钉用户

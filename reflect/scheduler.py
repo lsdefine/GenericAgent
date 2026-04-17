@@ -39,6 +39,7 @@ def _parse_cooldown(repeat):
         try:
             parts = repeat.split('_')
             n = int(parts[1].rstrip('hdm'))
+            if n <= 0: raise ValueError(f'positive interval required, got {n}')
             u = parts[1][-1]
             if u == 'h': return timedelta(hours=n)
             if u == 'm': return timedelta(minutes=n)

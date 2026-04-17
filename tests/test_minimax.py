@@ -145,15 +145,15 @@ class TestMiniMaxCompressHistoryTags(unittest.TestCase):
 
         long_think = "A" * 2000
         messages = [
-            {"role": "assistant", "prompt": f"<think>{long_think}</think>\nShort answer."},
-            {"role": "user", "prompt": "Follow up"},
-        ] + [{"role": "user", "prompt": f"msg{i}"} for i in range(12)]
+            {"role": "assistant", "content": f"<think>{long_think}</think>\nShort answer."},
+            {"role": "user", "content": "Follow up"},
+        ] + [{"role": "user", "content": f"msg{i}"} for i in range(12)]
 
         # Force compression (counter divisible by 5)
         compress_history_tags._cd = 4
         result = compress_history_tags(messages, keep_recent=10, max_len=800)
         # The first message's <think> content should be truncated
-        first_content = result[0]["prompt"]
+        first_content = result[0]["content"]
         self.assertIn("<think>", first_content)
         self.assertIn("...", first_content)
         self.assertLess(len(first_content), len(f"<think>{long_think}</think>\nShort answer."))

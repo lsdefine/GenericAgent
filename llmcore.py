@@ -256,8 +256,9 @@ def _openai_stream(api_base, api_key, messages, model, api_mode='chat_completion
                    max_retries=0, connect_timeout=10, read_timeout=300, proxies=None):
     """Shared OpenAI-compatible streaming request with retry. Yields text chunks, returns list[content_block]."""
     ml = model.lower()
-    if 'kimi' in ml or 'moonshot' in ml: temperature = 1
-    elif 'minimax' in ml: temperature = max(0.01, min(temperature, 1.0))  # MiniMax requires temp in (0, 1]
+    _force_temp = False
+    if 'kimi' in ml or 'moonshot' in ml: temperature, _force_temp = 1, True
+    elif 'minimax' in ml: temperature, _force_temp = max(0.01, min(temperature, 1.0)), True  # MiniMax requires temp in (0, 1]
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "Accept": "text/event-stream"}
     if api_mode == "responses":
         url = auto_make_url(api_base, "responses")
@@ -267,7 +268,7 @@ def _openai_stream(api_base, api_key, messages, model, api_mode='chat_completion
         url = auto_make_url(api_base, "chat/completions")
         _stamp_oai_cache_markers(messages, model)
         payload = {"model": model, "messages": messages, "stream": True, "stream_options": {"include_usage": True}}
-        if temperature != 1: payload["temperature"] = temperature
+        if _force_temp or temperature != 1: payload["temperature"] = temperature
         if max_tokens: payload["max_tokens"] = max_tokens
         if reasoning_effort: payload["reasoning_effort"] = reasoning_effort
     if tools:

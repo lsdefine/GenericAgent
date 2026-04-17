@@ -7,8 +7,8 @@
   "style": "pixel",
   "format": "sprite",
   "size": {
-    "width": 40,
-    "height": 61
+    "width": 80,
+    "height": 122
   },
   "animations": {
     "idle": {

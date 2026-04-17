@@ -307,6 +307,7 @@ if sys.platform == 'darwin':
 
             # Load skin
             self.load_skin(skin_name)
+            self.available_skins = SkinLoader.list_skins()
 
             # Get screen size
             from AppKit import NSScreen, NSWindowCollectionBehaviorCanJoinAllSpaces, NSWindowCollectionBehaviorStationary
@@ -391,6 +392,29 @@ if sys.platform == 'darwin':
                 def acceptsFirstMouse_(self, event):
                     """Accept first mouse click"""
                     return True
+
+                def rightMouseDown_(self, event):
+                    from AppKit import NSMenu, NSMenuItem, NSApp
+
+                    menu = NSMenu.alloc().init()
+                    pet = self.window().delegate()  # Assuming the window’s delegate is MacPet instance
+
+                    for skin_name in pet.available_skins:  # preload this in MacPet.__init__
+                        item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+                            skin_name,
+                            'changeSkin:',
+                            ''
+                        )
+                        item.setTarget_(pet)
+                        item.setRepresentedObject_(skin_name)
+                        menu.addItem_(item)
+
+                    menu.addItem_(NSMenuItem.separatorItem())
+                    quit_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_('Quit', 'terminate:', '')
+                    menu.addItem_(quit_item)
+
+                    NSApp.activateIgnoringOtherApps_(True)
+                    NSMenu.popUpContextMenu_withEvent_forView_(menu, event, self)
 
             # Create draggable view
             self.content_view = DraggableImageView.alloc().initWithFrame_(
@@ -587,6 +611,13 @@ if sys.platform == 'darwin':
         def run(self):
             """Run the application"""
             AppHelper.runEventLoop()
+        
+        def changeSkin_(self, sender):
+            skin_name = sender.representedObject()
+            print(f"Changing skin to: {skin_name}")
+            self.load_skin(skin_name)
+            self.current_state = 'idle'
+            self.frame_idx = 0
 
 # ============================================================================
 # Windows Implementation - tkinter with transparentcolor
@@ -626,6 +657,7 @@ else:
             self.label.bind('<Button-1>', lambda e: setattr(self, '_d', (e.x, e.y)))
             self.label.bind('<B1-Motion>', self._drag)
             self.label.bind('<Double-1>', lambda e: (self.root.destroy(), os._exit(0)))
+            self.label.bind('<Button-3>', self._on_right_click)
 
             # Animation state
             self.current_state = 'idle'
@@ -765,6 +797,24 @@ else:
         def run(self):
             """Run the application (already in mainloop)"""
             pass
+        
+        def _on_right_click(self, event):
+            # Build a dynamic menu of all available skins
+            menu = tk.Menu(self.root, tearoff=0)
+            for skin_name in SkinLoader.list_skins():
+                menu.add_command(
+                    label=skin_name,
+                    command=lambda name=skin_name: self._change_skin(name)
+                )
+            menu.add_separator()
+            menu.add_command(label="Quit", command=lambda: (self.root.destroy(), os._exit(0)))
+            menu.tk_popup(event.x_root, event.y_root)
+
+        def _change_skin(self, skin_name):
+            print(f"Changing skin to: {skin_name}")
+            self.load_skin(skin_name)
+            self.current_state = 'idle'
+            self.frame_idx = 0
 
 if __name__ == '__main__':
     # Singleton: if port already in use, another instance is running

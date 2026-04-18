@@ -1,6 +1,6 @@
 # Vision SOP
 
-> ⚠️ **状态说明 (2026-04-17)**：`vision_api.py` 文件不存在，ask_vision 功能不可用。阻塞项：需安装 `anthropic` SDK + 用户批准重建源码文件。当前可用视觉能力：ocr_utils.py(本地OCR) + ui_detect.py(YOLO UI检测)。
+> ⚠️ **状态说明 (2026-04-19 更新)**：OmniParser v1.5 YOLO模型已下载可用(`temp/weights/icon_detect/model.pt`, 38.7MB)。`vision_api.py`(ask_vision)仍不可用。当前可用视觉能力：ui_detect.py(YOLO UI检测✅ R83验证) + ocr_utils.py(本地OCR，rapidocr依赖待修复)。
 
 ## ⚠️ 前置规则（必须遵守）
 
@@ -61,4 +61,4 @@ result = ask_vision("image.png", prompt="描述图片内容")  # 路径或PIL Im
 | `visualize(image_path, detections, ocr_results=None, output_path=None)` | 可视化标注，返回PIL Image |
 
 - CLI: `python ui_detect.py <图片> [模型路径] [输出路径]`
-- 模型默认路径: `temp/weights/icon_detect/best.pt`
+- 模型默认路径: `temp/weights/icon_detect/model.pt`

@@ -68,6 +68,17 @@ L4: ../memory/L4_raw_sessions/ (历史会话层 - scheduler反射自动收集，
 > **同步红线**：L1 只写关键词/名称，禁搬细节。需要评估L1中的token数和索引效用。
 
 ---
+## 记忆写入流程规则（来自R87 Agentic Memory洞察）
+1.  **回溯检查**：写入新信息时，必须检查"是否需要同步更新已有L2/L3条目"（类比A-MEM的Zettelkasten演化），避免只append不更新导致信息过时
+2.  **检索优先级**：信息检索按 L1 Insight → L2 Facts → L3 SOP → L4 Raw 顺序（类比Letta三层记忆从热到冷），每层未命中才下沉
+3.  **交叉引用**：L2中相关条目添加 `→见: xxx` 标记，形成轻量图结构辅助跳转（如 `## 视觉工具` 下加 `→见: vision_sop, ui_detect.py`）
+4.  **写入过滤门控（来自R99 JetBrains observation masking洞察）**：
+    - 写入前必过价值公式：**「AI训练数据无法覆盖」×「对未来协作有持久收益」**。两项乘积≈0则丢弃。
+    - 高通过率信号：环境特异性事实、失败模式、非标路径、避坑经验
+    - 低通过率信号：通用最佳实践、LLM可直接推理的知识、一次性调试细节
+    - **矛盾检测**：新发现与已有记忆矛盾时，标记待审而非静默覆盖（类比Memorizing Transformers的memory update conflict resolution）
+
+---
 ## 信息分类快速决策树
 ```
 "这条信息该放哪层？"

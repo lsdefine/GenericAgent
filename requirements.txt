@@ -1,0 +1,41 @@
+# 核心依赖
+anthropic
+openai
+dashscope
+zhipuai
+volcengine
+
+# Web相关
+requests
+bottle
+beautifulsoup4
+lxml
+selenium
+streamlit
+
+# 数据处理
+numpy
+Pillow
+opencv-python
+
+# OCR
+rapidocr-onnxruntime
+
+# 自动化
+uiautomator2
+pywin32
+
+# 通信/机器人
+python-telegram-bot
+qq-botpy
+dingtalk-stream
+lark-oapi
+
+# UI
+PyQt5
+PySide6
+
+# 工具
+markdown
+pycryptodome
+simple-websocket-server

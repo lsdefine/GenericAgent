@@ -642,11 +642,33 @@ def main():
     if not APP_ID or not APP_SECRET:
         print("错误: 请在 mykey.py 或 mykey.json 中配置 fs_app_id 和 fs_app_secret")
         sys.exit(1)
+    
     client = create_client()
     handler = lark.EventDispatcherHandler.builder("", "").register_p2_im_message_receive_v1(handle_message).build()
-    cli = lark.ws.Client(APP_ID, APP_SECRET, event_handler=handler, log_level=lark.LogLevel.INFO)
+    
+    max_retries = 999
+    retry_count = 0
+    retry_delay = 5  # 初始重连延迟（秒）
+    
     print("=" * 50 + "\n飞书 Agent 已启动（长连接模式）\n" + f"App ID: {APP_ID}\n等待消息...\n" + "=" * 50)
-    cli.start()
+    
+    while retry_count < max_retries:
+        try:
+            cli = lark.ws.Client(APP_ID, APP_SECRET, event_handler=handler, log_level=lark.LogLevel.INFO)
+            print(f"[连接] 正在建立连接... (第 {retry_count + 1} 次)")
+            cli.start()
+        except KeyboardInterrupt:
+            print("\n[退出] 收到中断信号，正在关闭...")
+            break
+        except Exception as e:
+            retry_count += 1
+            print(f"[错误] 连接异常: {e}")
+            print(f"[重连] {retry_delay} 秒后尝试重连...")
+            time.sleep(retry_delay)
+            # 指数退避，最大60秒
+            retry_delay = min(retry_delay * 1.5, 60)
+    
+    print("[退出] 飞书 Agent 已停止")
 
 
 if __name__ == "__main__":

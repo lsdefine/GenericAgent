@@ -1,4 +1,6 @@
-# Vision API SOP
+# Vision SOP
+
+> ⚠️ **状态说明 (2026-04-17)**：`vision_api.py` 文件不存在，ask_vision 功能不可用。阻塞项：需安装 `anthropic` SDK + 用户批准重建源码文件。当前可用视觉能力：ocr_utils.py(本地OCR) + ui_detect.py(YOLO UI检测)。
 
 ## ⚠️ 前置规则（必须遵守）
 
@@ -46,3 +48,17 @@ result = ask_vision("image.png", prompt="描述图片内容")  # 路径或PIL Im
 更新: 2025-07-18 | 修复oai_config导入+返回值统一str
 更新: 2026-02-18 | 默认后端改为Claude原生API | SOP精简(删废话/水段/合并示例)
 更新: 2026-07 | 修复config(原claude_config8不存在)→改为claude_config141
+更新: 2026-04-17 | 标注vision_api.py缺失+补充ui_detect.py文档+阻塞项说明
+
+## ui_detect.py — YOLO UI元素检测（当前可用）
+
+> 位于 `memory/ui_detect.py`，基于OmniParser YOLO模型。依赖: ultralytics, rapidocr-onnxruntime, pillow, numpy
+
+| 函数 | 用途 |
+|------|------|
+| `detect_ui_elements(image_path, model_path=None, conf=0.25)` | 检测UI元素，返回 `[{bbox, confidence, class}]` |
+| `ocr_text(image_path)` | RapidOCR文本识别，返回 `[{text, bbox, confidence}]` |
+| `visualize(image_path, detections, ocr_results=None, output_path=None)` | 可视化标注，返回PIL Image |
+
+- CLI: `python ui_detect.py <图片> [模型路径] [输出路径]`
+- 模型默认路径: `temp/weights/icon_detect/best.pt`

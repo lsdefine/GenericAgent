@@ -151,20 +151,31 @@ def build_bubble_image(message, max_width=220):
 
     bubble = ImageOps.contain(bubble, (max_width, max(64, int(max_width * bubble.height / bubble.width))), Image.NEAREST)
 
-    font_size = max(12, bubble.height // 7)
+    # Detect the actual opaque bubble region to position text correctly
+    alpha = bubble.getchannel('A')
+    content_box = alpha.getbbox()  # (left, top, right, bottom) of opaque area
+    if content_box:
+        cb_left, cb_top, cb_right, cb_bottom = content_box
+    else:
+        cb_left, cb_top, cb_right, cb_bottom = 0, 0, bubble.width, bubble.height
+    content_w = cb_right - cb_left
+    content_h = cb_bottom - cb_top
+
+    font_size = max(12, content_h // 6)
     font = _load_default_font(font_size)
     draw = ImageDraw.Draw(bubble)
 
-    pad_left = max(12, bubble.width // 16)
-    pad_right = max(16, bubble.width // 10)
-    pad_top = max(8, bubble.height // 10)
-    pad_bottom = max(20, bubble.height // 3)
-    text_area_width = max(36, bubble.width - pad_left - pad_right)
+    # Padding relative to the opaque bubble region, not the full image
+    inner_pad_x = max(6, content_w // 14)
+    inner_pad_top = max(4, content_h // 12)
+    inner_pad_bottom = max(12, content_h // 4)
+    text_area_width = max(36, content_w - inner_pad_x * 2)
 
     lines = _wrap_text_for_width(draw, message, font, text_area_width)
     ascent, descent = font.getmetrics() if hasattr(font, 'getmetrics') else (font_size, font_size // 4)
     line_height = max(font_size, ascent + descent)
-    max_lines = max(1, (bubble.height - pad_top - pad_bottom) // line_height)
+    usable_h = content_h - inner_pad_top - inner_pad_bottom
+    max_lines = max(1, usable_h // line_height)
     if len(lines) > max_lines:
         lines = lines[:max_lines]
         if lines:
@@ -174,12 +185,12 @@ def build_bubble_image(message, max_width=220):
             lines[-1] = (last + '…') if last else '…'
 
     total_text_height = len(lines) * line_height
-    y = pad_top + max(0, (bubble.height - pad_top - pad_bottom - total_text_height) // 2)
+    y = cb_top + inner_pad_top + max(0, (usable_h - total_text_height) // 2)
 
     for line in lines:
         bbox = draw.textbbox((0, 0), line, font=font)
         text_width = bbox[2] - bbox[0]
-        x = pad_left + (text_area_width - text_width) / 2
+        x = cb_left + inner_pad_x + (text_area_width - text_width) / 2
         draw.text((x, y), line, font=font, fill=(32, 32, 32, 255))
         y += line_height
 

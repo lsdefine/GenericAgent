@@ -185,7 +185,7 @@ def build_bubble_image(message, max_width=220):
             lines[-1] = (last + '…') if last else '…'
 
     total_text_height = len(lines) * line_height
-    y = cb_top + inner_pad_top + max(0, (usable_h - total_text_height) // 2)
+    y = cb_top + inner_pad_top + max(0, (usable_h - total_text_height) // 2) - 3
 
     for line in lines:
         bbox = draw.textbbox((0, 0), line, font=font)

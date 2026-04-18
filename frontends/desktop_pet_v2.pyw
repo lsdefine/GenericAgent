@@ -73,18 +73,6 @@ class AnimationLoader:
         return frames
 
 
-def _find_bubble_asset():
-    """Find user-provided bubble asset in project root."""
-    candidates = [
-        os.path.join(PROJECT_DIR, '聊天气泡.png'),
-        os.path.join(PROJECT_DIR, 'bubble.png'),
-    ]
-    for path in candidates:
-        if os.path.exists(path):
-            return path
-    return None
-
-
 def _load_default_font(size):
     """Load a usable font for bubble text."""
     font_candidates = [
@@ -149,9 +137,11 @@ def _wrap_text_for_width(draw, text, font, max_width):
 def build_bubble_image(message, max_width=220):
     """Build a PIL image for the toast bubble using the user asset when available."""
     message = (message or '').strip()
-    bubble_path = _find_bubble_asset()
+    bubble_path = next((p for p in [os.path.join(PROJECT_DIR, '聊天气泡.png'),
+                                     os.path.join(PROJECT_DIR, 'bubble.png')]
+                        if os.path.exists(p)), None)
 
-    if bubble_path and os.path.exists(bubble_path):
+    if bubble_path:
         bubble = Image.open(bubble_path).convert('RGBA')
     else:
         bubble = Image.new('RGBA', (256, 128), (255, 255, 255, 0))
@@ -461,10 +451,6 @@ if sys.platform == 'darwin':
                 # Convert to NSImage with proper alpha handling
                 ns_images = []
                 for pil_img in scaled_frames:
-                    # Ensure RGBA mode for transparency
-                    if pil_img.mode != 'RGBA':
-                        pil_img = pil_img.convert('RGBA')
-
                     # Convert PIL to PNG bytes (PNG preserves alpha channel)
                     png_buffer = io.BytesIO()
                     pil_img.save(png_buffer, format='PNG')
@@ -513,10 +499,6 @@ if sys.platform == 'darwin':
             """Show toast message above pet"""
             from AppKit import NSImageView
 
-            with open('/tmp/pet_toast_debug.log', 'a') as f:
-                f.write(f"[DEBUG] show_toast called with: {message}\n")
-                f.flush()
-
             if self.toast_window:
                 self.toast_window.orderOut_(None)
                 self.toast_window = None
@@ -561,10 +543,6 @@ if sys.platform == 'darwin':
             self.toast_label.setImageScaling_(0)
             self.toast_window.setContentView_(self.toast_label)
             self.toast_window.orderFrontRegardless()
-
-            with open('/tmp/pet_toast_debug.log', 'a') as f:
-                f.write(f"[DEBUG] Toast window shown at ({toast_x}, {toast_y}) size={bubble_info['size']} tail={bubble_info['tail_tip']}\n")
-                f.flush()
 
             self.toast_timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
                 3.0,

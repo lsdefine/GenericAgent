@@ -2,10 +2,11 @@
 GA Switch API Server
 Minimal FastAPI server exposing GA backend functionality via REST API
 """
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
+from contextlib import asynccontextmanager
 import sys
 import os
 
@@ -15,19 +16,28 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from agentmain import GeneraticAgent
 from ga_switch import get_service
 
-app = FastAPI(title="GA Switch API", version="1.0.0")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Initialize on startup
+    app.state.agent = GeneraticAgent()
+    app.state.service = get_service()
+    yield
+    # Cleanup on shutdown (if needed)
 
-# CORS
+app = FastAPI(title="GA Switch API", version="1.0.0", lifespan=lifespan)
+
+# CORS - restrict to local frontend only
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
+    allow_origins=[
+        "http://localhost:*",
+        "http://127.0.0.1:*",
+        "tauri://localhost",
+    ],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["*"],
+    allow_credentials=True,
 )
-
-# Global instances
-agent = GeneraticAgent()
-service = get_service()
 
 # Models
 class RoutePayload(BaseModel):
@@ -61,76 +71,76 @@ def health():
     return {"status": "healthy", "version": "1.0.0"}
 
 @app.get("/api/snapshot")
-def get_snapshot():
-    return service.get_ui_snapshot(agent)
+def get_snapshot(request: Request):
+    return request.app.state.service.get_ui_snapshot(request.app.state.agent)
 
 @app.get("/api/routes")
-def list_routes():
-    snapshot = service.get_ui_snapshot(agent)
+def list_routes(request: Request):
+    snapshot = request.app.state.service.get_ui_snapshot(request.app.state.agent)
     return snapshot.get("routes", [])
 
 @app.post("/api/routes")
-def create_route(payload: RoutePayload):
-    service.upsert_route(payload.model_dump())
+def create_route(payload: RoutePayload, request: Request):
+    request.app.state.service.upsert_route(payload.model_dump())
     return {"success": True}
 
 @app.put("/api/routes/{route_id}")
-def update_route(route_id: str, payload: RoutePayload):
+def update_route(route_id: str, payload: RoutePayload, request: Request):
     data = payload.model_dump()
     data["id"] = route_id
-    service.upsert_route(data)
+    request.app.state.service.upsert_route(data)
     return {"success": True}
 
 @app.delete("/api/routes/{route_id}")
-def delete_route(route_id: str):
-    service.delete_route(route_id)
+def delete_route(route_id: str, request: Request):
+    request.app.state.service.delete_route(route_id)
     return {"success": True}
 
 @app.post("/api/routes/{route_id}/activate")
-def activate_route(route_id: str):
-    agent.set_active_route(route_id)
+def activate_route(route_id: str, request: Request):
+    request.app.state.agent.set_active_route(route_id)
     return {"success": True}
 
 @app.get("/api/providers")
-def list_providers():
-    snapshot = service.get_ui_snapshot(agent)
+def list_providers(request: Request):
+    snapshot = request.app.state.service.get_ui_snapshot(request.app.state.agent)
     return snapshot.get("providers", [])
 
 @app.post("/api/providers")
-def create_provider(payload: ProviderPayload):
-    service.upsert_provider(payload.model_dump())
+def create_provider(payload: ProviderPayload, request: Request):
+    request.app.state.service.upsert_provider(payload.model_dump())
     return {"success": True}
 
 @app.put("/api/providers/{provider_id}")
-def update_provider(provider_id: str, payload: ProviderPayload):
+def update_provider(provider_id: str, payload: ProviderPayload, request: Request):
     data = payload.model_dump()
     data["id"] = provider_id
-    service.upsert_provider(data)
+    request.app.state.service.upsert_provider(data)
     return {"success": True}
 
 @app.delete("/api/providers/{provider_id}")
-def delete_provider(provider_id: str):
-    service.delete_provider(provider_id)
+def delete_provider(provider_id: str, request: Request):
+    request.app.state.service.delete_provider(provider_id)
     return {"success": True}
 
 @app.post("/api/providers/{provider_id}/test")
-def test_provider(provider_id: str):
-    result = service.run_model_test(provider_id)
+def test_provider(provider_id: str, request: Request):
+    result = request.app.state.service.run_model_test(provider_id)
     return result
 
 @app.get("/api/diagnostics")
-def get_diagnostics():
-    snapshot = service.get_ui_snapshot(agent)
+def get_diagnostics(request: Request):
+    snapshot = request.app.state.service.get_ui_snapshot(request.app.state.agent)
     return snapshot.get("events", [])
 
 @app.post("/api/reload")
-def reload_config(preserve_history: bool = True):
-    agent.reload_llm_config(preserve_history=preserve_history)
+def reload_config(preserve_history: bool = True, request: Request = None):
+    request.app.state.agent.reload_llm_config(preserve_history=preserve_history)
     return {"success": True}
 
 @app.post("/api/import-legacy")
-def import_legacy(path: Optional[str] = None):
-    service.import_legacy_mykey(path)
+def import_legacy(path: Optional[str] = None, request: Request = None):
+    request.app.state.service.import_legacy_mykey(path)
     return {"success": True}
 
 if __name__ == "__main__":

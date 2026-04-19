@@ -270,17 +270,48 @@ class GenericAgentHandler(BaseHandler):
         if not path: return ""
         return os.path.abspath(os.path.join(self.cwd, path))   
 
-    def _extract_code_block(self, response, code_type):
-        matches = re.findall(rf"```{code_type}\n(.*?)\n```", response.content, re.DOTALL)
-        return matches[-1].strip() if matches else None
+    def _extract_code_block(self, response, code_type=None):
+        content = getattr(response, 'content', '') or ''
+        candidates = []
+        if code_type: candidates.append(str(code_type).lower())
+        candidates.extend([t for t in ("python", "powershell", "bash") if t not in candidates])
+        alias_map = {
+            "python": ["py"],
+            "powershell": ["ps1", "pwsh"],
+            "bash": ["sh", "shell"],
+            "javascript": ["js"],
+        }
+        for candidate in candidates:
+            langs = [candidate] + alias_map.get(candidate, [])
+            for lang in langs:
+                matches = re.findall(rf"```{lang}\n(.*?)\n```", content, re.DOTALL | re.IGNORECASE)
+                if matches: return candidate, matches[-1].strip()
+        generic = re.findall(r"```\n(.*?)\n```", content, re.DOTALL)
+        if generic: return (candidates[0] if candidates else "python"), generic[-1].strip()
+        return None, None
+
+    def _code_run_retry_hint(self):
+        project_root = os.path.abspath(os.path.join(self.cwd, '..'))
+        return (
+            "[System] Invalid code_run call. Provide a non-empty arguments.script, or put exactly one fenced "
+            "code block immediately before the tool call. Never call code_run with only type/cwd/inline_eval. "
+            f"Runtime scratch cwd is {self.cwd}. Project root is {project_root}; use cwd:'../' for the current "
+            "project folder/repo root. If you only need to inspect existing files, prefer file_read."
+        )
 
     def do_code_run(self, args, response):
         '''执行代码片段，有长度限制，不允许代码中放大量数据，如有需要应当通过文件读取进行。'''
-        code_type = args.get("type", "python")
+        explicit_type = args.get("type")
+        code_type = str(explicit_type or "python").lower()
         code = args.get("code") or args.get("script")
         if not code:
-            code = self._extract_code_block(response, code_type)
-            if not code: return StepOutcome("[Error] Code missing. Use ```{code_type} block or 'script' arg.", next_prompt="\n")
+            inferred_type, inferred_code = self._extract_code_block(response, code_type if explicit_type else None)
+            code_type, code = inferred_type or code_type, inferred_code
+            if not code:
+                return StepOutcome(
+                    "[Error] code_run requires a non-empty script. Use arguments.script or exactly one fenced code block immediately before the tool call.",
+                    next_prompt=self._get_anchor_prompt(skip=args.get('_index', 0) > 0) + "\n" + self._code_run_retry_hint()
+                )
         timeout = args.get("timeout", 60)
         raw_path = os.path.join(self.cwd, args.get("cwd", './'))
         cwd = os.path.normpath(os.path.abspath(raw_path))
@@ -323,7 +354,9 @@ class GenericAgentHandler(BaseHandler):
     
     def do_web_execute_js(self, args, response):
         '''web情况下的优先使用工具，执行任何js达成对浏览器的*完全*控制。支持将结果保存到文件供后续读取分析。'''
-        script = args.get("script", "") or self._extract_code_block(response, "javascript")
+        script = args.get("script", "")
+        if not script:
+            _, script = self._extract_code_block(response, "javascript")
         if not script: return StepOutcome("[Error] Script missing. Use ```javascript block or 'script' arg.", next_prompt="\n")
         abs_path = self._get_abs_path(script.strip())
         if os.path.isfile(abs_path):
@@ -551,6 +584,8 @@ def get_global_memory():
         with open(os.path.join(script_dir, 'memory/global_mem_insight.txt'), 'r', encoding='utf-8', errors='replace') as f: insight = f.read()
         with open(os.path.join(script_dir, f'assets/insight_fixed_structure{suffix}.txt'), 'r', encoding='utf-8') as f: structure = f.read()
         prompt += f'cwd = {os.path.join(script_dir, "temp")} (./)\n'
+        prompt += f'project_root = {script_dir} (../)\n'
+        prompt += "Interpret user-facing 'current folder/current project/current repository' as project_root (../), unless the user explicitly asks for temp/scratch cwd.\n"
         prompt += f"\n[Memory] (../memory)\n"
         prompt += structure + '\n../memory/global_mem_insight.txt:\n'
         prompt += insight + "\n"

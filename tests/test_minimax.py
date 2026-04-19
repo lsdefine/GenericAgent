@@ -28,7 +28,11 @@ class TestMiniMaxTemperatureClamping(unittest.TestCase):
             resp.__exit__ = MagicMock(return_value=False)
             return resp
 
-        with patch('llmcore.requests.post', side_effect=fake_post):
+        fake_session = MagicMock()
+        fake_session.__enter__.return_value = fake_session
+        fake_session.__exit__.return_value = False
+        fake_session.post.side_effect = fake_post
+        with patch('llmcore.requests.Session', return_value=fake_session):
             gen = _openai_stream(
                 'https://api.minimax.io/v1', 'test-key', [{"role": "user", "content": "hi"}],
                 model, temperature=temperature
@@ -38,6 +42,45 @@ class TestMiniMaxTemperatureClamping(unittest.TestCase):
                 pass
 
         return captured.get('payload', {})
+
+    def test_non_stream_response_parsed(self):
+        """Non-stream OpenAI-compatible responses should be parsed into text blocks."""
+        from llmcore import _openai_stream
+
+        def fake_post(url, headers=None, json=None, stream=None, timeout=None, proxies=None):
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.json.return_value = {
+                "choices": [{
+                    "message": {
+                        "content": "Here is the answer.",
+                        "tool_calls": []
+                    }
+                }],
+                "usage": {"prompt_tokens": 12}
+            }
+            resp.__enter__ = lambda s: s
+            resp.__exit__ = MagicMock(return_value=False)
+            return resp
+
+        fake_session = MagicMock()
+        fake_session.__enter__.return_value = fake_session
+        fake_session.__exit__.return_value = False
+        fake_session.post.side_effect = fake_post
+        with patch('llmcore.requests.Session', return_value=fake_session):
+            gen = _openai_stream(
+                'https://api.minimax.io/v1', 'test-key', [{"role": "user", "content": "hi"}],
+                'MiniMax-M2.7', stream=False
+            )
+            chunks = []
+            try:
+                while True:
+                    chunks.append(next(gen))
+            except StopIteration as e:
+                blocks = e.value
+
+        self.assertEqual(chunks, ["Here is the answer."])
+        self.assertEqual(blocks, [{"type": "text", "text": "Here is the answer."}])
 
     def test_minimax_temp_zero_clamped(self):
         """MiniMax rejects temperature=0, should be clamped to 0.01."""
@@ -57,12 +100,12 @@ class TestMiniMaxTemperatureClamping(unittest.TestCase):
     def test_minimax_temp_one_preserved(self):
         """Temperature=1.0 should be preserved."""
         payload = self._make_stream_call('MiniMax-M2.7-highspeed', 1.0)
-        self.assertAlmostEqual(payload['temperature'], 1.0)
+        self.assertNotIn('temperature', payload)
 
     def test_minimax_temp_above_one_clamped(self):
         """Temperature > 1.0 should be clamped to 1.0."""
         payload = self._make_stream_call('MiniMax-M2.7', 1.5)
-        self.assertAlmostEqual(payload['temperature'], 1.0)
+        self.assertNotIn('temperature', payload)
 
     def test_minimax_case_insensitive(self):
         """Model name matching should be case-insensitive."""
@@ -77,7 +120,7 @@ class TestMiniMaxTemperatureClamping(unittest.TestCase):
     def test_kimi_temp_still_forced(self):
         """Kimi/Moonshot temp override should still work."""
         payload = self._make_stream_call('kimi-2.0', 0.5)
-        self.assertAlmostEqual(payload['temperature'], 1.0)
+        self.assertNotIn('temperature', payload)
 
 
 class TestMiniMaxThinkTagHandling(unittest.TestCase):
@@ -145,15 +188,15 @@ class TestMiniMaxCompressHistoryTags(unittest.TestCase):
 
         long_think = "A" * 2000
         messages = [
-            {"role": "assistant", "prompt": f"<think>{long_think}</think>\nShort answer."},
-            {"role": "user", "prompt": "Follow up"},
-        ] + [{"role": "user", "prompt": f"msg{i}"} for i in range(12)]
+            {"role": "assistant", "content": f"<think>{long_think}</think>\nShort answer."},
+            {"role": "user", "content": "Follow up"},
+        ] + [{"role": "user", "content": f"msg{i}"} for i in range(12)]
 
         # Force compression (counter divisible by 5)
         compress_history_tags._cd = 4
         result = compress_history_tags(messages, keep_recent=10, max_len=800)
         # The first message's <think> content should be truncated
-        first_content = result[0]["prompt"]
+        first_content = result[0]["content"]
         self.assertIn("<think>", first_content)
         self.assertIn("...", first_content)
         self.assertLess(len(first_content), len(f"<think>{long_think}</think>\nShort answer."))
@@ -268,7 +311,7 @@ class TestMiniMaxNativeToolClientThinkTag(unittest.TestCase):
         def mock_ask(msg, tools=None, model=None):
             text = "<think>Analyzing the request.</think>\n\nResult: success"
             yield text
-            return MockResponse('', text, [], text)
+            return MockResponse('Analyzing the request.', 'Result: success', [], text)
 
         session.ask = mock_ask
 

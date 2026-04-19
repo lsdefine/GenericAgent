@@ -64,7 +64,11 @@ class TestMiniMaxEndToEnd(unittest.TestCase):
         mock_resp.__enter__ = lambda s: s
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch('llmcore.requests.post', return_value=mock_resp):
+        fake_session = MagicMock()
+        fake_session.__enter__.return_value = fake_session
+        fake_session.__exit__.return_value = False
+        fake_session.post.return_value = mock_resp
+        with patch('llmcore.requests.Session', return_value=fake_session):
             messages = [
                 {"role": "system", "content": "You are a helpful assistant."},
                 {"role": "user", "content": "Help me read a file."},
@@ -107,7 +111,11 @@ class TestMiniMaxEndToEnd(unittest.TestCase):
         mock_resp.__enter__ = lambda s: s
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch('llmcore.requests.post', return_value=mock_resp):
+        fake_session = MagicMock()
+        fake_session.__enter__.return_value = fake_session
+        fake_session.__exit__.return_value = False
+        fake_session.post.return_value = mock_resp
+        with patch('llmcore.requests.Session', return_value=fake_session):
             messages = [{"role": "user", "content": "Read the config file."}]
             gen = client.chat(messages=messages, tools=None)
             try:
@@ -142,13 +150,14 @@ class TestMiniMaxEndToEnd(unittest.TestCase):
             resp.__exit__ = MagicMock(return_value=False)
             return resp
 
-        with patch('llmcore.requests.post', side_effect=capture_post):
+        fake_session = MagicMock()
+        fake_session.__enter__.return_value = fake_session
+        fake_session.__exit__.return_value = False
+        fake_session.post.side_effect = capture_post
+        with patch('llmcore.requests.Session', return_value=fake_session):
             session.raw_msgs = [{"role": "user", "prompt": "test", "image": None}]
-            gen = session.raw_ask(
-                [{"role": "user", "content": "test"}],
-                model='MiniMax-M2.7',
-                temperature=0.0,
-            )
+            session.temperature = 0.0
+            gen = session.raw_ask([{"role": "user", "content": "test"}])
             for _ in gen:
                 pass
 

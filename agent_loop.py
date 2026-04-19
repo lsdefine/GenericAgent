@@ -16,6 +16,11 @@ class BaseHandler:
     def tool_after_callback(self, tool_name, args, response, ret): pass
     def turn_end_callback(self, response, tool_calls, tool_results, turn, next_prompt, exit_reason): return next_prompt
     def dispatch(self, tool_name, args, response, index=0):
+        # Some Anthropic-compatible relays/models may emit an internal "thinking"
+        # pseudo-tool call. Treat it as a no-op instead of derailing the turn.
+        if tool_name == 'thinking':
+            yield "[Info] 忽略兼容层返回的伪工具调用: thinking\n"
+            return StepOutcome(None, next_prompt="已忽略无效工具 thinking，请继续按真实工具列表调用。", should_exit=False)
         method_name = f"do_{tool_name}"
         if hasattr(self, method_name):
             args['_index'] = index

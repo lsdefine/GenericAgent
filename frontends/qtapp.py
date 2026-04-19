@@ -13,7 +13,7 @@ from typing import Optional
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QScrollArea, QFrame, QTextEdit, QStackedWidget,
+    QScrollArea, QFrame, QTextEdit, QStackedWidget, QComboBox,
     QListWidget, QListWidgetItem, QSizePolicy, QFileDialog,
     QSplitter, QTextBrowser, QApplication, QMessageBox,
 )
@@ -28,6 +28,8 @@ from PySide6.QtGui import (
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from agentmain import GeneraticAgent
+from qt_switch import RouteCenterPage
+from frontends.design_tokens import FONTS, FONT_SIZES, FONT_WEIGHTS, COLORS, SPACING, RADIUS
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -249,6 +251,53 @@ class FloatingButton(QWidget):
             self._dragged = False
         self._drag_origin_global = None
 
+    def contextMenuEvent(self, event):
+        """Right-click menu for force stop and quit."""
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu {
+                background: rgba(20, 20, 24, 250);
+                border: 1px solid rgba(59, 130, 246, 0.3);
+                border-radius: 6px;
+                padding: 4px;
+            }
+            QMenu::item {
+                padding: 6px 20px;
+                color: #ececf1;
+                border-radius: 4px;
+            }
+            QMenu::item:selected {
+                background: rgba(59, 130, 246, 0.15);
+            }
+        """)
+
+        stop_action = menu.addAction("⏹ 强制终止 Agent")
+        hide_action = menu.addAction("隐藏面板")
+        quit_action = menu.addAction("退出程序")
+
+        action = menu.exec(event.globalPos())
+        if action == stop_action:
+            self._force_stop_agent()
+        elif action == hide_action:
+            self.chat_panel.hide()
+        elif action == quit_action:
+            QApplication.quit()
+
+    def _force_stop_agent(self):
+        """Force stop the running agent."""
+        agent = getattr(self.chat_panel, "agent", None)
+        if agent:
+            # Stop agent if it has a stop method
+            if hasattr(agent, "stop"):
+                agent.stop()
+            # Clear streaming queue
+            if hasattr(self.chat_panel, "_display_queue"):
+                self.chat_panel._display_queue = None
+            # Reset streaming state
+            if hasattr(self.chat_panel, "_streaming_row"):
+                self.chat_panel._streaming_row = None
+
     # ── Toggle panel ──────────────────────────────────────
     def _toggle(self):
         from PySide6.QtCore import QDateTime
@@ -291,19 +340,19 @@ TEXT_FILE_EXTS = {
 MAX_INLINE_CHARS = 6000
 
 C = {
-    "bg":       QColor(14, 14, 18),
-    "panel":    QColor(20, 20, 24, 248),
-    "border":   QColor(45, 45, 50),
-    "accent":   "#7c3aed",
-    "text":     "#e4e4e7",
-    "muted":    "#71717a",
-    "user_g0":  QColor(79, 70, 229),
-    "user_g1":  QColor(124, 58, 237),
-    "asst_bg":  QColor(39, 39, 42, 210),
-    "asst_bdr": QColor(63, 63, 70),
-    "send_g0":  QColor(220, 38, 38),
-    "send_g1":  QColor(239, 68, 68),
-    "green":    "#22c55e",
+    "bg":       COLORS["bg_base"],
+    "panel":    COLORS["bg_elevated"],
+    "border":   COLORS["border_default"],
+    "accent":   COLORS["brand_500"],
+    "text":     COLORS["text_primary"],
+    "muted":    COLORS["text_tertiary"],
+    "user_g0":  QColor(59, 130, 246),
+    "user_g1":  QColor(96, 165, 250),
+    "asst_bg":  COLORS["bg_overlay"],
+    "asst_bdr": COLORS["border_default"],
+    "send_g0":  QColor(59, 130, 246),
+    "send_g1":  QColor(96, 165, 250),
+    "green":    COLORS["success"],
 }
 
 SCROLLBAR_STYLE = """
@@ -320,6 +369,7 @@ _SVG_REGEN = '<svg viewBox="0 0 24 24" fill="none" stroke="{c}" stroke-width="2"
 _SVG_CHAT = '<svg viewBox="0 0 24 24" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>'
 _SVG_CLOCK = '<svg viewBox="0 0 24 24" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>'
 _SVG_BOOK = '<svg viewBox="0 0 24 24" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>'
+_SVG_ROUTE = '<svg viewBox="0 0 24 24" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 6h6"/><path d="M5 18h6"/><path d="M13 6h3a3 3 0 0 1 3 3v0a3 3 0 0 1-3 3h-3"/><path d="M13 18h3a3 3 0 0 0 3-3v0a3 3 0 0 0-3-3h-3"/><circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="12" r="2"/></svg>'
 _SVG_GEAR = '<svg viewBox="0 0 24 24" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>'
 _SVG_CLIP = '<svg viewBox="0 0 24 24" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.446 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>'
 _SVG_STOP = '<svg viewBox="0 0 24 24" fill="{c}" stroke="none"><rect width="10" height="10" x="7" y="7" rx="1.5" ry="1.5"/></svg>'
@@ -334,27 +384,27 @@ _SVG_BOT = '<svg viewBox="0 0 24 24" fill="none" stroke="{c}" stroke-width="1.8"
 _SVG_SEND = '<svg viewBox="0 0 24 24" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="m22 2-7 20-4-9-9-4Z"/></svg>'
 _SVG_PLUS = '<svg viewBox="0 0 24 24" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" x2="12" y1="5" y2="19"/><line x1="5" x2="19" y1="12" y2="12"/></svg>'
 
-_MD_CSS = """
-body { color: #e4e4e7; font-family: "Arial", "Microsoft YaHei", sans-serif; font-size: 13px; line-height: 1.6; font-weight: 400; }
-h1 { color: #f4f4f5; font-size: 20px; font-weight: 700; border-bottom: 1px solid #3f3f46; padding-bottom: 4px; margin-top: 16px; }
-h2 { color: #f4f4f5; font-size: 17px; font-weight: 700; border-bottom: 1px solid #3f3f46; padding-bottom: 3px; margin-top: 14px; }
-h3 { color: #f4f4f5; font-size: 15px; font-weight: 600; margin-top: 12px; }
-h4,h5,h6 { color: #d4d4d8; font-size: 13px; font-weight: 600; margin-top: 10px; }
-code { background: rgba(63,63,70,0.6); color: #c4b5fd; padding: 1px 4px; border-radius: 3px;
-       font-family: Consolas, "Courier New", monospace; font-size: 12px; }
-pre  { background: rgba(24,24,30,0.95); border: 1px solid #3f3f46; border-radius: 6px;
-       padding: 10px 12px; margin: 8px 0; }
-pre code { background: transparent; padding: 0; color: #d4d4d8; }
-a { color: #818cf8; text-decoration: none; }
-a:hover { text-decoration: underline; }
-blockquote { border-left: 3px solid #7c3aed; margin: 8px 0 8px 0; padding: 4px 0 4px 12px; color: #a1a1aa; }
-table { border-collapse: collapse; margin: 8px 0; }
-th, td { border: 1px solid #3f3f46; padding: 5px 10px; }
-th { background: rgba(63,63,70,0.35); color: #d4d4d8; font-weight: 700; }
-hr { border: none; border-top: 1px solid #3f3f46; margin: 12px 0; }
-ul, ol { padding-left: 22px; margin: 4px 0; }
-li { margin: 2px 0; }
-p { margin: 6px 0; }
+_MD_CSS = f"""
+body {{ color: {COLORS['text_primary']}; font-family: {FONTS['ui']}; font-size: {FONT_SIZES['md']}px; line-height: 1.6; font-weight: {FONT_WEIGHTS['normal']}; }}
+h1 {{ color: {COLORS['text_primary']}; font-size: {FONT_SIZES['2xl']}px; font-weight: {FONT_WEIGHTS['bold']}; border-bottom: 1px solid {COLORS['border_default'].name()}; padding-bottom: 4px; margin-top: 16px; }}
+h2 {{ color: {COLORS['text_primary']}; font-size: {FONT_SIZES['xl']}px; font-weight: {FONT_WEIGHTS['bold']}; border-bottom: 1px solid {COLORS['border_default'].name()}; padding-bottom: 3px; margin-top: 14px; }}
+h3 {{ color: {COLORS['text_primary']}; font-size: {FONT_SIZES['lg']}px; font-weight: {FONT_WEIGHTS['semibold']}; margin-top: 12px; }}
+h4,h5,h6 {{ color: {COLORS['text_secondary']}; font-size: {FONT_SIZES['md']}px; font-weight: {FONT_WEIGHTS['semibold']}; margin-top: 10px; }}
+code {{ background: rgba(63,63,70,0.6); color: #c4b5fd; padding: 1px 4px; border-radius: {RADIUS['sm']}px;
+       font-family: {FONTS['code']}; font-size: {FONT_SIZES['sm']}px; }}
+pre  {{ background: rgba(24,24,30,0.95); border: 1px solid {COLORS['border_default'].name()}; border-radius: {RADIUS['md']}px;
+       padding: 10px 12px; margin: 8px 0; }}
+pre code {{ background: transparent; padding: 0; color: {COLORS['text_secondary']}; }}
+a {{ color: #818cf8; text-decoration: none; }}
+a:hover {{ text-decoration: underline; }}
+blockquote {{ border-left: 3px solid {COLORS['brand_500']}; margin: 8px 0 8px 0; padding: 4px 0 4px 12px; color: {COLORS['text_secondary']}; }}
+table {{ border-collapse: collapse; margin: 8px 0; }}
+th, td {{ border: 1px solid {COLORS['border_default'].name()}; padding: 5px 10px; }}
+th {{ background: rgba(63,63,70,0.35); color: {COLORS['text_secondary']}; font-weight: {FONT_WEIGHTS['bold']}; }}
+hr {{ border: none; border-top: 1px solid {COLORS['border_default'].name()}; margin: 12px 0; }}
+ul, ol {{ padding-left: 22px; margin: 4px 0; }}
+li {{ margin: 2px 0; }}
+p {{ margin: 6px 0; }}
 """
 
 
@@ -531,8 +581,8 @@ class _StreamingBadge(QLabel):
     def __init__(self, parent=None):
         super().__init__("处理中…", parent)
         self.setStyleSheet(
-            "QLabel { background: rgba(124,58,237,0.18); color: #c4b5fd;"
-            " border: 1px solid rgba(124,58,237,0.35); border-radius: 9px;"
+            "QLabel { background: rgba(59,130,246,0.15); color: #60a5fa;"
+            " border: 1px solid rgba(59,130,246,0.3); border-radius: 9px;"
             " padding: 1px 8px; font-size: 11px; }"
         )
         self.hide()
@@ -714,7 +764,7 @@ class _TabButton(QPushButton):
         background: rgba(63,63,70,0.6); color: {text};
     }}
     QPushButton:checked {{
-        background: #7c3aed; color: white;
+        background: #3b82f6; color: white;
     }}
     """.format(muted=C["muted"], text=C["text"])
 
@@ -733,14 +783,23 @@ def _action_btn(label: str, color: str, icon: QIcon | None = None) -> QPushButto
     btn.setFixedHeight(36)
     btn.setStyleSheet(f"""
         QPushButton {{
-            background: rgba(35,35,40,0.8); color: {C['text']};
-            border: 1px solid {C['border'].name()};
-            border-left: 3px solid {color};
-            border-radius: 8px; padding: 0 14px;
-            font-size: 13px; font-weight: 700; text-align: left;
+            background: {COLORS['bg_elevated'].name()};
+            color: {COLORS['text_primary']};
+            border: 1px solid {COLORS['border_default'].name()};
+            border-radius: {RADIUS['sm']}px;
+            padding: 0 {SPACING['md']}px;
+            font-size: {FONT_SIZES['md']}px;
+            font-weight: {FONT_WEIGHTS['semibold']};
+            text-align: left;
         }}
-        QPushButton:hover {{ background: rgba(55,55,62,0.9); }}
-        QPushButton:checked {{ color: {color}; background: rgba(35,35,40,0.95); }}
+        QPushButton:hover {{
+            background: {COLORS['bg_overlay'].name()};
+        }}
+        QPushButton:checked {{
+            background: rgba(59,130,246,0.15);
+            border-color: {color};
+            color: {color};
+        }}
     """)
     return btn
 
@@ -752,13 +811,16 @@ class ChatPanel(QWidget):
     def __init__(self, agent):
         super().__init__()
         self.agent = agent
+        self._switch_service = getattr(agent, "ga_switch", None)
+        self._switch_snapshot = {}
+        self._switch_vm = {}
+        self._route_combo_updating = False
 
         # session state
         self._messages: list[dict] = []
         self._session = {"id": _make_session_id(), "title": "新对话", "messages": []}
         self._history: list[dict] = _load_history()
         self._pending_files: list[dict] = []  # {'name','type','raw'}
-        self._settings_health_checked = False
 
         # streaming state
         self._display_queue: Optional[_queue.Queue] = None
@@ -776,32 +838,41 @@ class ChatPanel(QWidget):
             Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool
         )
         self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setMinimumSize(400, 500)
         self.resize(530, 700)
 
         # drag state (title bar)
         self._drag_pos: Optional[QPoint] = None
 
+        # resize grip
+        from PySide6.QtWidgets import QSizeGrip
+        self._resize_grip = QSizeGrip(self)
+        self._resize_grip.setStyleSheet("QSizeGrip { background: transparent; width: 16px; height: 16px; }")
+
         self._build_ui()
+        self._refresh_switch_state()
 
     def paintEvent(self, _event):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         path = QPainterPath()
         path.addRoundedRect(0.5, 0.5, self.width() - 1.0, self.height() - 1.0,
-                            20.0, 20.0)
+                            float(RADIUS["lg"]), float(RADIUS["lg"]))
         grad = QLinearGradient(0, 0, 0, self.height())
         grad.setColorAt(0.0, QColor(20, 20, 28, 228))
         grad.setColorAt(1.0, QColor(10, 10, 14, 242))
         p.fillPath(path, grad)
-        p.setPen(QPen(QColor(99, 102, 241, 80), 1.0))
+        p.setPen(QPen(QColor(59, 130, 246, 80), 1.0))
         p.drawPath(path)
 
     def resizeEvent(self, event):
-        path = QPainterPath()
-        path.addRoundedRect(0, 0, float(self.width()), float(self.height()),
-                            20.0, 20.0)
-        self.setMask(QRegion(path.toFillPolygon().toPolygon()))
+        # 不使用 setMask，让 QSizeGrip 正常工作
         super().resizeEvent(event)
+        # Position resize grip at bottom-right
+        if hasattr(self, '_resize_grip'):
+            self._resize_grip.move(self.width() - 16, self.height() - 16)
+            self._resize_grip.raise_()
+            self._resize_grip.show()
 
     # ── UI construction ───────────────────────────────────────────────────────
     def _build_ui(self):
@@ -819,7 +890,8 @@ class ChatPanel(QWidget):
         self._stack.addWidget(self._build_chat_page())    # 0
         self._stack.addWidget(self._build_history_page()) # 1
         self._stack.addWidget(self._build_sop_page())     # 2
-        self._stack.addWidget(self._build_settings_page())# 3
+        self._stack.addWidget(self._build_route_center_page()) # 3
+        self._stack.addWidget(self._build_settings_page())# 4
         root.addWidget(self._stack)
 
         # Now that _stack exists, activate the first tab
@@ -856,12 +928,23 @@ class ChatPanel(QWidget):
 
         ly.addStretch()
 
+        # Minimize button
+        minimize = QPushButton("−")
+        minimize.setFixedSize(26, 26)
+        minimize.setStyleSheet("""
+            QPushButton { background: rgba(63,63,70,0.6); color: #a1a1aa;
+                border: none; border-radius: 6px; font-size: 18px; font-weight: bold; }
+            QPushButton:hover { background: rgba(63,63,70,0.9); color: white; }
+        """)
+        minimize.clicked.connect(self.showMinimized)
+        ly.addWidget(minimize)
+
         # Close button
         close = QPushButton("×")
         close.setFixedSize(26, 26)
         close.setStyleSheet("""
             QPushButton { background: rgba(63,63,70,0.6); color: #a1a1aa;
-                border: none; border-radius: 13px; font-size: 15px; font-weight: bold; }
+                border: none; border-radius: 6px; font-size: 15px; font-weight: bold; }
             QPushButton:hover { background: rgba(220,38,38,0.85); color: white; }
         """)
         close.clicked.connect(self.hide)
@@ -898,7 +981,8 @@ class ChatPanel(QWidget):
         tab_defs = [
             (_SVG_CHAT,  "对话"),
             (_SVG_CLOCK, "历史"),
-            (_SVG_BOOK,  "SOP"),
+            (_SVG_BOOK,  "手册"),
+            (_SVG_ROUTE, "路由"),
             (_SVG_GEAR,  "设置"),
         ]
         for i, (svg, text) in enumerate(tab_defs):
@@ -916,10 +1000,10 @@ class ChatPanel(QWidget):
         new_btn.setIconSize(QSize(12, 12))
         new_btn.setFixedHeight(27)
         new_btn.setStyleSheet(f"""
-            QPushButton {{ background: rgba(124,58,237,0.18); color: #a78bfa;
-                border: 1px solid rgba(124,58,237,0.3); border-radius: 7px;
-                padding: 0 10px; font-size: 12px; font-weight: 700; }}
-            QPushButton:hover {{ background: rgba(124,58,237,0.35); color: white; }}
+            QPushButton {{ background: rgba(59,130,246,0.15); color: #60a5fa;
+                border: 1px solid rgba(59,130,246,0.3); border-radius: {RADIUS['md']}px;
+                padding: 0 10px; font-size: {FONT_SIZES['sm']}px; font-weight: {FONT_WEIGHTS['bold']}; }}
+            QPushButton:hover {{ background: rgba(59,130,246,0.25); color: white; }}
         """)
         new_btn.clicked.connect(self._new_session)
         ly.addWidget(new_btn)
@@ -936,10 +1020,180 @@ class ChatPanel(QWidget):
         if idx == 2:
             self._refresh_sop()
         if idx == 3:
-            self._refresh_model_rows_style()
-            if not self._settings_health_checked:
-                self._start_health_checks()
-                self._settings_health_checked = True
+            self._route_center.refresh_snapshot()
+        if idx == 4:
+            self._refresh_session_controls()
+
+    def _build_route_center_page(self) -> QWidget:
+        self._route_center = RouteCenterPage(self.agent, self._switch_service or self.agent.ga_switch)
+        self._route_center.runtime_changed.connect(self._on_route_center_runtime_changed)
+        self._route_center.request_chat_focus.connect(lambda: self._switch_tab(0))
+        return self._route_center
+
+    def _build_chat_route_bar(self) -> QWidget:
+        wrap = QWidget()
+        wrap.setStyleSheet("background: rgba(10,10,14,0.52);")
+        ly = QHBoxLayout(wrap)
+        ly.setContentsMargins(18, 12, 18, 12)
+        ly.setSpacing(12)
+
+        info = QVBoxLayout()
+        info.setSpacing(3)
+        self._chat_route_title = QLabel("当前模型")
+        self._chat_route_title.setStyleSheet("color: #f4f4f5; font-size: 13px; font-weight: 700;")
+        self._chat_route_meta = QLabel("继续使用当前模型")
+        self._chat_route_meta.setStyleSheet("color: #a1a1aa; font-size: 12px;")
+        self._chat_route_error = QLabel("")
+        self._chat_route_error.setWordWrap(True)
+        self._chat_route_error.setStyleSheet("color: #fca5a5; font-size: 11px;")
+        info.addWidget(self._chat_route_title)
+        info.addWidget(self._chat_route_meta)
+        info.addWidget(self._chat_route_error)
+        ly.addLayout(info, 1)
+
+        controls = QVBoxLayout()
+        controls.setSpacing(6)
+        self._chat_route_select = QComboBox()
+        self._chat_route_select.setStyleSheet("""
+            QComboBox {
+                background: rgba(24,24,30,0.92);
+                color: #f4f4f5;
+                border: 1px solid #3f3f46;
+                border-radius: 8px;
+                padding: 6px 10px;
+                min-width: 230px;
+            }
+            QComboBox::drop-down { border: none; width: 22px; }
+            QComboBox QAbstractItemView {
+                background: #111217;
+                color: #e4e4e7;
+                border: 1px solid #3f3f46;
+                selection-background-color: rgba(59,130,246,0.25);
+            }
+        """)
+        self._chat_route_select.currentIndexChanged.connect(self._on_chat_route_selected)
+        controls.addWidget(self._chat_route_select)
+
+        route_btn_row = QHBoxLayout()
+        route_btn_row.setSpacing(6)
+        self._chat_route_member = _Badge("member")
+        self._chat_route_member.hide()
+        route_btn_row.addWidget(self._chat_route_member)
+        route_btn_row.addStretch()
+        open_route_btn = QPushButton("打开路由页")
+        open_route_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        open_route_btn.setStyleSheet(f"""
+            QPushButton {{ background: rgba(59,130,246,0.15); color: #60a5fa;
+                border: 1px solid rgba(59,130,246,0.3); border-radius: {RADIUS['lg']}px;
+                padding: 5px 10px; font-size: {FONT_SIZES['sm']}px; font-weight: {FONT_WEIGHTS['bold']}; }}
+            QPushButton:hover {{ background: rgba(59,130,246,0.25); color: white; }}
+        """)
+        open_route_btn.clicked.connect(lambda: self._switch_tab(3))
+        route_btn_row.addWidget(open_route_btn)
+        controls.addLayout(route_btn_row)
+        ly.addLayout(controls, 0)
+        return wrap
+
+    def _available_route_targets(self):
+        routes = self._switch_snapshot.get("routes") or []
+        if routes and self.agent.config_source == "store":
+            return [
+                {
+                    "value": route["id"],
+                    "label": f"{route['name']} | {((route.get('provider') or {}).get('name') or 'failover')}",
+                }
+                for route in routes
+            ]
+        described = self.agent.describe_llms() if hasattr(self.agent, "describe_llms") else []
+        return [
+            {
+                "value": item["idx"],
+                "label": item["display_name"],
+            }
+            for item in described
+        ]
+
+    def _refresh_switch_state(self):
+        if self._switch_service is not None:
+            self._switch_snapshot = self._switch_service.get_ui_snapshot(self.agent)
+            try:
+                from ga_switch.viewmodel import build_ui_viewmodel
+                self._switch_vm = build_ui_viewmodel(self._switch_snapshot)
+            except Exception:
+                self._switch_vm = {}
+        else:
+            self._switch_snapshot = {}
+            self._switch_vm = {}
+        self._refresh_route_badges()
+        self._refresh_chat_route_controls()
+        if hasattr(self, "_session_runtime_info"):
+            self._refresh_session_controls()
+
+    def _refresh_route_badges(self):
+        summary = (self._switch_vm or {}).get("summary") or {}
+        headline = summary.get("headline") or self._model_name()
+        meta = summary.get("meta") or "继续使用当前模型"
+        self._model_badge.setText(headline)
+        self._model_badge.setToolTip(meta)
+        if hasattr(self, "_chat_route_title"):
+            self._chat_route_title.setText(headline)
+            self._chat_route_meta.setText(meta)
+            has_error = bool(summary.get("last_error_message"))
+            err = summary.get("last_error_message") or "最近没有错误"
+            self._chat_route_error.setText(err)
+            self._chat_route_error.setStyleSheet(
+                "color: #fca5a5; font-size: 11px;" if has_error else "color: #71717a; font-size: 11px;"
+            )
+            active_member = summary.get("active_member_name")
+            if active_member:
+                self._chat_route_member.setText(active_member)
+                self._chat_route_member.show()
+            else:
+                self._chat_route_member.hide()
+
+    def _refresh_chat_route_controls(self):
+        if not hasattr(self, "_chat_route_select"):
+            return
+        options = self._available_route_targets()
+        summary = (self._switch_vm or {}).get("summary") or {}
+        current_value = summary.get("route_id")
+        if current_value is None:
+            active_runtime = next((item for item in self.agent.describe_llms() if item.get("active")), None) if hasattr(self.agent, "describe_llms") else None
+            current_value = (active_runtime or {}).get("idx")
+
+        self._route_combo_updating = True
+        self._chat_route_select.blockSignals(True)
+        self._chat_route_select.clear()
+        selected_idx = 0
+        for idx, item in enumerate(options):
+            self._chat_route_select.addItem(item["label"], item["value"])
+            if item["value"] == current_value:
+                selected_idx = idx
+        if options:
+            self._chat_route_select.setCurrentIndex(selected_idx)
+        self._chat_route_select.setEnabled(bool(options))
+        self._chat_route_select.blockSignals(False)
+        self._route_combo_updating = False
+
+    def _switch_route_target(self, target):
+        if target is None:
+            return
+        try:
+            self.agent.set_active_route(target)
+        except Exception as exc:
+            self._add_system_notice(f"切换路由失败：{exc}")
+            return
+        self._refresh_switch_state()
+        summary = (self._switch_vm or {}).get("summary") or {}
+        self._add_system_notice(f"已切换至 {summary.get('headline') or target}，对话上下文已保留")
+
+    def _on_chat_route_selected(self, _idx):
+        if self._route_combo_updating:
+            return
+        self._switch_route_target(self._chat_route_select.currentData())
+
+    def _on_route_center_runtime_changed(self, _snapshot, _viewmodel):
+        self._refresh_switch_state()
 
     # ── chat page ─────────────────────────────────────────────────────────────
     def _build_chat_page(self) -> QWidget:
@@ -948,6 +1202,9 @@ class ChatPanel(QWidget):
         ly = QVBoxLayout(page)
         ly.setContentsMargins(0, 0, 0, 0)
         ly.setSpacing(0)
+
+        ly.addWidget(self._build_chat_route_bar())
+        ly.addWidget(_Separator())
 
         # ── message scroll area ──
         self._scroll = QScrollArea()
@@ -996,7 +1253,7 @@ class ChatPanel(QWidget):
                 border-radius: 16px;
             }}
             QWidget#inputCard:focus-within {{
-                border-color: rgba(124,58,237,0.55);
+                border-color: rgba(59,130,246,0.55);
             }}
         """)
         card.setObjectName("inputCard")
@@ -1011,7 +1268,7 @@ class ChatPanel(QWidget):
             QTextEdit {{
                 background: transparent; color: {C['text']};
                 border: none; padding: 0; font-size: 14px;
-                selection-background-color: rgba(124,58,237,0.4);
+                selection-background-color: rgba(59,130,246,0.25);
             }}
         """)
         self._input.installEventFilter(self)
@@ -1090,9 +1347,9 @@ class ChatPanel(QWidget):
                 padding: 8px 12px; margin: 2px 0;
             }}
             QListWidget::item:hover {{ background: rgba(55,55,65,0.8);
-                border-color: rgba(124,58,237,0.4); }}
-            QListWidget::item:selected {{ background: rgba(124,58,237,0.25);
-                border-color: rgba(124,58,237,0.6); }}
+                border-color: rgba(59,130,246,0.4); }}
+            QListWidget::item:selected {{ background: rgba(59,130,246,0.25);
+                border-color: rgba(59,130,246,0.6); }}
             {SCROLLBAR_STYLE}
         """)
         self._hist_list.itemDoubleClicked.connect(self._restore_selected)
@@ -1116,7 +1373,7 @@ class ChatPanel(QWidget):
             QListWidget::item {{ color: {C['muted']}; padding: 7px 10px;
                 border-radius: 4px; margin: 1px 4px; }}
             QListWidget::item:hover {{ background: rgba(55,55,65,0.7); color: {C['text']}; }}
-            QListWidget::item:selected {{ background: rgba(124,58,237,0.28); color: white; }}
+            QListWidget::item:selected {{ background: rgba(59,130,246,0.25); color: white; }}
             {SCROLLBAR_STYLE}
         """)
         self._sop_list.currentItemChanged.connect(self._load_sop)
@@ -1143,31 +1400,25 @@ class ChatPanel(QWidget):
         page.setStyleSheet("background: transparent;")
         ly = QVBoxLayout(page)
         ly.setContentsMargins(16, 16, 16, 16)
-        ly.setSpacing(8)
+        ly.setSpacing(10)
 
-        lbl = QLabel("控制面板")
+        lbl = QLabel("会话控制")
         lbl.setStyleSheet("color: #f4f4f5; font-weight: 600; font-size: 14px;")
         ly.addWidget(lbl)
 
-        self._model_info = QLabel(f"当前模型：{self._model_name()} (#{self.agent.llm_no})")
-        self._model_info.setStyleSheet(f"color: {C['muted']}; font-size: 12px;")
-        ly.addWidget(self._model_info)
-        ly.addSpacing(4)
+        self._session_runtime_info = QLabel("")
+        self._session_runtime_info.setWordWrap(True)
+        self._session_runtime_info.setStyleSheet(f"color: {C['muted']}; font-size: 12px;")
+        ly.addWidget(self._session_runtime_info)
 
-        model_hdr = QLabel("模型列表")
-        model_hdr.setStyleSheet("color: #d4d4d8; font-weight: 600; font-size: 13px;")
-        ly.addWidget(model_hdr)
+        hint = QLabel("路由切换、模型服务编辑、诊断和连通性测试都在“路由”页中。这里保留会话级操作。")
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: #a1a1aa; font-size: 12px;")
+        ly.addWidget(hint)
 
-        self._model_rows_container = QWidget()
-        self._model_rows_container.setStyleSheet("background: transparent;")
-        self._model_rows_layout = QVBoxLayout(self._model_rows_container)
-        self._model_rows_layout.setContentsMargins(0, 0, 0, 0)
-        self._model_rows_layout.setSpacing(3)
-        ly.addWidget(self._model_rows_container)
-
-        self._model_row_widgets: list[dict] = []
-        self._health_results: dict[int, bool | None] = {}
-        self._build_model_rows()
+        open_route_btn = _action_btn("打开路由页", "#3b82f6", _svg_icon("route", _SVG_ROUTE))
+        open_route_btn.clicked.connect(lambda: self._switch_tab(3))
+        ly.addWidget(open_route_btn)
 
         ly.addSpacing(6)
 
@@ -1185,7 +1436,7 @@ class ChatPanel(QWidget):
         sep.setStyleSheet("color: #f4f4f5; font-weight: 600; font-size: 13px;")
         ly.addWidget(sep)
 
-        self._auto_btn = _action_btn("开启自主行动 (idle > 30 min 自动触发)", "#f59e0b",
+        self._auto_btn = _action_btn("开启自主行动（空闲超过 30 分钟后自动触发）", "#f59e0b",
                                       _svg_icon("bolt", _SVG_BOLT))
         self._auto_btn.setCheckable(True)
         self._auto_btn.clicked.connect(self._do_toggle_auto)
@@ -1199,6 +1450,16 @@ class ChatPanel(QWidget):
         ly.addStretch()
         return page
 
+    def _refresh_session_controls(self):
+        summary = (self._switch_vm or {}).get("summary") or {}
+        headline = summary.get("headline") or self._model_name()
+        meta = summary.get("meta") or "继续使用当前模型"
+        member = summary.get("active_member_name") or "无"
+        last_error = summary.get("last_error_message") or "最近没有错误"
+        self._session_runtime_info.setText(
+            f"当前路由：{headline}\n{meta}\n当前成员：{member}\n最近错误：{last_error}"
+        )
+
     # ── model list ────────────────────────────────────────────────────────────
     _MODEL_ROW_STYLE = (
         "QPushButton { background: rgba(39,39,42,0.7); color: #e4e4e7;"
@@ -1207,10 +1468,10 @@ class ChatPanel(QWidget):
         " QPushButton:hover { background: rgba(63,63,70,0.8); }"
     )
     _MODEL_ROW_ACTIVE = (
-        "QPushButton { background: rgba(124,58,237,0.25); color: #c4b5fd;"
-        " border: 1px solid rgba(124,58,237,0.5); border-radius: 8px;"
+        "QPushButton { background: rgba(59,130,246,0.2); color: #60a5fa;"
+        " border: 1px solid rgba(59,130,246,0.4); border-radius: 8px;"
         " padding: 6px 10px; font-size: 12px; font-weight: 700; text-align: left; }"
-        " QPushButton:hover { background: rgba(124,58,237,0.35); }"
+        " QPushButton:hover { background: rgba(59,130,246,0.3); }"
     )
 
     def _build_model_rows(self):
@@ -1264,11 +1525,13 @@ class ChatPanel(QWidget):
         if idx == self.agent.llm_no:
             return
         self.agent.next_llm(n=idx)
-        name = self._model_name()
-        self._model_badge.setText(name)
-        self._model_info.setText(f"当前模型：{name} (#{self.agent.llm_no})")
+        self._refresh_switch_state()
+        name = (self._switch_vm or {}).get("summary", {}).get("headline") or self._model_name()
+        if hasattr(self, "_model_info"):
+            self._model_info.setText(f"当前模型：{name} (#{self.agent.llm_no})")
         self._add_system_notice(f"已切换至 {name}，对话上下文已保留")
-        self._refresh_model_rows_style()
+        if hasattr(self, "_model_row_widgets"):
+            self._refresh_model_rows_style()
 
     def _start_health_checks(self):
         self._health_results.clear()
@@ -1322,9 +1585,9 @@ class ChatPanel(QWidget):
     def _attach_files(self):
         paths, _ = QFileDialog.getOpenFileNames(
             self, "选择附件", "",
-            "All Files (*);;"
-            "Images (*.png *.jpg *.jpeg *.gif *.webp *.bmp);;"
-            "Text (*.txt *.md *.py *.json *.csv *.yaml *.yml *.log *.js *.ts *.sql)",
+            "所有文件 (*);;"
+            "图片 (*.png *.jpg *.jpeg *.gif *.webp *.bmp);;"
+            "文本与代码 (*.txt *.md *.py *.json *.csv *.yaml *.yml *.log *.js *.ts *.sql)",
         )
         for path in paths:
             name = os.path.basename(path)
@@ -1395,6 +1658,10 @@ class ChatPanel(QWidget):
             self._handle_send()
 
     def _handle_send(self):
+        if self.agent.llmclient is None:
+            self._add_system_notice("当前没有可用路由，请先到“路由”页导入 mykey，或配置模型服务与路由。")
+            self._switch_tab(3)
+            return
         text = self._input.toPlainText().strip()
         files = self._pending_files.copy()
         if not text and not files:
@@ -1453,6 +1720,7 @@ class ChatPanel(QWidget):
                     self._update_token_usage()
                     self._scroll_bottom()
                     self._auto_save()
+                    self._refresh_switch_state()
                     break
         except _queue.Empty:
             pass
@@ -1545,7 +1813,7 @@ class ChatPanel(QWidget):
         if in_tokens == 0 and out_tokens == 0:
             self._token_lbl.setText("")
         else:
-            self._token_lbl.setText(f"|   会话上下文消耗: 入 {in_tokens}  出 {out_tokens} tokens")
+            self._token_lbl.setText(f"|   会话上下文消耗：输入 {in_tokens}，输出 {out_tokens}，按词元估算")
 
     # ── SOP ────────────────────────────────────────────────────────────────────
     def _refresh_sop(self):
@@ -1650,7 +1918,7 @@ class ChatPanel(QWidget):
     def _do_toggle_auto(self):
         self.autonomous_enabled = not self.autonomous_enabled
         self._auto_btn.setChecked(self.autonomous_enabled)
-        lbl = "暂停自主行动" if self.autonomous_enabled else "开启自主行动 (idle > 30 min 自动触发)"
+        lbl = "暂停自主行动" if self.autonomous_enabled else "开启自主行动（空闲超过 30 分钟后自动触发）"
         self._auto_btn.setText(lbl)
 
     def _do_trigger_auto(self):
@@ -1693,14 +1961,13 @@ def main():
 
     # ── Agent initialisation ──────────────────────────────
     agent = GeneraticAgent()
+    threading.Thread(target=agent.run, daemon=True).start()
     if agent.llmclient is None:
         QMessageBox.critical(
             None,
             "未配置 LLM",
             "未在 mykey.py 中发现任何可用的 LLM 接口配置，\n程序将在无 LLM 模式下运行。",
         )
-    else:
-        threading.Thread(target=agent.run, daemon=True).start()
 
     # ── Windows ───────────────────────────────────────────
     panel = ChatPanel(agent)

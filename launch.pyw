@@ -1,4 +1,4 @@
-import webview, threading, subprocess, sys, time, os, ctypes, atexit, socket, random
+import threading, subprocess, sys, time, os, ctypes, atexit, socket, random
 
 WINDOW_WIDTH, WINDOW_HEIGHT, RIGHT_PADDING, TOP_PADDING = 600, 900, 0, 100
 
@@ -21,6 +21,27 @@ def start_streamlit(port):
     cmd = [sys.executable, "-m", "streamlit", "run", os.path.join(frontends_dir, "stapp.py"), "--server.port", str(port), "--server.address", "localhost", "--server.headless", "true"]
     proc = subprocess.Popen(cmd)
     atexit.register(proc.kill)
+
+def probe_qt_frontend():
+    try:
+        check = subprocess.run(
+            [sys.executable, "-c", "from PySide6 import QtWidgets; print('qt-ok')"],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+    except Exception as exc:
+        return False, str(exc)
+    return check.returncode == 0, (check.stderr or check.stdout or "").strip()
+
+def start_qt_frontend():
+    qt_entry = os.path.join(frontends_dir, "qtapp.py")
+    qt_proc = subprocess.Popen([sys.executable, qt_entry])
+    atexit.register(lambda: qt_proc.poll() is None and qt_proc.kill())
+    time.sleep(3)
+    if qt_proc.poll() is None:
+        return qt_proc, None
+    return None, f"Qt frontend exited early with code {qt_proc.returncode}."
 
 def inject(text):
     window.evaluate_js(f"""
@@ -74,9 +95,6 @@ if __name__ == '__main__':
     parser.add_argument('--sched', action='store_true', help='启动计划任务调度器')
     parser.add_argument('--llm_no', type=int, default=0, help='LLM编号')
     args = parser.parse_args()
-    port = str(find_free_port()) if args.port == '0' else args.port
-    print(f'[Launch] Using port {port}')
-    threading.Thread(target=start_streamlit, args=(port,), daemon=True).start()
 
     if args.tg:
         tgproc = subprocess.Popen([sys.executable, os.path.join(frontends_dir, "tgapp.py")], creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
@@ -114,12 +132,27 @@ if __name__ == '__main__':
         print('[Launch] Task Scheduler started (duplicate prevented by scheduler port lock)')
     else: print('[Launch] Task Scheduler not enabled (--sched)')
 
+    qt_ok, qt_probe_msg = probe_qt_frontend()
+    if qt_ok:
+        qt_proc, qt_error = start_qt_frontend()
+        if qt_proc is not None:
+            print('[Launch] Qt frontend started')
+            sys.exit(qt_proc.wait())
+        print(f'[Launch] Qt frontend failed, falling back to Streamlit: {qt_error}')
+    else:
+        print(f'[Launch] Qt frontend unavailable, falling back to Streamlit: {qt_probe_msg}')
+
+    port = str(find_free_port()) if args.port == '0' else args.port
+    print(f'[Launch] Using port {port}')
+    threading.Thread(target=start_streamlit, args=(port,), daemon=True).start()
+
     monitor_thread = threading.Thread(target=idle_monitor, daemon=True)
     monitor_thread.start()
     if os.name == 'nt':
         screen_width = get_screen_width()
         x_pos = screen_width - WINDOW_WIDTH - RIGHT_PADDING
     else: x_pos = 100
+    import webview
     time.sleep(2) 
     window = webview.create_window(
         title='GenericAgent', url=f'http://localhost:{port}',

@@ -171,6 +171,12 @@ Agent 会自己读代码、找出需要的包、全部装好。
 python3 launch.pyw
 ```
 
+如果额外安装了 `PySide6`，`launch.pyw` 会优先进入 Qt 桌面前端；否则自动回退到现有的 `Streamlit + pywebview` 窗口。
+
+```bash
+pip install PySide6
+```
+
 启动后会出现一个桌面悬浮窗，直接在里面输入任务指令。
 
 ### 可选：让 Agent 帮你做的事

@@ -80,6 +80,9 @@ cd GenericAgent
 # 2. Install minimal dependencies
 pip install streamlit pywebview
 
+# 2.5 Optional: install the preferred Qt desktop shell
+pip install PySide6
+
 # 3. Configure API Key
 cp mykey_template.py mykey.py
 # Edit mykey.py and fill in your LLM API Key
@@ -87,6 +90,8 @@ cp mykey_template.py mykey.py
 # 4. Launch
 python launch.pyw
 ```
+
+`launch.pyw` now prefers the Qt desktop frontend when `PySide6` is available, and falls back to the Streamlit + `pywebview` shell otherwise.
 
 Full guide: [GETTING_STARTED.md](GETTING_STARTED.md)
 
@@ -108,10 +113,10 @@ python frontends/tgapp.py
 
 ### Alternative App Frontends
 
-Besides the default Streamlit web UI, you can also try other frontend styles:
+Besides the default launch flow, you can also try other frontend styles directly:
 
 ```bash
-python frontends/qtapp.py                # Qt-based desktop app
+python frontends/qtapp.py                # Qt desktop app with Route Center
 streamlit run frontends/stapp2.py        # Alternative Streamlit UI
 ```
 
@@ -271,6 +276,7 @@ cd GenericAgent
 
 # 2. 安装最小依赖
 pip install streamlit pywebview
+pip install PySide6                      # 可选：启用默认优先的 Qt 桌面壳
 
 # 3. 配置 API Key
 cp mykey_template.py mykey.py
@@ -279,6 +285,8 @@ cp mykey_template.py mykey.py
 # 4. 启动
 python launch.pyw
 ```
+
+如果本机已安装 `PySide6`，`launch.pyw` 会优先进入 Qt 桌面前端；否则自动回退到 `Streamlit + pywebview`。
 
 完整引导流程见 [GETTING_STARTED.md](GETTING_STARTED.md)。
 
@@ -370,10 +378,10 @@ dingtalk_allowed_users = ["your_staff_id"]  # 或 ['*']
 
 ### 其他 App 前端
 
-除默认的 Streamlit Web UI 外，还可以尝试不同风格的前端：
+除默认启动流程外，还可以直接尝试不同风格的前端：
 
 ```bash
-python frontends/qtapp.py                # 基于 Qt 的桌面应用
+python frontends/qtapp.py                # 基于 Qt 的桌面应用（含 Route Center）
 streamlit run frontends/stapp2.py        # 另一种 Streamlit 风格 UI
 ```
 

@@ -979,7 +979,7 @@ def render_sidebar():
         st.rerun()
     st.divider()
     if st.button("重新注入System Prompt"):
-        agent.llmclient.last_tools = ''
+        if hasattr(agent.llmclient, 'last_tools'): agent.llmclient.last_tools = ''
         st.toast("下次将重新注入System Prompt")
 
 with st.sidebar: render_sidebar()

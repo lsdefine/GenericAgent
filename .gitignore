@@ -12,6 +12,7 @@ dist/
 *.egg-info/
 
 .streamlit/
+.ga-switch/
 
 .vscode/
 .idea/

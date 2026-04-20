@@ -1,0 +1,106 @@
+[
+  {
+    "toolSpec": {
+      "name": "check_inventory",
+      "description": "Check inventory status for a product. Returns inventory status (in_stock, low_stock, out_of_stock) and available quantity.",
+      "inputSchema": {
+        "json": {
+          "type": "object",
+          "properties": {
+            "product_id": {
+              "type": "string",
+              "description": "Product identifier (e.g., PROD001, PROD002)"
+            },
+            "quantity_requested": {
+              "type": "integer",
+              "description": "Number of units requested"
+            }
+          },
+          "required": ["product_id", "quantity_requested"]
+        }
+      }
+    }
+  },
+  {
+    "toolSpec": {
+      "name": "validate_customer",
+      "description": "Validate customer account and check for fraud indicators. Returns customer status (approved, review_required, blocked) and customer tier.",
+      "inputSchema": {
+        "json": {
+          "type": "object",
+          "properties": {
+            "customer_id": {
+              "type": "string",
+              "description": "Customer identifier (e.g., CUST001, CUST002)"
+            },
+            "order_total": {
+              "type": "number",
+              "description": "Total order value in dollars"
+            }
+          },
+          "required": ["customer_id", "order_total"]
+        }
+      }
+    }
+  },
+  {
+    "toolSpec": {
+      "name": "calculate_shipping",
+      "description": "Calculate shipping cost and delivery estimate based on destination, weight, and speed.",
+      "inputSchema": {
+        "json": {
+          "type": "object",
+          "properties": {
+            "destination_zip": {
+              "type": "string",
+              "description": "Destination ZIP code (5 digits)"
+            },
+            "package_weight": {
+              "type": "number",
+              "description": "Package weight in pounds"
+            },
+            "shipping_speed": {
+              "type": "string",
+              "description": "Shipping speed option",
+              "enum": ["standard", "express", "overnight"]
+            }
+          },
+          "required": ["destination_zip", "package_weight", "shipping_speed"]
+        }
+      }
+    }
+  },
+  {
+    "toolSpec": {
+      "name": "make_fulfillment_decision",
+      "description": "Make final fulfillment decision based on inventory status, customer status, shipping cost, and order priority. Returns decision: fulfill_immediately, fulfill_delayed, backorder, reject, or manual_review.",
+      "inputSchema": {
+        "json": {
+          "type": "object",
+          "properties": {
+            "inventory_status": {
+              "type": "string",
+              "description": "Inventory status from check_inventory (in_stock, low_stock, out_of_stock, insufficient_stock)",
+              "enum": ["in_stock", "low_stock", "out_of_stock", "insufficient_stock", "product_not_found"]
+            },
+            "customer_status": {
+              "type": "string",
+              "description": "Customer status from validate_customer",
+              "enum": ["approved", "blocked", "review_required", "unknown"]
+            },
+            "shipping_cost": {
+              "type": "number",
+              "description": "Shipping cost from calculate_shipping"
+            },
+            "order_priority": {
+              "type": "string",
+              "description": "Order priority level",
+              "enum": ["normal", "high", "urgent"]
+            }
+          },
+          "required": ["inventory_status", "customer_status", "shipping_cost", "order_priority"]
+        }
+      }
+    }
+  }
+]

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Quarterly Product Report</title>
+</head>
+<body>
+  <main>
+    <h1>Quarterly Product Report</h1>
+    <p id="intro">
+      This page summarizes the initial product review for the quarter and hides
+      the detailed findings until the reader explicitly expands the section.
+    </p>
+    <button id="show-more" onclick="document.getElementById('hidden').style.display='block'; this.style.display='none';">
+      Show more
+    </button>
+    <section id="hidden" style="display:none;">
+      <p>
+        Expanded findings: retention improved by 18% after the onboarding
+        redesign, support tickets dropped for two consecutive months, and the
+        activation funnel showed the strongest gains among first-time users.
+      </p>
+    </section>
+  </main>
+</body>
+</html>

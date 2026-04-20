@@ -1,0 +1,8 @@
+询问形式: 
+PROMPT_TEMPLATE = (
+    "根据sop.txt的指令，使用tools.py里面的工具，"
+    "读取test_set_with_outputs.csv(无答案版)，定位到第{row_no}行数据（跳过表头），"
+    "执行订单履约决策，"
+    "把答案填到该行的最后一列，"
+    "不要修改CSV的其他内容。"
+)

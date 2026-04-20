@@ -1,0 +1,6 @@
+Meeting notes for the tool-efficiency report:
+
+1. GenericAgent currently exposes 7 atomic tools in the main claim, while OpenClaw's source-level built-in registry contains 18 tool factories.
+2. The key argument for the simple-task section is that some OpenClaw tool abilities can still be completed by GA in 1-2 steps through atomic-tool composition.
+3. A subagent-style workflow is also relevant: GA can store how to invoke a subagent in memory and trigger that workflow through code execution when needed.
+4. The report should keep platform-management tools separate from user-facing task-solving tools.

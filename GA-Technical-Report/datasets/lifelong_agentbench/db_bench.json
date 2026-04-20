@@ -1,0 +1,6 @@
+{
+  "initial_user_message": {
+    "role": "user",
+    "content": "You are a SQL expert. I will provide you with a database table and an instruction. Your task is to write a SQL query to accomplish the instruction. Please respond with only the SQL query, enclosed in triple backticks."
+  }
+}

@@ -1,0 +1,6 @@
+Meeting notes for the tool-efficiency report:
+
+1. GenericAgent currently exposes 7 atomic tools in the main claim, while Claude Code's default built-in pool includes many more tools.
+2. The simple-task section should test whether some specialized Claude Code tool abilities can still be completed by GA in 1-2 steps through atomic-tool composition.
+3. A delegated workflow is relevant here: GA can store how to invoke a subagent in memory and trigger that workflow through code execution when needed.
+4. The report should separate platform-management tools from user-facing task-solving tools.

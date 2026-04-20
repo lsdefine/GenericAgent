@@ -1,0 +1,3 @@
+Tool efficiency matters.
+Fewer tools can still cover many tasks.
+Composable atomic tools reduce tool-selection burden.

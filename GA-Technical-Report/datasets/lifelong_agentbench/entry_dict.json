@@ -1,0 +1,6023 @@
+{
+  "0": {
+    "instruction": "Insert a new payment record for member ID 102 with a payment date of '2023-10-15', amount 75, and payment method 'Credit Card' into the membership payments table.",
+    "answer_info": {
+      "direct": null,
+      "md5": "03ae28a165883b32e55865edfcd215a7",
+      "sql": "INSERT INTO membership_payments (member_id, payment_date, amount, payment_method) VALUES (102, '2023-10-15', 75, 'Credit Card');"
+    },
+    "database_name": "test_db",
+    "table_info": {
+      "name": "membership_payments",
+      "column_info_list": [
+        {
+          "name": "payment_id",
+          "type": "INT"
+        },
+        {
+          "name": "member_id",
+          "type": "INT"
+        },
+        {
+          "name": "payment_date",
+          "type": "TEXT"
+        },
+        {
+          "name": "amount",
+          "type": "INT"
+        },
+        {
+          "name": "payment_method",
+          "type": "TEXT"
+        }
+      ],
+      "row_list": [
+        [
+          1,
+          101,
+          "2023-01-05",
+          50,
+          "Cash"
+        ],
+        [
+          2,
+          102,
+          "2023-02-10",
+          60,
+          "Debit Card"
+        ],
+        [
+          3,
+          103,
+          "2023-03-15",
+          80,
+          "Credit Card"
+        ],
+        [
+          4,
+          104,
+          "2023-04-20",
+          70,
+          "Bank Transfer"
+        ],
+        [
+          5,
+          102,
+          "2023-05-25",
+          65,
+          "Debit Card"
+        ],
+        [
+          6,
+          105,
+          "2023-06-30",
+          90,
+          "Credit Card"
+        ],
+        [
+          7,
+          106,
+          "2023-07-12",
+          55,
+          "Cash"
+        ],
+        [
+          8,
+          107,
+          "2023-08-18",
+          85,
+          "Online Payment"
+        ],
+        [
+          9,
+          108,
+          "2023-09-22",
+          95,
+          "Check"
+        ],
+        [
+          10,
+          109,
+          "2023-10-01",
+          60,
+          "Debit Card"
+        ],
+        [
+          11,
+          110,
+          "2023-11-05",
+          75,
+          "Credit Card"
+        ],
+        [
+          12,
+          111,
+          "2023-12-10",
+          100,
+          "Bank Transfer"
+        ],
+        [
+          13,
+          112,
+          "2023-01-15",
+          50,
+          "Cash"
+        ],
+        [
+          14,
+          113,
+          "2023-02-20",
+          70,
+          "Debit Card"
+        ],
+        [
+          15,
+          114,
+          "2023-03-25",
+          80,
+          "Credit Card"
+        ],
+        [
+          16,
+          115,
+          "2023-04-30",
+          65,
+          "Online Payment"
+        ],
+        [
+          17,
+          116,
+          "2023-05-05",
+          55,
+          "Check"
+        ],
+        [
+          18,
+          117,
+          "2023-06-10",
+          85,
+          "Cash"
+        ],
+        [
+          19,
+          118,
+          "2023-07-15",
+          90,
+          "Debit Card"
+        ],
+        [
+          20,
+          119,
+          "2023-08-20",
+          75,
+          "Credit Card"
+        ],
+        [
+          21,
+          120,
+          "2023-09-25",
+          60,
+          "Bank Transfer"
+        ],
+        [
+          22,
+          121,
+          "2023-10-05",
+          95,
+          "Online Payment"
+        ],
+        [
+          23,
+          122,
+          "2023-11-10",
+          70,
+          "Check"
+        ],
+        [
+          24,
+          123,
+          "2023-12-15",
+          80,
+          "Cash"
+        ],
+        [
+          25,
+          124,
+          "2023-01-20",
+          65,
+          "Debit Card"
+        ]
+      ]
+    },
+    "skill_list": [
+      "insert"
+    ]
+  },
+  "1": {
+    "instruction": "Which customers have given a rating of 4 or higher? Return the customer ID, rating, and comments, limited to 5 entries.",
+    "answer_info": {
+      "direct": [
+        [
+          1001,
+          5,
+          "Excellent service"
+        ],
+        [
+          1002,
+          4,
+          "Good experience"
+        ],
+        [
+          1003,
+          5,
+          "Fast delivery"
+        ],
+        [
+          1004,
+          4,
+          "Helpful staff"
+        ],
+        [
+          1005,
+          5,
+          "Smooth process"
+        ]
+      ],
+      "md5": null,
+      "sql": "SELECT customer_id, rating, comments FROM customer_feedback WHERE rating >= 4 LIMIT 5;"
+    },
+    "database_name": "test_db",
+    "table_info": {
+      "name": "customer_feedback",
+      "column_info_list": [
+        {
+          "name": "feedback_id",
+          "type": "INT"
+        },
+        {
+          "name": "customer_id",
+          "type": "INT"
+        },
+        {
+          "name": "rental_id",
+          "type": "INT"
+        },
+        {
+          "name": "rating",
+          "type": "INT"
+        },
+        {
+          "name": "comments",
+          "type": "TEXT"
+        },
+        {
+          "name": "feedback_date",
+          "type": "TEXT"
+        }
+      ],
+      "row_list": [
+        [
+          1,
+          1001,
+          5001,
+          5,
+          "Excellent service",
+          "2023-01-15"
+        ],
+        [
+          2,
+          1002,
+          5002,
+          4,
+          "Good experience",
+          "2023-02-20"
+        ],
+        [
+          3,
+          1003,
+          5003,
+          5,
+          "Fast delivery",
+          "2023-03-10"
+        ],
+        [
+          4,
+          1004,
+          5004,
+          4,
+          "Helpful staff",
+          "2023-04-05"
+        ],
+        [
+          5,
+          1005,
+          5005,
+          5,
+          "Smooth process",
+          "2023-05-12"
+        ],
+        [
+          6,
+          1006,
+          5006,
+          4,
+          "Easy to use",
+          "2023-06-18"
+        ],
+        [
+          7,
+          1007,
+          5007,
+          5,
+          "Highly recommend",
+          "2023-07-22"
+        ],
+        [
+          8,
+          1008,
+          5008,
+          4,
+          "Good value",
+          "2023-08-30"
+        ],
+        [
+          9,
+          1009,
+          5009,
+          5,
+          "Impressed",
+          "2023-09-14"
+        ],
+        [
+          10,
+          1010,
+          5010,
+          4,
+          "Met expectations",
+          "2023-10-25"
+        ],
+        [
+          11,
+          1011,
+          5011,
+          3,
+          "Average experience",
+          "2023-11-05"
+        ],
+        [
+          12,
+          1012,
+          5012,
+          2,
+          "Could improve",
+          "2023-12-10"
+        ],
+        [
+          13,
+          1013,
+          5013,
+          1,
+          "Disappointing",
+          "2024-01-03"
+        ],
+        [
+          14,
+          1014,
+          5014,
+          3,
+          "Not bad",
+          "2024-02-14"
+        ],
+        [
+          15,
+          1015,
+          5015,
+          2,
+          "Needs work",
+          "2024-03-20"
+        ],
+        [
+          16,
+          1016,
+          5016,
+          1,
+          "Poor quality",
+          "2024-04-25"
+        ],
+        [
+          17,
+          1017,
+          5017,
+          3,
+          "Okay service",
+          "2024-05-30"
+        ],
+        [
+          18,
+          1018,
+          5018,
+          2,
+          "Late delivery",
+          "2024-06-05"
+        ],
+        [
+          19,
+          1019,
+          5019,
+          1,
+          "Unhappy",
+          "2024-07-10"
+        ],
+        [
+          20,
+          1020,
+          5020,
+          3,
+          "Mediocre",
+          "2024-08-15"
+        ],
+        [
+          21,
+          1001,
+          5021,
+          5,
+          "Outstanding support",
+          "2024-09-20"
+        ],
+        [
+          22,
+          1002,
+          5022,
+          4,
+          "Satisfied",
+          "2024-10-25"
+        ],
+        [
+          23,
+          1003,
+          5023,
+          5,
+          "Top-notch",
+          "2024-11-30"
+        ],
+        [
+          24,
+          1004,
+          5024,
+          4,
+          "Reliable",
+          "2024-12-01"
+        ],
+        [
+          25,
+          1005,
+          5025,
+          5,
+          "Exceptional",
+          "2025-01-05"
+        ]
+      ]
+    },
+    "skill_list": [
+      "limit_only",
+      "select",
+      "where_single_condition"
+    ]
+  },
+  "2": {
+    "instruction": "What are the statuses and their total amounts owed for the tax year 2023 where the status is either 'unpaid' or 'pending'? Return each status and the corresponding total amount owed, grouped by status, ordered by status in descending order and total owed in ascending order.",
+    "answer_info": {
+      "direct": [
+        [
+          "unpaid",
+          6800.0
+        ],
+        [
+          "pending",
+          6100.0
+        ]
+      ],
+      "md5": null,
+      "sql": "SELECT status, SUM(amount_owed) AS total_owed FROM tax_records WHERE tax_year = 2023 AND status IN ('unpaid', 'pending') GROUP BY status ORDER BY status DESC, total_owed ASC;"
+    },
+    "database_name": "test_db",
+    "table_info": {
+      "name": "tax_records",
+      "column_info_list": [
+        {
+          "name": "taxpayer_id",
+          "type": "INT"
+        },
+        {
+          "name": "name",
+          "type": "TEXT"
+        },
+        {
+          "name": "tax_year",
+          "type": "INT"
+        },
+        {
+          "name": "amount_owed",
+          "type": "INT"
+        },
+        {
+          "name": "status",
+          "type": "TEXT"
+        },
+        {
+          "name": "filing_date",
+          "type": "TEXT"
+        }
+      ],
+      "row_list": [
+        [
+          1,
+          "John Doe",
+          2023,
+          200,
+          "unpaid",
+          "2023-01-15"
+        ],
+        [
+          2,
+          "Jane Smith",
+          2023,
+          300,
+          "unpaid",
+          "2023-02-20"
+        ],
+        [
+          3,
+          "Bob Johnson",
+          2023,
+          400,
+          "unpaid",
+          "2023-03-10"
+        ],
+        [
+          4,
+          "Alice Brown",
+          2023,
+          500,
+          "unpaid",
+          "2023-04-05"
+        ],
+        [
+          5,
+          "Charlie Green",
+          2023,
+          600,
+          "unpaid",
+          "2023-05-12"
+        ],
+        [
+          6,
+          "Dana White",
+          2023,
+          100,
+          "pending",
+          "2023-06-01"
+        ],
+        [
+          7,
+          "Eve Black",
+          2023,
+          150,
+          "pending",
+          "2023-07-08"
+        ],
+        [
+          8,
+          "Frank Grey",
+          2023,
+          200,
+          "pending",
+          "2023-08-15"
+        ],
+        [
+          9,
+          "Grace Blue",
+          2023,
+          250,
+          "pending",
+          "2023-09-22"
+        ],
+        [
+          10,
+          "Henry Yellow",
+          2023,
+          300,
+          "pending",
+          "2023-10-30"
+        ],
+        [
+          11,
+          "Ivy Red",
+          2022,
+          700,
+          "unpaid",
+          "2022-11-05"
+        ],
+        [
+          12,
+          "Jack Orange",
+          2023,
+          800,
+          "paid",
+          "2023-12-01"
+        ],
+        [
+          13,
+          "Karen Purple",
+          2021,
+          900,
+          "pending",
+          "2021-10-10"
+        ],
+        [
+          14,
+          "Leo Pink",
+          2020,
+          1000,
+          "processed",
+          "2020-09-09"
+        ],
+        [
+          15,
+          "Mia Teal",
+          2023,
+          1100,
+          "processed",
+          "2023-08-08"
+        ],
+        [
+          16,
+          "Nick Lime",
+          2022,
+          1200,
+          "paid",
+          "2022-07-07"
+        ],
+        [
+          17,
+          "Olivia Cyan",
+          2023,
+          1300,
+          "unpaid",
+          "2023-06-06"
+        ],
+        [
+          18,
+          "Paul Magenta",
+          2023,
+          1400,
+          "pending",
+          "2023-05-05"
+        ],
+        [
+          19,
+          "Quinn Gold",
+          2023,
+          1500,
+          "unpaid",
+          "2023-04-04"
+        ],
+        [
+          20,
+          "Rita Silver",
+          2023,
+          1600,
+          "pending",
+          "2023-03-03"
+        ],
+        [
+          21,
+          "Sam Bronze",
+          2022,
+          1700,
+          "unpaid",
+          "2022-02-02"
+        ],
+        [
+          22,
+          "Tina Coral",
+          2023,
+          1800,
+          "paid",
+          "2023-01-01"
+        ],
+        [
+          23,
+          "Ugo Violet",
+          2021,
+          1900,
+          "pending",
+          "2021-12-12"
+        ],
+        [
+          24,
+          "Vera Indigo",
+          2023,
+          2000,
+          "unpaid",
+          "2023-11-11"
+        ],
+        [
+          25,
+          "Wade Ruby",
+          2023,
+          2100,
+          "pending",
+          "2023-10-10"
+        ]
+      ]
+    },
+    "skill_list": [
+      "column_alias",
+      "group_by_single_column",
+      "order_by_multiple_columns_different_directions",
+      "select",
+      "where_multiple_conditions"
+    ]
+  },
+  "3": {
+    "instruction": "Update the status to 'approved' for submissions that are articles, have a word count greater than 1000, and have not been reviewed.",
+    "answer_info": {
+      "direct": null,
+      "md5": "f3eb280929ba300b3efd51f80499f550",
+      "sql": "UPDATE media_submissions AS ms SET status = 'approved' WHERE ms.submission_type = 'article' AND ms.word_count > 1000 AND ms.reviewed = false;"
+    },
+    "database_name": "test_db",
+    "table_info": {
+      "name": "media_submissions",
+      "column_info_list": [
+        {
+          "name": "submission_id",
+          "type": "INT"
+        },
+        {
+          "name": "submission_type",
+          "type": "TEXT"
+        },
+        {
+          "name": "author_id",
+          "type": "INT"
+        },
+        {
+          "name": "title",
+          "type": "TEXT"
+        },
+        {
+          "name": "word_count",
+          "type": "INT"
+        },
+        {
+          "name": "status",
+          "type": "TEXT"
+        },
+        {
+          "name": "reviewed",
+          "type": "INT"
+        }
+      ],
+      "row_list": [
+        [
+          1,
+          "article",
+          101,
+          "Exploring Space",
+          1200,
+          "pending",
+          0
+        ],
+        [
+          2,
+          "article",
+          102,
+          "AI Innovations",
+          1500,
+          "pending",
+          0
+        ],
+        [
+          3,
+          "article",
+          103,
+          "Climate Change",
+          1300,
+          "pending",
+          0
+        ],
+        [
+          4,
+          "article",
+          104,
+          "Renewable Energy",
+          1100,
+          "draft",
+          0
+        ],
+        [
+          5,
+          "article",
+          105,
+          "Medical Breakthroughs",
+          2000,
+          "pending",
+          0
+        ],
+        [
+          6,
+          "article",
+          106,
+          "Ancient Civilizations",
+          950,
+          "pending",
+          0
+        ],
+        [
+          7,
+          "article",
+          107,
+          "Modern Architecture",
+          1400,
+          "rejected",
+          0
+        ],
+        [
+          8,
+          "article",
+          108,
+          "Quantum Computing",
+          1800,
+          "pending",
+          1
+        ],
+        [
+          9,
+          "blog",
+          109,
+          "Travel Diaries",
+          800,
+          "pending",
+          0
+        ],
+        [
+          10,
+          "video",
+          110,
+          "Wildlife Documentary",
+          300,
+          "pending",
+          0
+        ],
+        [
+          11,
+          "article",
+          111,
+          "Economic Trends",
+          1600,
+          "pending",
+          0
+        ],
+        [
+          12,
+          "article",
+          112,
+          "Genetic Research",
+          1250,
+          "draft",
+          1
+        ],
+        [
+          13,
+          "podcast",
+          113,
+          "Tech Talks",
+          500,
+          "approved",
+          0
+        ],
+        [
+          14,
+          "article",
+          114,
+          "Marine Biology",
+          1050,
+          "pending",
+          0
+        ],
+        [
+          15,
+          "article",
+          115,
+          "Artificial Intelligence Ethics",
+          1700,
+          "pending",
+          0
+        ],
+        [
+          16,
+          "article",
+          116,
+          "Space Exploration",
+          900,
+          "pending",
+          0
+        ],
+        [
+          17,
+          "blog",
+          117,
+          "Healthy Living Tips",
+          700,
+          "draft",
+          0
+        ],
+        [
+          18,
+          "article",
+          118,
+          "Cybersecurity Threats",
+          1350,
+          "pending",
+          1
+        ],
+        [
+          19,
+          "video",
+          119,
+          "History of Art",
+          400,
+          "pending",
+          0
+        ],
+        [
+          20,
+          "article",
+          120,
+          "Sustainable Agriculture",
+          1150,
+          "rejected",
+          0
+        ],
+        [
+          21,
+          "article",
+          121,
+          "Robotics Advancements",
+          1600,
+          "pending",
+          0
+        ],
+        [
+          22,
+          "podcast",
+          122,
+          "Business Strategies",
+          600,
+          "approved",
+          1
+        ],
+        [
+          23,
+          "article",
+          123,
+          "Nanotechnology",
+          1450,
+          "pending",
+          0
+        ],
+        [
+          24,
+          "blog",
+          124,
+          "Fitness Journey",
+          850,
+          "pending",
+          0
+        ],
+        [
+          25,
+          "article",
+          125,
+          "Global Warming Effects",
+          1300,
+          "pending",
+          0
+        ]
+      ]
+    },
+    "skill_list": [
+      "update",
+      "where_nested_conditions"
+    ]
+  },
+  "4": {
+    "instruction": "What are the warehouse zones, transaction types, and total quantities for transactions that either occurred on or after 2023-01-01 with a transaction type of 'outgoing' or occurred before 2023-01-01 with a quantity greater than 100? Return the results grouped by warehouse zone and transaction type where the total quantity exceeds 500, ordered by warehouse zone in ascending order and total quantity in descending order.",
+    "answer_info": {
+      "direct": [
+        [
+          "Central",
+          "outgoing",
+          780.0
+        ],
+        [
+          "Central",
+          "incoming",
+          670.0
+        ],
+        [
+          "East",
+          "incoming",
+          1050.0
+        ],
+        [
+          "North",
+          "outgoing",
+          850.0
+        ],
+        [
+          "North",
+          "incoming",
+          550.0
+        ],
+        [
+          "South",
+          "outgoing",
+          1100.0
+        ],
+        [
+          "South",
+          "incoming",
+          550.0
+        ],
+        [
+          "West",
+          "outgoing",
+          1100.0
+        ],
+        [
+          "West",
+          "incoming",
+          550.0
+        ]
+      ],
+      "md5": null,
+      "sql": "SELECT warehouse_zone, transaction_type, SUM(quantity) AS total_quantity FROM inventory_transactions WHERE (transaction_date >= '2023-01-01' AND transaction_type = 'outgoing') OR (transaction_date < '2023-01-01' AND quantity > 100) GROUP BY warehouse_zone, transaction_type HAVING SUM(quantity) > 500 ORDER BY warehouse_zone ASC, total_quantity DESC;"
+    },
+    "database_name": "test_db",
+    "table_info": {
+      "name": "inventory_transactions",
+      "column_info_list": [
+        {
+          "name": "transaction_id",
+          "type": "INT"
+        },
+        {
+          "name": "item_sku",
+          "type": "TEXT"
+        },
+        {
+          "name": "quantity",
+          "type": "INT"
+        },
+        {
+          "name": "transaction_type",
+          "type": "TEXT"
+        },
+        {
+          "name": "transaction_date",
+          "type": "TEXT"
+        },
+        {
+          "name": "warehouse_zone",
+          "type": "TEXT"
+        },
+        {
+          "name": "operator_id",
+          "type": "INT"
+        }
+      ],
+      "row_list": [
+        [
+          1,
+          "SKU001",
+          300,
+          "outgoing",
+          "2023-01-05",
+          "North",
+          101
+        ],
+        [
+          2,
+          "SKU002",
+          250,
+          "outgoing",
+          "2023-02-10",
+          "North",
+          102
+        ],
+        [
+          3,
+          "SKU003",
+          150,
+          "incoming",
+          "2022-12-31",
+          "North",
+          103
+        ],
+        [
+          4,
+          "SKU004",
+          400,
+          "incoming",
+          "2022-11-01",
+          "North",
+          104
+        ],
+        [
+          5,
+          "SKU005",
+          200,
+          "outgoing",
+          "2023-04-01",
+          "South",
+          105
+        ],
+        [
+          6,
+          "SKU006",
+          300,
+          "outgoing",
+          "2023-05-01",
+          "South",
+          106
+        ],
+        [
+          7,
+          "SKU007",
+          150,
+          "incoming",
+          "2022-12-01",
+          "South",
+          107
+        ],
+        [
+          8,
+          "SKU008",
+          400,
+          "incoming",
+          "2022-11-01",
+          "South",
+          108
+        ],
+        [
+          9,
+          "SKU009",
+          200,
+          "outgoing",
+          "2023-01-01",
+          "East",
+          109
+        ],
+        [
+          10,
+          "SKU010",
+          300,
+          "outgoing",
+          "2023-02-01",
+          "East",
+          110
+        ],
+        [
+          11,
+          "SKU011",
+          450,
+          "incoming",
+          "2022-10-01",
+          "East",
+          111
+        ],
+        [
+          12,
+          "SKU012",
+          600,
+          "incoming",
+          "2022-09-01",
+          "East",
+          112
+        ],
+        [
+          13,
+          "SKU013",
+          500,
+          "outgoing",
+          "2023-03-01",
+          "West",
+          113
+        ],
+        [
+          14,
+          "SKU014",
+          600,
+          "outgoing",
+          "2023-04-01",
+          "West",
+          114
+        ],
+        [
+          15,
+          "SKU015",
+          200,
+          "incoming",
+          "2022-08-01",
+          "West",
+          115
+        ],
+        [
+          16,
+          "SKU016",
+          350,
+          "incoming",
+          "2022-07-01",
+          "West",
+          116
+        ],
+        [
+          17,
+          "SKU017",
+          50,
+          "incoming",
+          "2023-01-01",
+          "North",
+          117
+        ],
+        [
+          18,
+          "SKU018",
+          80,
+          "outgoing",
+          "2022-12-31",
+          "South",
+          118
+        ],
+        [
+          19,
+          "SKU019",
+          90,
+          "incoming",
+          "2023-02-01",
+          "East",
+          119
+        ],
+        [
+          20,
+          "SKU020",
+          200,
+          "incoming",
+          "2023-03-01",
+          "West",
+          120
+        ],
+        [
+          21,
+          "SKU021",
+          300,
+          "outgoing",
+          "2023-03-01",
+          "North",
+          121
+        ],
+        [
+          22,
+          "SKU022",
+          600,
+          "outgoing",
+          "2023-01-02",
+          "Central",
+          122
+        ],
+        [
+          23,
+          "SKU023",
+          150,
+          "incoming",
+          "2022-12-30",
+          "Central",
+          123
+        ],
+        [
+          24,
+          "SKU024",
+          400,
+          "incoming",
+          "2022-11-15",
+          "Central",
+          124
+        ],
+        [
+          25,
+          "SKU025",
+          30,
+          "transfer",
+          "2023-01-01",
+          "Central",
+          125
+        ],
+        [
+          26,
+          "SKU026",
+          180,
+          "outgoing",
+          "2023-06-01",
+          "Central",
+          126
+        ],
+        [
+          27,
+          "SKU027",
+          120,
+          "incoming",
+          "2022-10-10",
+          "Central",
+          127
+        ],
+        [
+          28,
+          "SKU028",
+          50,
+          "outgoing",
+          "2022-12-01",
+          "East",
+          128
+        ],
+        [
+          29,
+          "SKU029",
+          600,
+          "outgoing",
+          "2023-01-03",
+          "South",
+          129
+        ],
+        [
+          30,
+          "SKU030",
+          100,
+          "incoming",
+          "2022-11-01",
+          "West",
+          130
+        ]
+      ]
+    },
+    "skill_list": [
+      "column_alias",
+      "group_by_multiple_columns",
+      "having_single_condition_with_aggregate",
+      "order_by_multiple_columns_different_directions",
+      "select",
+      "where_nested_conditions"
+    ]
+  },
+  "5": {
+    "instruction": "What are the regions and their total sum of deposits where the total deposits exceed 1,000,000 and the average loan amount is less than 50,000? Return the region and total deposits sum, grouped by region, and limit the results to 5 entries.",
+    "answer_info": {
+      "direct": [
+        [
+          "North",
+          1200000.0
+        ],
+        [
+          "South",
+          1200000.0
+        ],
+        [
+          "East",
+          1200000.0
+        ],
+        [
+          "West",
+          1250000.0
+        ],
+        [
+          "Central",
+          1050000.0
+        ]
+      ],
+      "md5": null,
+      "sql": "SELECT region, SUM(total_deposits) AS total_deposits_sum FROM branch_performance GROUP BY region HAVING SUM(total_deposits) > 1000000 AND AVG(average_loan) < 50000 LIMIT 5;"
+    },
+    "database_name": "test_db",
+    "table_info": {
+      "name": "branch_performance",
+      "column_info_list": [
+        {
+          "name": "branch_id",
+          "type": "INT"
+        },
+        {
+          "name": "region",
+          "type": "TEXT"
+        },
+        {
+          "name": "total_deposits",
+          "type": "INT"
+        },
+        {
+          "name": "average_loan",
+          "type": "INT"
+        },
+        {
+          "name": "year",
+          "type": "INT"
+        }
+      ],
+      "row_list": [
+        [
+          1,
+          "North",
+          400000,
+          40000,
+          2022
+        ],
+        [
+          2,
+          "North",
+          400000,
+          45000,
+          2021
+        ],
+        [
+          3,
+          "North",
+          400000,
+          35000,
+          2020
+        ],
+        [
+          4,
+          "South",
+          300000,
+          48000,
+          2022
+        ],
+        [
+          5,
+          "South",
+          300000,
+          47000,
+          2021
+        ],
+        [
+          6,
+          "South",
+          300000,
+          49000,
+          2020
+        ],
+        [
+          7,
+          "South",
+          300000,
+          46000,
+          2019
+        ],
+        [
+          8,
+          "East",
+          600000,
+          45000,
+          2022
+        ],
+        [
+          9,
+          "East",
+          600000,
+          45000,
+          2021
+        ],
+        [
+          10,
+          "West",
+          250000,
+          40000,
+          2022
+        ],
+        [
+          11,
+          "West",
+          250000,
+          40000,
+          2021
+        ],
+        [
+          12,
+          "West",
+          250000,
+          40000,
+          2020
+        ],
+        [
+          13,
+          "West",
+          250000,
+          40000,
+          2019
+        ],
+        [
+          14,
+          "West",
+          250000,
+          40000,
+          2018
+        ],
+        [
+          15,
+          "Central",
+          350000,
+          40000,
+          2022
+        ],
+        [
+          16,
+          "Central",
+          350000,
+          50000,
+          2021
+        ],
+        [
+          17,
+          "Central",
+          350000,
+          45000,
+          2020
+        ],
+        [
+          18,
+          "Northwest",
+          500000,
+          40000,
+          2022
+        ],
+        [
+          19,
+          "Northwest",
+          500000,
+          40000,
+          2021
+        ],
+        [
+          20,
+          "Southwest",
+          400000,
+          55000,
+          2022
+        ],
+        [
+          21,
+          "Southwest",
+          400000,
+          55000,
+          2021
+        ],
+        [
+          22,
+          "Southwest",
+          400000,
+          55000,
+          2020
+        ],
+        [
+          23,
+          "Southeast",
+          1100000,
+          60000,
+          2022
+        ],
+        [
+          24,
+          "Northeast",
+          600000,
+          50000,
+          2022
+        ],
+        [
+          25,
+          "Northeast",
+          600000,
+          50000,
+          2021
+        ]
+      ]
+    },
+    "skill_list": [
+      "column_alias",
+      "group_by_single_column",
+      "having_multiple_conditions_with_aggregate",
+      "limit_only",
+      "select"
+    ]
+  },
+  "6": {
+    "instruction": "Which regions have a total data usage exceeding 1000 and an average call duration under 300? Return the region, total data usage, and average call duration, grouped by region. Limit the results to 5 entries starting from the third entry.",
+    "answer_info": {
+      "direct": [
+        [
+          "Central",
+          1200.0,
+          280.0
+        ],
+        [
+          "EastCoast",
+          1100.0,
+          290.0
+        ],
+        [
+          "WestCoast",
+          1100.0,
+          200.0
+        ],
+        [
+          "Midwest",
+          1250.0,
+          290.0
+        ],
+        [
+          "Southwest",
+          1050.0,
+          290.0
+        ]
+      ],
+      "md5": null,
+      "sql": "SELECT region, SUM(data_usage) AS total_data, AVG(call_duration) AS avg_call FROM customer_usage GROUP BY region HAVING SUM(data_usage) > 1000 AND AVG(call_duration) < 300 LIMIT 5 OFFSET 2;"
+    },
+    "database_name": "test_db",
+    "table_info": {
+      "name": "customer_usage",
+      "column_info_list": [
+        {
+          "name": "customer_id",
+          "type": "INT"
+        },
+        {
+          "name": "region",
+          "type": "TEXT"
+        },
+        {
+          "name": "data_usage",
+          "type": "INT"
+        },
+        {
+          "name": "call_duration",
+          "type": "INT"
+        },
+        {
+          "name": "month",
+          "type": "TEXT"
+        }
+      ],
+      "row_list": [
+        [
+          1,
+          "North",
+          400,
+          200,
+          "2023-01-01"
+        ],
+        [
+          2,
+          "North",
+          400,
+          200,
+          "2023-02-01"
+        ],
+        [
+          3,
+          "North",
+          400,
+          200,
+          "2023-03-01"
+        ],
+        [
+          4,
+          "South",
+          600,
+          250,
+          "2023-01-01"
+        ],
+        [
+          5,
+          "South",
+          600,
+          250,
+          "2023-02-01"
+        ],
+        [
+          6,
+          "Central",
+          300,
+          280,
+          "2023-01-01"
+        ],
+        [
+          7,
+          "Central",
+          300,
+          280,
+          "2023-02-01"
+        ],
+        [
+          8,
+          "Central",
+          300,
+          280,
+          "2023-03-01"
+        ],
+        [
+          9,
+          "Central",
+          300,
+          280,
+          "2023-04-01"
+        ],
+        [
+          10,
+          "EastCoast",
+          350,
+          290,
+          "2023-01-01"
+        ],
+        [
+          11,
+          "EastCoast",
+          350,
+          290,
+          "2023-02-01"
+        ],
+        [
+          12,
+          "EastCoast",
+          400,
+          290,
+          "2023-03-01"
+        ],
+        [
+          13,
+          "WestCoast",
+          550,
+          200,
+          "2023-01-01"
+        ],
+        [
+          14,
+          "WestCoast",
+          550,
+          200,
+          "2023-02-01"
+        ],
+        [
+          15,
+          "Midwest",
+          250,
+          290,
+          "2023-01-01"
+        ],
+        [
+          16,
+          "Midwest",
+          250,
+          290,
+          "2023-02-01"
+        ],
+        [
+          17,
+          "Midwest",
+          250,
+          290,
+          "2023-03-01"
+        ],
+        [
+          18,
+          "Midwest",
+          250,
+          290,
+          "2023-04-01"
+        ],
+        [
+          19,
+          "Midwest",
+          250,
+          290,
+          "2023-05-01"
+        ],
+        [
+          20,
+          "Southwest",
+          350,
+          290,
+          "2023-01-01"
+        ],
+        [
+          21,
+          "Southwest",
+          350,
+          290,
+          "2023-02-01"
+        ],
+        [
+          22,
+          "Southwest",
+          350,
+          290,
+          "2023-03-01"
+        ],
+        [
+          23,
+          "East",
+          300,
+          200,
+          "2023-01-01"
+        ],
+        [
+          24,
+          "East",
+          300,
+          200,
+          "2023-02-01"
+        ],
+        [
+          25,
+          "East",
+          300,
+          200,
+          "2023-03-01"
+        ],
+        [
+          26,
+          "West",
+          500,
+          300,
+          "2023-01-01"
+        ],
+        [
+          27,
+          "West",
+          500,
+          310,
+          "2023-02-01"
+        ],
+        [
+          28,
+          "West",
+          500,
+          320,
+          "2023-03-01"
+        ]
+      ]
+    },
+    "skill_list": [
+      "column_alias",
+      "group_by_single_column",
+      "having_multiple_conditions_with_aggregate",
+      "limit_and_offset",
+      "select"
+    ]
+  },
+  "7": {
+    "instruction": "What are the movie titles, total tickets sold, and average ticket price for movies that have sold more than 100 tickets in total and have an average price under 20? Return the title, total sold, and average price, ordered by total sold in descending order and then average price in descending order.",
+    "answer_info": {
+      "direct": [
+        [
+          "Space Warriors",
+          260.0,
+          17.6
+        ],
+        [
+          "The Adventure",
+          185.0,
+          17.0
+        ],
+        [
+          "Ocean Quest",
+          180.0,
+          15.0
+        ],
+        [
+          "Desert Journey",
+          150.0,
+          12.5
+        ]
+      ],
+      "md5": null,
+      "sql": "SELECT movie_title AS title, SUM(quantity) AS total_sold, AVG(price) AS avg_price FROM ticket_sales GROUP BY movie_title HAVING SUM(quantity) > 100 AND AVG(price) < 20 ORDER BY total_sold DESC, avg_price DESC;"
+    },
+    "database_name": "test_db",
+    "table_info": {
+      "name": "ticket_sales",
+      "column_info_list": [
+        {
+          "name": "ticket_id",
+          "type": "INT"
+        },
+        {
+          "name": "customer_name",
+          "type": "TEXT"
+        },
+        {
+          "name": "movie_title",
+          "type": "TEXT"
+        },
+        {
+          "name": "sale_date",
+          "type": "TEXT"
+        },
+        {
+          "name": "price",
+          "type": "INT"
+        },
+        {
+          "name": "quantity",
+          "type": "INT"
+        }
+      ],
+      "row_list": [
+        [
+          1,
+          "Alice",
+          "The Adventure",
+          "2023-01-01",
+          15,
+          40
+        ],
+        [
+          2,
+          "Bob",
+          "The Adventure",
+          "2023-01-02",
+          18,
+          35
+        ],
+        [
+          3,
+          "Charlie",
+          "The Adventure",
+          "2023-01-03",
+          19,
+          45
+        ],
+        [
+          4,
+          "Dave",
+          "The Adventure",
+          "2023-01-04",
+          17,
+          30
+        ],
+        [
+          24,
+          "Xander",
+          "The Adventure",
+          "2023-01-05",
+          16,
+          35
+        ],
+        [
+          5,
+          "Eve",
+          "Mystery Lane",
+          "2023-02-01",
+          20,
+          50
+        ],
+        [
+          6,
+          "Frank",
+          "Mystery Lane",
+          "2023-02-02",
+          21,
+          50
+        ],
+        [
+          7,
+          "Grace",
+          "Mystery Lane",
+          "2023-02-03",
+          20,
+          50
+        ],
+        [
+          8,
+          "Helen",
+          "Romantic Nights",
+          "2023-03-01",
+          18,
+          20
+        ],
+        [
+          9,
+          "Ian",
+          "Romantic Nights",
+          "2023-03-02",
+          17,
+          25
+        ],
+        [
+          10,
+          "Jen",
+          "Romantic Nights",
+          "2023-03-03",
+          19,
+          30
+        ],
+        [
+          11,
+          "Kevin",
+          "Space Warriors",
+          "2023-04-01",
+          16,
+          60
+        ],
+        [
+          12,
+          "Laura",
+          "Space Warriors",
+          "2023-04-02",
+          18,
+          50
+        ],
+        [
+          13,
+          "Mike",
+          "Space Warriors",
+          "2023-04-03",
+          19,
+          40
+        ],
+        [
+          14,
+          "Nina",
+          "Space Warriors",
+          "2023-04-04",
+          17,
+          50
+        ],
+        [
+          25,
+          "Yara",
+          "Space Warriors",
+          "2023-04-05",
+          18,
+          60
+        ],
+        [
+          15,
+          "Oscar",
+          "Ocean Quest",
+          "2023-05-01",
+          15,
+          70
+        ],
+        [
+          16,
+          "Paula",
+          "Ocean Quest",
+          "2023-05-02",
+          16,
+          60
+        ],
+        [
+          17,
+          "Quinn",
+          "Ocean Quest",
+          "2023-05-03",
+          14,
+          50
+        ],
+        [
+          18,
+          "Rachel",
+          "Desert Journey",
+          "2023-06-01",
+          12,
+          80
+        ],
+        [
+          19,
+          "Sam",
+          "Desert Journey",
+          "2023-06-02",
+          13,
+          70
+        ],
+        [
+          20,
+          "Tom",
+          "City Lights",
+          "2023-07-01",
+          20,
+          60
+        ],
+        [
+          21,
+          "Uma",
+          "City Lights",
+          "2023-07-02",
+          22,
+          50
+        ],
+        [
+          22,
+          "Victor",
+          "Mountain High",
+          "2023-08-01",
+          18,
+          30
+        ],
+        [
+          23,
+          "Wendy",
+          "Mountain High",
+          "2023-08-02",
+          17,
+          40
+        ]
+      ]
+    },
+    "skill_list": [
+      "column_alias",
+      "group_by_single_column",
+      "having_multiple_conditions_with_aggregate",
+      "order_by_multiple_columns_same_direction",
+      "select"
+    ]
+  },
+  "8": {
+    "instruction": "Update the average cost to 1200 where the country is 'France' and the popularity rating is greater than 4.",
+    "answer_info": {
+      "direct": null,
+      "md5": "eeeacacab5316c8b3413917942cbf719",
+      "sql": "UPDATE travel_destinations SET average_cost = 1200 WHERE country = 'France' AND popularity_rating > 4;"
+    },
+    "database_name": "test_db",
+    "table_info": {
+      "name": "travel_destinations",
+      "column_info_list": [
+        {
+          "name": "destination_id",
+          "type": "INT"
+        },
+        {
+          "name": "name",
+          "type": "TEXT"
+        },
+        {
+          "name": "country",
+          "type": "TEXT"
+        },
+        {
+          "name": "popularity_rating",
+          "type": "INT"
+        },
+        {
+          "name": "average_cost",
+          "type": "INT"
+        },
+        {
+          "name": "climate_type",
+          "type": "TEXT"
+        }
+      ],
+      "row_list": [
+        [
+          1,
+          "Paris",
+          "France",
+          5,
+          1500,
+          "Temperate"
+        ],
+        [
+          2,
+          "Nice",
+          "France",
+          5,
+          1300,
+          "Mediterranean"
+        ],
+        [
+          3,
+          "Lyon",
+          "France",
+          6,
+          1400,
+          "Continental"
+        ],
+        [
+          4,
+          "Marseille",
+          "France",
+          4,
+          1100,
+          "Mediterranean"
+        ],
+        [
+          5,
+          "Bordeaux",
+          "France",
+          3,
+          1000,
+          "Oceanic"
+        ],
+        [
+          6,
+          "Cannes",
+          "France",
+          4,
+          1250,
+          "Mediterranean"
+        ],
+        [
+          7,
+          "New York City",
+          "USA",
+          5,
+          2000,
+          "Continental"
+        ],
+        [
+          8,
+          "Rome",
+          "Italy",
+          5,
+          1200,
+          "Mediterranean"
+        ],
+        [
+          9,
+          "Tokyo",
+          "Japan",
+          5,
+          1800,
+          "Temperate"
+        ],
+        [
+          10,
+          "Kyoto",
+          "Japan",
+          4,
+          1600,
+          "Temperate"
+        ],
+        [
+          11,
+          "London",
+          "UK",
+          4,
+          1700,
+          "Oceanic"
+        ],
+        [
+          12,
+          "Barcelona",
+          "Spain",
+          5,
+          1100,
+          "Mediterranean"
+        ],
+        [
+          13,
+          "Berlin",
+          "Germany",
+          4,
+          900,
+          "Continental"
+        ],
+        [
+          14,
+          "Amsterdam",
+          "Netherlands",
+          4,
+          1300,
+          "Oceanic"
+        ],
+        [
+          15,
+          "Sydney",
+          "Australia",
+          5,
+          2100,
+          "Subtropical"
+        ],
+        [
+          16,
+          "Toronto",
+          "Canada",
+          3,
+          1400,
+          "Continental"
+        ],
+        [
+          17,
+          "Dubai",
+          "UAE",
+          5,
+          2500,
+          "Arid"
+        ],
+        [
+          18,
+          "Vienna",
+          "Austria",
+          4,
+          1000,
+          "Continental"
+        ],
+        [
+          19,
+          "Prague",
+          "Czechia",
+          4,
+          950,
+          "Continental"
+        ],
+        [
+          20,
+          "Zurich",
+          "Switzerland",
+          5,
+          2200,
+          "Temperate"
+        ],
+        [
+          21,
+          "Monaco",
+          "Monaco",
+          5,
+          3000,
+          "Mediterranean"
+        ],
+        [
+          22,
+          "Brussels",
+          "Belgium",
+          3,
+          850,
+          "Oceanic"
+        ],
+        [
+          23,
+          "Lisbon",
+          "Portugal",
+          4,
+          900,
+          "Mediterranean"
+        ],
+        [
+          24,
+          "Athens",
+          "Greece",
+          5,
+          1150,
+          "Mediterranean"
+        ],
+        [
+          25,
+          "Edinburgh",
+          "UK",
+          4,
+          1200,
+          "Oceanic"
+        ]
+      ]
+    },
+    "skill_list": [
+      "update",
+      "where_multiple_conditions"
+    ]
+  },
+  "9": {
+    "instruction": "What are the order IDs, customer IDs, and total prices of orders with a 'delivered' status? Return the results ordered by total price in descending order and order date in ascending order.",
+    "answer_info": {
+      "direct": [
+        [
+          1000,
+          5,
+          5000
+        ],
+        [
+          1001,
+          3,
+          5000
+        ],
+        [
+          1002,
+          7,
+          4800
+        ],
+        [
+          1003,
+          2,
+          4800
+        ],
+        [
+          1004,
+          8,
+          4600
+        ],
+        [
+          1005,
+          4,
+          4600
+        ],
+        [
+          1006,
+          1,
+          4200
+        ],
+        [
+          1007,
+          6,
+          4200
+        ],
+        [
+          1008,
+          9,
+          4000
+        ],
+        [
+          1009,
+          10,
+          4000
+        ],
+        [
+          1010,
+          5,
+          3800
+        ],
+        [
+          1011,
+          3,
+          3800
+        ],
+        [
+          1012,
+          7,
+          3500
+        ],
+        [
+          1013,
+          2,
+          3500
+        ],
+        [
+          1014,
+          8,
+          3200
+        ]
+      ],
+      "md5": null,
+      "sql": "SELECT order_id, customer_id, total_price FROM order_history WHERE status = 'delivered' ORDER BY total_price DESC, order_date ASC;"
+    },
+    "database_name": "test_db",
+    "table_info": {
+      "name": "order_history",
+      "column_info_list": [
+        {
+          "name": "order_id",
+          "type": "INT"
+        },
+        {
+          "name": "customer_id",
+          "type": "INT"
+        },
+        {
+          "name": "order_date",
+          "type": "TEXT"
+        },
+        {
+          "name": "product_id",
+          "type": "INT"
+        },
+        {
+          "name": "quantity",
+          "type": "INT"
+        },
+        {
+          "name": "total_price",
+          "type": "INT"
+        },
+        {
+          "name": "status",
+          "type": "TEXT"
+        }
+      ],
+      "row_list": [
+        [
+          1000,
+          5,
+          "2023-01-01",
+          101,
+          2,
+          5000,
+          "delivered"
+        ],
+        [
+          1001,
+          3,
+          "2023-01-05",
+          102,
+          1,
+          5000,
+          "delivered"
+        ],
+        [
+          1002,
+          7,
+          "2023-02-10",
+          103,
+          3,
+          4800,
+          "delivered"
+        ],
+        [
+          1003,
+          2,
+          "2023-02-15",
+          104,
+          4,
+          4800,
+          "delivered"
+        ],
+        [
+          1004,
+          8,
+          "2023-03-01",
+          105,
+          2,
+          4600,
+          "delivered"
+        ],
+        [
+          1005,
+          4,
+          "2023-03-02",
+          101,
+          5,
+          4600,
+          "delivered"
+        ],
+        [
+          1006,
+          1,
+          "2023-04-12",
+          102,
+          1,
+          4200,
+          "delivered"
+        ],
+        [
+          1007,
+          6,
+          "2023-04-15",
+          103,
+          3,
+          4200,
+          "delivered"
+        ],
+        [
+          1008,
+          9,
+          "2023-05-20",
+          104,
+          2,
+          4000,
+          "delivered"
+        ],
+        [
+          1009,
+          10,
+          "2023-05-21",
+          105,
+          4,
+          4000,
+          "delivered"
+        ],
+        [
+          1010,
+          5,
+          "2023-06-03",
+          101,
+          1,
+          3800,
+          "delivered"
+        ],
+        [
+          1011,
+          3,
+          "2023-06-05",
+          102,
+          2,
+          3800,
+          "delivered"
+        ],
+        [
+          1012,
+          7,
+          "2023-07-10",
+          103,
+          3,
+          3500,
+          "delivered"
+        ],
+        [
+          1013,
+          2,
+          "2023-07-11",
+          104,
+          1,
+          3500,
+          "delivered"
+        ],
+        [
+          1014,
+          8,
+          "2023-08-22",
+          105,
+          2,
+          3200,
+          "delivered"
+        ],
+        [
+          1015,
+          4,
+          "2023-09-01",
+          101,
+          3,
+          3000,
+          "pending"
+        ],
+        [
+          1016,
+          1,
+          "2023-09-05",
+          102,
+          2,
+          2800,
+          "shipped"
+        ],
+        [
+          1017,
+          6,
+          "2023-10-10",
+          103,
+          4,
+          2700,
+          "processing"
+        ],
+        [
+          1018,
+          9,
+          "2023-10-15",
+          104,
+          1,
+          2500,
+          "cancelled"
+        ],
+        [
+          1019,
+          10,
+          "2023-11-01",
+          105,
+          5,
+          2400,
+          "pending"
+        ],
+        [
+          1020,
+          5,
+          "2023-11-05",
+          101,
+          2,
+          2200,
+          "shipped"
+        ],
+        [
+          1021,
+          3,
+          "2023-12-10",
+          102,
+          3,
+          2100,
+          "processing"
+        ],
+        [
+          1022,
+          7,
+          "2023-12-12",
+          103,
+          1,
+          2000,
+          "cancelled"
+        ],
+        [
+          1023,
+          2,
+          "2024-01-01",
+          104,
+          4,
+          1900,
+          "pending"
+        ],
+        [
+          1024,
+          8,
+          "2024-01-05",
+          105,
+          2,
+          1800,
+          "shipped"
+        ]
+      ]
+    },
+    "skill_list": [
+      "order_by_multiple_columns_different_directions",
+      "select",
+      "where_single_condition"
+    ]
+  },
+  "10": {
+    "instruction": "What are the traveler names, destination cities, start dates, and end dates for all travel itineraries? Return the results ordered first by start date in descending order and then by end date in descending order.",
+    "answer_info": {
+      "direct": [
+        [
+          "Emma",
+          "Paris",
+          "2024-05-20",
+          "2024-05-28"
+        ],
+        [
+          "Liam",
+          "Tokyo",
+          "2024-05-20",
+          "2024-05-26"
+        ],
+        [
+          "Olivia",
+          "New York",
+          "2024-05-20",
+          "2024-05-24"
+        ],
+        [
+          "Noah",
+          "London",
+          "2024-05-19",
+          "2024-05-26"
+        ],
+        [
+          "Ava",
+          "Dubai",
+          "2024-05-19",
+          "2024-05-22"
+        ],
+        [
+          "William",
+          "Sydney",
+          "2024-05-18",
+          "2024-05-23"
+        ],
+        [
+          "Sophia",
+          "Rome",
+          "2024-05-18",
+          "2024-05-21"
+        ],
+        [
+          "James",
+          "Berlin",
+          "2024-05-17",
+          "2024-05-25"
+        ],
+        [
+          "Isabella",
+          "Bangkok",
+          "2024-05-17",
+          "2024-05-20"
+        ],
+        [
+          "Lucas",
+          "Singapore",
+          "2024-05-16",
+          "2024-05-24"
+        ],
+        [
+          "Mia",
+          "Istanbul",
+          "2024-05-16",
+          "2024-05-22"
+        ],
+        [
+          "Benjamin",
+          "Madrid",
+          "2024-05-15",
+          "2024-05-27"
+        ],
+        [
+          "Charlotte",
+          "Vienna",
+          "2024-05-15",
+          "2024-05-25"
+        ],
+        [
+          "Elijah",
+          "Prague",
+          "2024-05-15",
+          "2024-05-23"
+        ],
+        [
+          "Amelia",
+          "Amsterdam",
+          "2023-12-31",
+          "2024-01-05"
+        ],
+        [
+          "Henry",
+          "Seoul",
+          "2023-11-15",
+          "2023-11-20"
+        ],
+        [
+          "Evelyn",
+          "Beijing",
+          "2023-10-10",
+          "2023-10-17"
+        ],
+        [
+          "Alexander",
+          "Mumbai",
+          "2023-09-01",
+          "2023-09-10"
+        ],
+        [
+          "Harper",
+          "Toronto",
+          "2023-08-15",
+          "2023-08-25"
+        ],
+        [
+          "Daniel",
+          "Vancouver",
+          "2023-07-10",
+          "2023-07-20"
+        ]
+      ],
+      "md5": null,
+      "sql": "SELECT traveler_name, destination_city, start_date, end_date FROM travel_itineraries ORDER BY start_date DESC, end_date DESC;"
+    },
+    "database_name": "test_db",
+    "table_info": {
+      "name": "travel_itineraries",
+      "column_info_list": [
+        {
+          "name": "itinerary_id",
+          "type": "INT"
+        },
+        {
+          "name": "traveler_name",
+          "type": "TEXT"
+        },
+        {
+          "name": "destination_city",
+          "type": "TEXT"
+        },
+        {
+          "name": "start_date",
+          "type": "TEXT"
+        },
+        {
+          "name": "end_date",
+          "type": "TEXT"
+        },
+        {
+          "name": "budget",
+          "type": "INT"
+        }
+      ],
+      "row_list": [
+        [
+          1,
+          "Emma",
+          "Paris",
+          "2024-05-20",
+          "2024-05-28",
+          2000
+        ],
+        [
+          2,
+          "Liam",
+          "Tokyo",
+          "2024-05-20",
+          "2024-05-26",
+          2500
+        ],
+        [
+          3,
+          "Olivia",
+          "New York",
+          "2024-05-20",
+          "2024-05-24",
+          1800
+        ],
+        [
+          4,
+          "Noah",
+          "London",
+          "2024-05-19",
+          "2024-05-26",
+          3000
+        ],
+        [
+          5,
+          "Ava",
+          "Dubai",
+          "2024-05-19",
+          "2024-05-22",
+          2200
+        ],
+        [
+          6,
+          "William",
+          "Sydney",
+          "2024-05-18",
+          "2024-05-23",
+          1900
+        ],
+        [
+          7,
+          "Sophia",
+          "Rome",
+          "2024-05-18",
+          "2024-05-21",
+          2100
+        ],
+        [
+          8,
+          "James",
+          "Berlin",
+          "2024-05-17",
+          "2024-05-25",
+          2400
+        ],
+        [
+          9,
+          "Isabella",
+          "Bangkok",
+          "2024-05-17",
+          "2024-05-20",
+          1700
+        ],
+        [
+          10,
+          "Lucas",
+          "Singapore",
+          "2024-05-16",
+          "2024-05-24",
+          2600
+        ],
+        [
+          11,
+          "Mia",
+          "Istanbul",
+          "2024-05-16",
+          "2024-05-22",
+          2300
+        ],
+        [
+          12,
+          "Benjamin",
+          "Madrid",
+          "2024-05-15",
+          "2024-05-27",
+          1950
+        ],
+        [
+          13,
+          "Charlotte",
+          "Vienna",
+          "2024-05-15",
+          "2024-05-25",
+          2050
+        ],
+        [
+          14,
+          "Elijah",
+          "Prague",
+          "2024-05-15",
+          "2024-05-23",
+          2150
+        ],
+        [
+          15,
+          "Amelia",
+          "Amsterdam",
+          "2023-12-31",
+          "2024-01-05",
+          1850
+        ],
+        [
+          16,
+          "Henry",
+          "Seoul",
+          "2023-11-15",
+          "2023-11-20",
+          2450
+        ],
+        [
+          17,
+          "Evelyn",
+          "Beijing",
+          "2023-10-10",
+          "2023-10-17",
+          1750
+        ],
+        [
+          18,
+          "Alexander",
+          "Mumbai",
+          "2023-09-01",
+          "2023-09-10",
+          2550
+        ],
+        [
+          19,
+          "Harper",
+          "Toronto",
+          "2023-08-15",
+          "2023-08-25",
+          2250
+        ],
+        [
+          20,
+          "Daniel",
+          "Vancouver",
+          "2023-07-10",
+          "2023-07-20",
+          2350
+        ]
+      ]
+    },
+    "skill_list": [
+      "order_by_multiple_columns_same_direction",
+      "select"
+    ]
+  },
+  "11": {
+    "instruction": "Update the status to 'Reviewed' for entries where the supplier has a delivery before June 1, 2023, and the quantity is greater than the average quantity of all supplier deliveries. The update applies to entries meeting both conditions.",
+    "answer_info": {
+      "direct": null,
+      "md5": "4bf50802a9e736de632eb2f1f16d9d5d",
+      "sql": "UPDATE supplier_deliveries AS s SET status = 'Reviewed' WHERE s.supplier_id IN (SELECT supplier_id FROM (SELECT supplier_id FROM supplier_deliveries WHERE delivery_date < '2023-06-01') AS tmp) AND s.quantity > (SELECT AVG(quantity) FROM (SELECT quantity FROM supplier_deliveries) AS avg_query);"
+    },
+    "database_name": "test_db",
+    "table_info": {
+      "name": "supplier_deliveries",
+      "column_info_list": [
+        {
+          "name": "delivery_id",
+          "type": "INT"
+        },
+        {
+          "name": "supplier_id",
+          "type": "INT"
+        },
+        {
+          "name": "delivery_date",
+          "type": "TEXT"
+        },
+        {
+          "name": "quantity",
+          "type": "INT"
+        },
+        {
+          "name": "status",
+          "type": "TEXT"
+        }
+      ],
+      "row_list": [
+        [
+          1,
+          100,
+          "2023-05-01",
+          250,
+          "Pending"
+        ],
+        [
+          2,
+          100,
+          "2023-06-02",
+          250,
+          "Pending"
+        ],
+        [
+          3,
+          100,
+          "2023-05-10",
+          150,
+          "Pending"
+        ],
+        [
+          4,
+          200,
+          "2023-04-15",
+          250,
+          "Pending"
+        ],
+        [
+          5,
+          200,
+          "2023-06-05",
+          150,
+          "Pending"
+        ],
+        [
+          6,
+          200,
+          "2023-07-01",
+          150,
+          "Pending"
+        ],
+        [
+          7,
+          300,
+          "2023-05-20",
+          250,
+          "Pending"
+        ],
+        [
+          8,
+          300,
+          "2023-05-25",
+          250,
+          "Pending"
+        ],
+        [
+          9,
+          300,
+          "2023-06-10",
+          150,
+          "Pending"
+        ],
+        [
+          10,
+          300,
+          "2023-07-01",
+          150,
+          "Pending"
+        ],
+        [
+          11,
+          400,
+          "2023-06-10",
+          250,
+          "Pending"
+        ],
+        [
+          12,
+          400,
+          "2023-07-12",
+          150,
+          "Pending"
+        ],
+        [
+          13,
+          400,
+          "2023-06-15",
+          250,
+          "Pending"
+        ],
+        [
+          14,
+          400,
+          "2023-07-20",
+          150,
+          "Pending"
+        ],
+        [
+          15,
+          400,
+          "2023-06-30",
+          250,
+          "Pending"
+        ],
+        [
+          16,
+          500,
+          "2023-06-05",
+          150,
+          "Pending"
+        ],
+        [
+          17,
+          500,
+          "2023-07-01",
+          250,
+          "Pending"
+        ],
+        [
+          18,
+          500,
+          "2023-06-20",
+          150,
+          "Pending"
+        ],
+        [
+          19,
+          500,
+          "2023-07-05",
+          250,
+          "Pending"
+        ],
+        [
+          20,
+          500,
+          "2023-06-25",
+          150,
+          "Pending"
+        ]
+      ]
+    },
+    "skill_list": [
+      "select",
+      "subquery_multiple",
+      "subquery_nested",
+      "table_alias",
+      "update",
+      "where_multiple_conditions"
+    ]
+  },
+  "12": {
+    "instruction": "What are the veterinarian IDs, their average patient weight, and total number of visits for veterinarians with an average patient weight over 20 kg and more than 5 visits? Return the results limited to 10 entries.",
+    "answer_info": {
+      "direct": [
+        [
+          1,
+          22.0,
+          6
+        ],
+        [
+          2,
+          25.0,
+          7
+        ],
+        [
+          5,
+          23.0,
+          6
+        ]
+      ],
+      "md5": null,
+      "sql": "SELECT vet_id, AVG(weight_kg) AS avg_weight, COUNT(*) AS total_visits FROM patient_visits GROUP BY vet_id HAVING AVG(weight_kg) > 20 AND COUNT(*) > 5 LIMIT 10;"
+    },
+    "database_name": "test_db",
+    "table_info": {
+      "name": "patient_visits",
+      "column_info_list": [
+        {
+          "name": "patient_id",
+          "type": "INT"
+        },
+        {
+          "name": "vet_id",
+          "type": "INT"
+        },
+        {
+          "name": "visit_date",
+          "type": "TEXT"
+        },
+        {
+          "name": "weight_kg",
+          "type": "INT"
+        },
+        {
+          "name": "temperature_c",
+          "type": "INT"
+        },
+        {
+          "name": "diagnosis",
+          "type": "TEXT"
+        }
+      ],
+      "row_list": [
+        [
+          1,
+          1,
+          "2023-01-01",
+          22,
+          38,
+          "Checkup"
+        ],
+        [
+          2,
+          1,
+          "2023-01-02",
+          22,
+          39,
+          "Vaccination"
+        ],
+        [
+          3,
+          1,
+          "2023-01-03",
+          22,
+          38,
+          "Follow-up"
+        ],
+        [
+          4,
+          1,
+          "2023-01-04",
+          22,
+          37,
+          "Dental"
+        ],
+        [
+          5,
+          1,
+          "2023-01-05",
+          22,
+          39,
+          "Checkup"
+        ],
+        [
+          6,
+          1,
+          "2023-01-06",
+          22,
+          38,
+          "Vaccination"
+        ],
+        [
+          7,
+          2,
+          "2023-02-01",
+          25,
+          38,
+          "Checkup"
+        ],
+        [
+          8,
+          2,
+          "2023-02-02",
+          25,
+          38,
+          "Vaccination"
+        ],
+        [
+          9,
+          2,
+          "2023-02-03",
+          25,
+          39,
+          "Follow-up"
+        ],
+        [
+          10,
+          2,
+          "2023-02-04",
+          25,
+          38,
+          "Dental"
+        ],
+        [
+          11,
+          2,
+          "2023-02-05",
+          25,
+          37,
+          "Checkup"
+        ],
+        [
+          12,
+          2,
+          "2023-02-06",
+          25,
+          38,
+          "Vaccination"
+        ],
+        [
+          13,
+          2,
+          "2023-02-07",
+          25,
+          39,
+          "Follow-up"
+        ],
+        [
+          14,
+          3,
+          "2023-03-01",
+          21,
+          38,
+          "Checkup"
+        ],
+        [
+          15,
+          3,
+          "2023-03-02",
+          21,
+          39,
+          "Vaccination"
+        ],
+        [
+          16,
+          3,
+          "2023-03-03",
+          21,
+          38,
+          "Follow-up"
+        ],
+        [
+          17,
+          3,
+          "2023-03-04",
+          21,
+          37,
+          "Dental"
+        ],
+        [
+          18,
+          3,
+          "2023-03-05",
+          21,
+          39,
+          "Checkup"
+        ],
+        [
+          19,
+          4,
+          "2023-04-01",
+          19,
+          38,
+          "Checkup"
+        ],
+        [
+          20,
+          4,
+          "2023-04-02",
+          19,
+          39,
+          "Vaccination"
+        ],
+        [
+          21,
+          4,
+          "2023-04-03",
+          19,
+          38,
+          "Follow-up"
+        ],
+        [
+          22,
+          4,
+          "2023-04-04",
+          19,
+          37,
+          "Dental"
+        ],
+        [
+          23,
+          4,
+          "2023-04-05",
+          19,
+          39,
+          "Checkup"
+        ],
+        [
+          24,
+          4,
+          "2023-04-06",
+          19,
+          38,
+          "Vaccination"
+        ],
+        [
+          25,
+          5,
+          "2023-05-01",
+          23,
+          38,
+          "Checkup"
+        ],
+        [
+          26,
+          5,
+          "2023-05-02",
+          23,
+          39,
+          "Vaccination"
+        ],
+        [
+          27,
+          5,
+          "2023-05-03",
+          23,
+          38,
+          "Follow-up"
+        ],
+        [
+          28,
+          5,
+          "2023-05-04",
+          23,
+          37,
+          "Dental"
+        ],
+        [
+          29,
+          5,
+          "2023-05-05",
+          23,
+          39,
+          "Checkup"
+        ],
+        [
+          30,
+          5,
+          "2023-05-06",
+          23,
+          38,
+          "Vaccination"
+        ],
+        [
+          31,
+          6,
+          "2023-06-01",
+          18,
+          38,
+          "Checkup"
+        ],
+        [
+          32,
+          6,
+          "2023-06-02",
+          18,
+          39,
+          "Vaccination"
+        ],
+        [
+          33,
+          6,
+          "2023-06-03",
+          18,
+          38,
+          "Follow-up"
+        ],
+        [
+          34,
+          6,
+          "2023-06-04",
+          18,
+          37,
+          "Dental"
+        ],
+        [
+          35,
+          6,
+          "2023-06-05",
+          18,
+          39,
+          "Checkup"
+        ],
+        [
+          36,
+          7,
+          "2023-07-01",
+          25,
+          38,
+          "Checkup"
+        ],
+        [
+          37,
+          7,
+          "2023-07-02",
+          25,
+          39,
+          "Vaccination"
+        ],
+        [
+          38,
+          7,
+          "2023-07-03",
+          25,
+          38,
+          "Follow-up"
+        ],
+        [
+          39,
+          8,
+          "2023-08-01",
+          22,
+          38,
+          "Checkup"
+        ],
+        [
+          40,
+          8,
+          "2023-08-02",
+          22,
+          39,
+          "Vaccination"
+        ],
+        [
+          41,
+          8,
+          "2023-08-03",
+          22,
+          38,
+          "Follow-up"
+        ],
+        [
+          42,
+          8,
+          "2023-08-04",
+          22,
+          37,
+          "Dental"
+        ]
+      ]
+    },
+    "skill_list": [
+      "column_alias",
+      "group_by_single_column",
+      "having_multiple_conditions_with_aggregate",
+      "limit_only",
+      "select"
+    ]
+  },
+  "13": {
+    "instruction": "What are the names and total amounts spent by owners whose total spending exceeds the average total spending across all owners? Return the owner name and corresponding total spent.",
+    "answer_info": {
+      "direct": [
+        [
+          "Alice",
+          600
+        ],
+        [
+          "Bob",
+          700
+        ],
+        [
+          "Charlie",
+          800
+        ],
+        [
+          "David",
+          550
+        ],
+        [
+          "Eve",
+          650
+        ],
+        [
+          "Fiona",
+          750
+        ],
+        [
+          "George",
+          620
+        ],
+        [
+          "Hannah",
+          580
+        ],
+        [
+          "Ian",
+          630
+        ],
+        [
+          "Jenna",
+          670
+        ]
+      ],
+      "md5": null,
+      "sql": "SELECT owner_name, total_spent FROM pet_owners WHERE total_spent > (SELECT AVG(total_spent) FROM pet_owners);"
+    },
+    "database_name": "test_db",
+    "table_info": {
+      "name": "pet_owners",
+      "column_info_list": [
+        {
+          "name": "owner_id",
+          "type": "INT"
+        },
+        {
+          "name": "owner_name",
+          "type": "TEXT"
+        },
+        {
+          "name": "pet_name",
+          "type": "TEXT"
+        },
+        {
+          "name": "pet_type",
+          "type": "TEXT"
+        },
+        {
+          "name": "last_visit_date",
+          "type": "TEXT"
+        },
+        {
+          "name": "total_spent",
+          "type": "INT"
+        }
+      ],
+      "row_list": [
+        [
+          1,
+          "Alice",
+          "Max",
+          "Dog",
+          "2023-01-15",
+          600
+        ],
+        [
+          2,
+          "Bob",
+          "Bella",
+          "Cat",
+          "2023-02-20",
+          700
+        ],
+        [
+          3,
+          "Charlie",
+          "Lucy",
+          "Dog",
+          "2023-03-10",
+          800
+        ],
+        [
+          4,
+          "David",
+          "Charlie",
+          "Rabbit",
+          "2023-04-05",
+          550
+        ],
+        [
+          5,
+          "Eve",
+          "Luna",
+          "Cat",
+          "2023-05-12",
+          650
+        ],
+        [
+          6,
+          "Fiona",
+          "Milo",
+          "Dog",
+          "2023-06-18",
+          750
+        ],
+        [
+          7,
+          "George",
+          "Zoe",
+          "Bird",
+          "2023-07-22",
+          620
+        ],
+        [
+          8,
+          "Hannah",
+          "Oscar",
+          "Cat",
+          "2023-08-30",
+          580
+        ],
+        [
+          9,
+          "Ian",
+          "Ruby",
+          "Dog",
+          "2023-09-14",
+          630
+        ],
+        [
+          10,
+          "Jenna",
+          "Leo",
+          "Rabbit",
+          "2023-10-25",
+          670
+        ],
+        [
+          11,
+          "Kevin",
+          "Toby",
+          "Dog",
+          "2022-01-05",
+          300
+        ],
+        [
+          12,
+          "Laura",
+          "Sasha",
+          "Cat",
+          "2022-02-10",
+          350
+        ],
+        [
+          13,
+          "Mike",
+          "Gizmo",
+          "Bird",
+          "2022-03-15",
+          400
+        ],
+        [
+          14,
+          "Nina",
+          "Buddy",
+          "Dog",
+          "2022-04-20",
+          250
+        ],
+        [
+          15,
+          "Oscar",
+          "Mia",
+          "Cat",
+          "2022-05-25",
+          200
+        ],
+        [
+          16,
+          "Paul",
+          "Coco",
+          "Rabbit",
+          "2022-06-30",
+          450
+        ],
+        [
+          17,
+          "Quinn",
+          "Roxy",
+          "Dog",
+          "2022-07-05",
+          320
+        ],
+        [
+          18,
+          "Rita",
+          "Simba",
+          "Cat",
+          "2022-08-10",
+          280
+        ],
+        [
+          19,
+          "Steve",
+          "Lola",
+          "Bird",
+          "2022-09-15",
+          370
+        ],
+        [
+          20,
+          "Tina",
+          "Rocky",
+          "Dog",
+          "2022-10-20",
+          330
+        ]
+      ]
+    },
+    "skill_list": [
+      "select",
+      "subquery_single",
+      "where_single_condition"
+    ]
+  },
+  "14": {
+    "instruction": "What are the customer names and seat numbers for tickets where the price is both greater than the average price and less than the maximum price of all tickets? Return the customer name and seat number, ordered by seat number in ascending order.",
+    "answer_info": {
+      "direct": [
+        [
+          "Olivia",
+          10
+        ],
+        [
+          "Noah",
+          11
+        ],
+        [
+          "Ava",
+          12
+        ],
+        [
+          "William",
+          13
+        ],
+        [
+          "Sophia",
+          14
+        ],
+        [
+          "Mike",
+          50
+        ],
+        [
+          "Emma",
+          51
+        ],
+        [
+          "Liam",
+          52
+        ]
+      ],
+      "md5": null,
+      "sql": "SELECT customer_name, seat_number FROM game_tickets WHERE price > (SELECT AVG(price) FROM game_tickets) AND price < (SELECT MAX(price) FROM game_tickets) ORDER BY seat_number ASC;"
+    },
+    "database_name": "test_db",
+    "table_info": {
+      "name": "game_tickets",
+      "column_info_list": [
+        {
+          "name": "ticket_id",
+          "type": "INT"
+        },
+        {
+          "name": "customer_name",
+          "type": "TEXT"
+        },
+        {
+          "name": "game_date",
+          "type": "TEXT"
+        },
+        {
+          "name": "seat_number",
+          "type": "INT"
+        },
+        {
+          "name": "price",
+          "type": "INT"
+        },
+        {
+          "name": "ticket_type",
+          "type": "TEXT"
+        }
+      ],
+      "row_list": [
+        [
+          1,
+          "John",
+          "2023-10-01",
+          100,
+          500,
+          "VIP"
+        ],
+        [
+          2,
+          "Sarah",
+          "2023-10-01",
+          101,
+          500,
+          "VIP"
+        ],
+        [
+          3,
+          "Mike",
+          "2023-10-02",
+          50,
+          400,
+          "Premium"
+        ],
+        [
+          4,
+          "Emma",
+          "2023-10-02",
+          51,
+          400,
+          "Standard"
+        ],
+        [
+          5,
+          "Liam",
+          "2023-10-03",
+          52,
+          400,
+          "Premium"
+        ],
+        [
+          6,
+          "Olivia",
+          "2023-10-03",
+          10,
+          350,
+          "Standard"
+        ],
+        [
+          7,
+          "Noah",
+          "2023-10-04",
+          11,
+          350,
+          "Standard"
+        ],
+        [
+          8,
+          "Ava",
+          "2023-10-04",
+          12,
+          350,
+          "Premium"
+        ],
+        [
+          9,
+          "William",
+          "2023-10-05",
+          13,
+          350,
+          "Standard"
+        ],
+        [
+          10,
+          "Sophia",
+          "2023-10-05",
+          14,
+          350,
+          "VIP"
+        ],
+        [
+          11,
+          "James",
+          "2023-10-06",
+          20,
+          300,
+          "Standard"
+        ],
+        [
+          12,
+          "Isabella",
+          "2023-10-06",
+          21,
+          300,
+          "Standard"
+        ],
+        [
+          13,
+          "Benjamin",
+          "2023-10-07",
+          22,
+          300,
+          "Premium"
+        ],
+        [
+          14,
+          "Mia",
+          "2023-10-07",
+          23,
+          300,
+          "Standard"
+        ],
+        [
+          15,
+          "Lucas",
+          "2023-10-08",
+          24,
+          300,
+          "VIP"
+        ],
+        [
+          16,
+          "Charlotte",
+          "2023-10-08",
+          30,
+          200,
+          "Standard"
+        ],
+        [
+          17,
+          "Henry",
+          "2023-10-09",
+          31,
+          200,
+          "Standard"
+        ],
+        [
+          18,
+          "Amelia",
+          "2023-10-09",
+          32,
+          200,
+          "Premium"
+        ],
+        [
+          19,
+          "Alexander",
+          "2023-10-10",
+          33,
+          200,
+          "Standard"
+        ],
+        [
+          20,
+          "Harper",
+          "2023-10-10",
+          34,
+          200,
+          "VIP"
+        ]
+      ]
+    },
+    "skill_list": [
+      "order_by_single_column",
+      "select",
+      "subquery_multiple",
+      "where_multiple_conditions"
+    ]
+  },
+  "15": {
+    "instruction": "What are the statuses with their average votes and number of requests where the average votes exceed 20 and there are at least 8 requests? Return the status, average votes, and request count, ordered by status descending and request count descending, limited to 5 entries.",
+    "answer_info": {
+      "direct": [
+        [
+          "Under Review",
+          22.0,
+          10
+        ],
+        [
+          "Pending",
+          25.0,
+          9
+        ],
+        [
+          "Closed",
+          21.0,
+          8
+        ]
+      ],
+      "md5": null,
+      "sql": "SELECT status, AVG(votes) AS avg_votes, COUNT(*) AS request_count FROM feature_requests GROUP BY status HAVING AVG(votes) > 20 AND COUNT(*) >= 8 ORDER BY status DESC, request_count DESC LIMIT 5;"
+    },
+    "database_name": "test_db",
+    "table_info": {
+      "name": "feature_requests",
+      "column_info_list": [
+        {
+          "name": "request_id",
+          "type": "INT"
+        },
+        {
+          "name": "title",
+          "type": "TEXT"
+        },
+        {
+          "name": "description",
+          "type": "TEXT"
+        },
+        {
+          "name": "votes",
+          "type": "INT"
+        },
+        {
+          "name": "status",
+          "type": "TEXT"
+        },
+        {
+          "name": "submitted_by",
+          "type": "INT"
+        },
+        {
+          "name": "priority",
+          "type": "TEXT"
+        }
+      ],
+      "row_list": [
+        [
+          1,
+          "Title1",
+          "Description1",
+          20,
+          "Closed",
+          100,
+          "High"
+        ],
+        [
+          2,
+          "Title2",
+          "Description2",
+          22,
+          "Closed",
+          101,
+          "Medium"
+        ],
+        [
+          3,
+          "Title3",
+          "Description3",
+          21,
+          "Closed",
+          102,
+          "Low"
+        ],
+        [
+          4,
+          "Title4",
+          "Description4",
+          19,
+          "Closed",
+          103,
+          "High"
+        ],
+        [
+          5,
+          "Title5",
+          "Description5",
+          23,
+          "Closed",
+          104,
+          "Medium"
+        ],
+        [
+          6,
+          "Title6",
+          "Description6",
+          20,
+          "Closed",
+          105,
+          "Low"
+        ],
+        [
+          7,
+          "Title7",
+          "Description7",
+          22,
+          "Closed",
+          106,
+          "High"
+        ],
+        [
+          8,
+          "Title8",
+          "Description8",
+          21,
+          "Closed",
+          107,
+          "Medium"
+        ],
+        [
+          9,
+          "Title9",
+          "Description9",
+          25,
+          "Pending",
+          108,
+          "High"
+        ],
+        [
+          10,
+          "Title10",
+          "Description10",
+          25,
+          "Pending",
+          109,
+          "Medium"
+        ],
+        [
+          11,
+          "Title11",
+          "Description11",
+          25,
+          "Pending",
+          110,
+          "Low"
+        ],
+        [
+          12,
+          "Title12",
+          "Description12",
+          25,
+          "Pending",
+          111,
+          "High"
+        ],
+        [
+          13,
+          "Title13",
+          "Description13",
+          25,
+          "Pending",
+          112,
+          "Medium"
+        ],
+        [
+          14,
+          "Title14",
+          "Description14",
+          25,
+          "Pending",
+          113,
+          "Low"
+        ],
+        [
+          15,
+          "Title15",
+          "Description15",
+          25,
+          "Pending",
+          114,
+          "High"
+        ],
+        [
+          16,
+          "Title16",
+          "Description16",
+          25,
+          "Pending",
+          115,
+          "Medium"
+        ],
+        [
+          17,
+          "Title17",
+          "Description17",
+          25,
+          "Pending",
+          116,
+          "Low"
+        ],
+        [
+          18,
+          "Title18",
+          "Description18",
+          20,
+          "Under Review",
+          117,
+          "High"
+        ],
+        [
+          19,
+          "Title19",
+          "Description19",
+          22,
+          "Under Review",
+          118,
+          "Medium"
+        ],
+        [
+          20,
+          "Title20",
+          "Description20",
+          24,
+          "Under Review",
+          119,
+          "Low"
+        ],
+        [
+          21,
+          "Title21",
+          "Description21",
+          23,
+          "Under Review",
+          120,
+          "High"
+        ],
+        [
+          22,
+          "Title22",
+          "Description22",
+          21,
+          "Under Review",
+          121,
+          "Medium"
+        ],
+        [
+          23,
+          "Title23",
+          "Description23",
+          22,
+          "Under Review",
+          122,
+          "Low"
+        ],
+        [
+          24,
+          "Title24",
+          "Description24",
+          20,
+          "Under Review",
+          123,
+          "High"
+        ],
+        [
+          25,
+          "Title25",
+          "Description25",
+          23,
+          "Under Review",
+          124,
+          "Medium"
+        ],
+        [
+          26,
+          "Title26",
+          "Description26",
+          24,
+          "Under Review",
+          125,
+          "Low"
+        ],
+        [
+          27,
+          "Title27",
+          "Description27",
+          21,
+          "Under Review",
+          126,
+          "High"
+        ],
+        [
+          28,
+          "Title28",
+          "Description28",
+          18,
+          "Open",
+          127,
+          "High"
+        ],
+        [
+          29,
+          "Title29",
+          "Description29",
+          18,
+          "Open",
+          128,
+          "Medium"
+        ],
+        [
+          30,
+          "Title30",
+          "Description30",
+          18,
+          "Open",
+          129,
+          "Low"
+        ],
+        [
+          31,
+          "Title31",
+          "Description31",
+          18,
+          "Open",
+          130,
+          "High"
+        ],
+        [
+          32,
+          "Title32",
+          "Description32",
+          18,
+          "Open",
+          131,
+          "Medium"
+        ],
+        [
+          33,
+          "Title33",
+          "Description33",
+          18,
+          "Open",
+          132,
+          "Low"
+        ],
+        [
+          34,
+          "Title34",
+          "Description34",
+          18,
+          "Open",
+          133,
+          "High"
+        ],
+        [
+          35,
+          "Title35",
+          "Description35",
+          18,
+          "Open",
+          134,
+          "Medium"
+        ],
+        [
+          36,
+          "Title36",
+          "Description36",
+          18,
+          "Open",
+          135,
+          "Low"
+        ],
+        [
+          37,
+          "Title37",
+          "Description37",
+          18,
+          "Open",
+          136,
+          "High"
+        ],
+        [
+          38,
+          "Title38",
+          "Description38",
+          30,
+          "Resolved",
+          137,
+          "High"
+        ],
+        [
+          39,
+          "Title39",
+          "Description39",
+          30,
+          "Resolved",
+          138,
+          "Medium"
+        ],
+        [
+          40,
+          "Title40",
+          "Description40",
+          30,
+          "Resolved",
+          139,
+          "Low"
+        ],
+        [
+          41,
+          "Title41",
+          "Description41",
+          30,
+          "Resolved",
+          140,
+          "High"
+        ],
+        [
+          42,
+          "Title42",
+          "Description42",
+          30,
+          "Resolved",
+          141,
+          "Medium"
+        ],
+        [
+          43,
+          "Title43",
+          "Description43",
+          30,
+          "Resolved",
+          142,
+          "Low"
+        ],
+        [
+          44,
+          "Title44",
+          "Description44",
+          30,
+          "Resolved",
+          143,
+          "High"
+        ],
+        [
+          45,
+          "Title45",
+          "Description45",
+          15,
+          "Archived",
+          144,
+          "High"
+        ],
+        [
+          46,
+          "Title46",
+          "Description46",
+          15,
+          "Archived",
+          145,
+          "Medium"
+        ],
+        [
+          47,
+          "Title47",
+          "Description47",
+          15,
+          "Archived",
+          146,
+          "Low"
+        ],
+        [
+          48,
+          "Title48",
+          "Description48",
+          15,
+          "Archived",
+          147,
+          "High"
+        ],
+        [
+          49,
+          "Title49",
+          "Description49",
+          15,
+          "Archived",
+          148,
+          "Medium"
+        ],
+        [
+          50,
+          "Title50",
+          "Description50",
+          15,
+          "Archived",
+          149,
+          "Low"
+        ]
+      ]
+    },
+    "skill_list": [
+      "column_alias",
+      "group_by_single_column",
+      "having_multiple_conditions_with_aggregate",
+      "limit_only",
+      "order_by_multiple_columns_same_direction",
+      "select"
+    ]
+  },
+  "16": {
+    "instruction": "What are the makes and models of vehicles with an average daily price greater than 50 and more than 5 vehicles in each group? Return the make, model, and average price, ordered by make in ascending order and average price in descending order, limited to the top 10 entries.",
+    "answer_info": {
+      "direct": [
+        [
+          "BMW",
+          "X5",
+          102.5
+        ],
+        [
+          "Chevrolet",
+          "Silverado",
+          63.3333
+        ],
+        [
+          "Ford",
+          "F-150",
+          77.5
+        ],
+        [
+          "Honda",
+          "Civic",
+          57.5
+        ],
+        [
+          "Hyundai",
+          "Tucson",
+          65.0
+        ],
+        [
+          "Nissan",
+          "Altima",
+          72.5
+        ],
+        [
+          "Toyota",
+          "Camry",
+          90.0
+        ]
+      ],
+      "md5": null,
+      "sql": "SELECT make,model,AVG(price_per_day) AS avg_price FROM vehicle_inventory GROUP BY make,model HAVING AVG(price_per_day)>50 AND COUNT(*)>5 ORDER BY make ASC,avg_price DESC LIMIT 10;"
+    },
+    "database_name": "test_db",
+    "table_info": {
+      "name": "vehicle_inventory",
+      "column_info_list": [
+        {
+          "name": "vehicle_id",
+          "type": "INT"
+        },
+        {
+          "name": "make",
+          "type": "TEXT"
+        },
+        {
+          "name": "model",
+          "type": "TEXT"
+        },
+        {
+          "name": "year",
+          "type": "INT"
+        },
+        {
+          "name": "price_per_day",
+          "type": "INT"
+        },
+        {
+          "name": "available",
+          "type": "INT"
+        }
+      ],
+      "row_list": [
+        [
+          1,
+          "BMW",
+          "X5",
+          2020,
+          100,
+          1
+        ],
+        [
+          2,
+          "BMW",
+          "X5",
+          2019,
+          105,
+          0
+        ],
+        [
+          3,
+          "BMW",
+          "X5",
+          2018,
+          110,
+          1
+        ],
+        [
+          4,
+          "BMW",
+          "X5",
+          2017,
+          95,
+          0
+        ],
+        [
+          5,
+          "BMW",
+          "X5",
+          2016,
+          100,
+          1
+        ],
+        [
+          6,
+          "BMW",
+          "X5",
+          2015,
+          105,
+          0
+        ],
+        [
+          7,
+          "Chevrolet",
+          "Silverado",
+          2021,
+          60,
+          1
+        ],
+        [
+          8,
+          "Chevrolet",
+          "Silverado",
+          2020,
+          65,
+          0
+        ],
+        [
+          9,
+          "Chevrolet",
+          "Silverado",
+          2019,
+          70,
+          1
+        ],
+        [
+          10,
+          "Chevrolet",
+          "Silverado",
+          2018,
+          55,
+          0
+        ],
+        [
+          11,
+          "Chevrolet",
+          "Silverado",
+          2017,
+          60,
+          1
+        ],
+        [
+          12,
+          "Chevrolet",
+          "Silverado",
+          2016,
+          70,
+          0
+        ],
+        [
+          13,
+          "Ford",
+          "F-150",
+          2022,
+          80,
+          1
+        ],
+        [
+          14,
+          "Ford",
+          "F-150",
+          2021,
+          75,
+          0
+        ],
+        [
+          15,
+          "Ford",
+          "F-150",
+          2020,
+          85,
+          1
+        ],
+        [
+          16,
+          "Ford",
+          "F-150",
+          2019,
+          70,
+          0
+        ],
+        [
+          17,
+          "Ford",
+          "F-150",
+          2018,
+          75,
+          1
+        ],
+        [
+          18,
+          "Ford",
+          "F-150",
+          2017,
+          80,
+          0
+        ],
+        [
+          19,
+          "Honda",
+          "Civic",
+          2023,
+          55,
+          1
+        ],
+        [
+          20,
+          "Honda",
+          "Civic",
+          2022,
+          60,
+          0
+        ],
+        [
+          21,
+          "Honda",
+          "Civic",
+          2021,
+          65,
+          1
+        ],
+        [
+          22,
+          "Honda",
+          "Civic",
+          2020,
+          50,
+          0
+        ],
+        [
+          23,
+          "Honda",
+          "Civic",
+          2019,
+          55,
+          1
+        ],
+        [
+          24,
+          "Honda",
+          "Civic",
+          2018,
+          60,
+          0
+        ],
+        [
+          25,
+          "Hyundai",
+          "Tucson",
+          2015,
+          60,
+          1
+        ],
+        [
+          26,
+          "Hyundai",
+          "Tucson",
+          2016,
+          65,
+          0
+        ],
+        [
+          27,
+          "Hyundai",
+          "Tucson",
+          2017,
+          70,
+          1
+        ],
+        [
+          28,
+          "Hyundai",
+          "Tucson",
+          2018,
+          60,
+          0
+        ],
+        [
+          29,
+          "Hyundai",
+          "Tucson",
+          2019,
+          65,
+          1
+        ],
+        [
+          30,
+          "Hyundai",
+          "Tucson",
+          2020,
+          70,
+          0
+        ],
+        [
+          31,
+          "Nissan",
+          "Altima",
+          2015,
+          70,
+          1
+        ],
+        [
+          32,
+          "Nissan",
+          "Altima",
+          2016,
+          75,
+          0
+        ],
+        [
+          33,
+          "Nissan",
+          "Altima",
+          2017,
+          80,
+          1
+        ],
+        [
+          34,
+          "Nissan",
+          "Altima",
+          2018,
+          65,
+          0
+        ],
+        [
+          35,
+          "Nissan",
+          "Altima",
+          2019,
+          70,
+          1
+        ],
+        [
+          36,
+          "Nissan",
+          "Altima",
+          2020,
+          75,
+          0
+        ],
+        [
+          37,
+          "Toyota",
+          "Camry",
+          2015,
+          90,
+          1
+        ],
+        [
+          38,
+          "Toyota",
+          "Camry",
+          2016,
+          85,
+          0
+        ],
+        [
+          39,
+          "Toyota",
+          "Camry",
+          2017,
+          95,
+          1
+        ],
+        [
+          40,
+          "Toyota",
+          "Camry",
+          2018,
+          90,
+          0
+        ],
+        [
+          41,
+          "Toyota",
+          "Camry",
+          2019,
+          85,
+          1
+        ],
+        [
+          42,
+          "Toyota",
+          "Camry",
+          2020,
+          95,
+          0
+        ],
+        [
+          43,
+          "Kia",
+          "Sorento",
+          2021,
+          60,
+          1
+        ],
+        [
+          44,
+          "Kia",
+          "Sorento",
+          2020,
+          60,
+          0
+        ],
+        [
+          45,
+          "Kia",
+          "Sorento",
+          2019,
+          60,
+          1
+        ],
+        [
+          46,
+          "Kia",
+          "Sorento",
+          2018,
+          60,
+          0
+        ],
+        [
+          47,
+          "Kia",
+          "Sorento",
+          2017,
+          60,
+          1
+        ],
+        [
+          48,
+          "Mercedes",
+          "C-Class",
+          2022,
+          50,
+          0
+        ],
+        [
+          49,
+          "Mercedes",
+          "C-Class",
+          2021,
+          50,
+          1
+        ],
+        [
+          50,
+          "Mercedes",
+          "C-Class",
+          2020,
+          50,
+          0
+        ]
+      ]
+    },
+    "skill_list": [
+      "column_alias",
+      "group_by_multiple_columns",
+      "having_multiple_conditions_with_aggregate",
+      "limit_only",
+      "order_by_multiple_columns_different_directions",
+      "select"
+    ]
+  },
+  "17": {
+    "instruction": "What are the locations and statuses where the average budget exceeds 100000 and there are at least 5 projects? Return the location, status, average budget, and total number of projects for each group.",
+    "answer_info": {
+      "direct": [
+        [
+          "New York",
+          "Active",
+          120000.0,
+          5
+        ],
+        [
+          "Chicago",
+          "Completed",
+          110000.0,
+          5
+        ]
+      ],
+      "md5": null,
+      "sql": "SELECT cs.location AS loc, cs.status AS st, AVG(cs.budget) AS avg_budget, COUNT(cs.project_id) AS total_projects FROM construction_site AS cs GROUP BY cs.location, cs.status HAVING AVG(cs.budget) > 100000 AND COUNT(cs.project_id) >= 5;"
+    },
+    "database_name": "test_db",
+    "table_info": {
+      "name": "construction_site",
+      "column_info_list": [
+        {
+          "name": "project_id",
+          "type": "INT"
+        },
+        {
+          "name": "location",
+          "type": "TEXT"
+        },
+        {
+          "name": "status",
+          "type": "TEXT"
+        },
+        {
+          "name": "budget",
+          "type": "INT"
+        },
+        {
+          "name": "start_date",
+          "type": "TEXT"
+        },
+        {
+          "name": "site_manager",
+          "type": "TEXT"
+        }
+      ],
+      "row_list": [
+        [
+          1,
+          "New York",
+          "Active",
+          120000,
+          "2020-01-01",
+          "John Doe"
+        ],
+        [
+          2,
+          "New York",
+          "Active",
+          130000,
+          "2020-02-01",
+          "Alice Smith"
+        ],
+        [
+          3,
+          "New York",
+          "Active",
+          110000,
+          "2020-03-01",
+          "Bob Brown"
+        ],
+        [
+          4,
+          "New York",
+          "Active",
+          140000,
+          "2020-04-01",
+          "Charlie Green"
+        ],
+        [
+          5,
+          "New York",
+          "Active",
+          100000,
+          "2020-05-01",
+          "Dana White"
+        ],
+        [
+          6,
+          "Chicago",
+          "Completed",
+          110000,
+          "2020-06-01",
+          "Eve Black"
+        ],
+        [
+          7,
+          "Chicago",
+          "Completed",
+          120000,
+          "2020-07-01",
+          "Frank Blue"
+        ],
+        [
+          8,
+          "Chicago",
+          "Completed",
+          115000,
+          "2020-08-01",
+          "Grace Yellow"
+        ],
+        [
+          9,
+          "Chicago",
+          "Completed",
+          105000,
+          "2020-09-01",
+          "Henry Red"
+        ],
+        [
+          10,
+          "Chicago",
+          "Completed",
+          100000,
+          "2020-10-01",
+          "Ivy Purple"
+        ],
+        [
+          11,
+          "Los Angeles",
+          "Pending",
+          90000,
+          "2020-11-01",
+          "Jack Grey"
+        ],
+        [
+          12,
+          "Los Angeles",
+          "Pending",
+          90000,
+          "2020-12-01",
+          "Karen Pink"
+        ],
+        [
+          13,
+          "Los Angeles",
+          "Pending",
+          90000,
+          "2021-01-01",
+          "Liam Orange"
+        ],
+        [
+          14,
+          "Los Angeles",
+          "Pending",
+          90000,
+          "2021-02-01",
+          "Mia Brown"
+        ],
+        [
+          15,
+          "Los Angeles",
+          "Pending",
+          90000,
+          "2021-03-01",
+          "Noah Green"
+        ],
+        [
+          16,
+          "Houston",
+          "Active",
+          120000,
+          "2021-04-01",
+          "Olivia Blue"
+        ],
+        [
+          17,
+          "Houston",
+          "Active",
+          120000,
+          "2021-05-01",
+          "Peter White"
+        ],
+        [
+          18,
+          "Houston",
+          "Active",
+          120000,
+          "2021-06-01",
+          "Quinn Black"
+        ],
+        [
+          19,
+          "Houston",
+          "Active",
+          120000,
+          "2021-07-01",
+          "Rachel Red"
+        ],
+        [
+          20,
+          "San Francisco",
+          "Inactive",
+          90000,
+          "2021-08-01",
+          "Sam Grey"
+        ],
+        [
+          21,
+          "San Francisco",
+          "Inactive",
+          90000,
+          "2021-09-01",
+          "Tina Pink"
+        ],
+        [
+          22,
+          "San Francisco",
+          "Inactive",
+          90000,
+          "2021-10-01",
+          "Umar Orange"
+        ],
+        [
+          23,
+          "San Francisco",
+          "Inactive",
+          90000,
+          "2021-11-01",
+          "Vera Brown"
+        ],
+        [
+          24,
+          "San Francisco",
+          "Inactive",
+          90000,
+          "2021-12-01",
+          "Will Green"
+        ],
+        [
+          25,
+          "Boston",
+          "Active",
+          80000,
+          "2022-01-01",
+          "Xander Blue"
+        ],
+        [
+          26,
+          "Boston",
+          "Active",
+          80000,
+          "2022-02-01",
+          "Yara White"
+        ],
+        [
+          27,
+          "Boston",
+          "Active",
+          80000,
+          "2022-03-01",
+          "Zane Black"
+        ],
+        [
+          28,
+          "Boston",
+          "Active",
+          80000,
+          "2022-04-01",
+          "Abby Red"
+        ],
+        [
+          29,
+          "Boston",
+          "Active",
+          80000,
+          "2022-05-01",
+          "Ben Purple"
+        ],
+        [
+          30,
+          "Boston",
+          "Active",
+          80000,
+          "2022-06-01",
+          "Cara Grey"
+        ],
+        [
+          31,
+          "Dallas",
+          "Pending",
+          80000,
+          "2022-07-01",
+          "Derek Pink"
+        ],
+        [
+          32,
+          "Dallas",
+          "Pending",
+          80000,
+          "2022-08-01",
+          "Elena Orange"
+        ],
+        [
+          33,
+          "Dallas",
+          "Pending",
+          80000,
+          "2022-09-01",
+          "Finn Brown"
+        ],
+        [
+          34,
+          "Dallas",
+          "Pending",
+          80000,
+          "2022-10-01",
+          "Gina Green"
+        ],
+        [
+          35,
+          "Dallas",
+          "Pending",
+          80000,
+          "2022-11-01",
+          "Hank Blue"
+        ],
+        [
+          36,
+          "Phoenix",
+          "Completed",
+          95000,
+          "2022-12-01",
+          "Iris White"
+        ],
+        [
+          37,
+          "Phoenix",
+          "Completed",
+          95000,
+          "2023-01-01",
+          "Jake Black"
+        ],
+        [
+          38,
+          "Phoenix",
+          "Completed",
+          95000,
+          "2023-02-01",
+          "Kara Red"
+        ],
+        [
+          39,
+          "Phoenix",
+          "Completed",
+          95000,
+          "2023-03-01",
+          "Leo Purple"
+        ],
+        [
+          40,
+          "Phoenix",
+          "Completed",
+          95000,
+          "2023-04-01",
+          "Maya Grey"
+        ]
+      ]
+    },
+    "skill_list": [
+      "column_alias",
+      "group_by_multiple_columns",
+      "having_multiple_conditions_with_aggregate",
+      "select",
+      "table_alias"
+    ]
+  },
+  "18": {
+    "instruction": "What is the average rating for each event? Return the event ID and corresponding average rating, ordered by average rating in descending order.",
+    "answer_info": {
+      "direct": [
+        [
+          104,
+          5.0
+        ],
+        [
+          101,
+          4.5
+        ],
+        [
+          105,
+          4.5
+        ],
+        [
+          102,
+          4.0
+        ],
+        [
+          107,
+          4.0
+        ],
+        [
+          103,
+          3.6667
+        ],
+        [
+          106,
+          3.0
+        ]
+      ],
+      "md5": null,
+      "sql": "SELECT event_id, AVG(rating) AS avg_rating FROM event_feedback GROUP BY event_id ORDER BY avg_rating DESC;"
+    },
+    "database_name": "test_db",
+    "table_info": {
+      "name": "event_feedback",
+      "column_info_list": [
+        {
+          "name": "feedback_id",
+          "type": "INT"
+        },
+        {
+          "name": "event_id",
+          "type": "INT"
+        },
+        {
+          "name": "attendee_id",
+          "type": "INT"
+        },
+        {
+          "name": "rating",
+          "type": "INT"
+        },
+        {
+          "name": "comment",
+          "type": "TEXT"
+        },
+        {
+          "name": "feedback_date",
+          "type": "TEXT"
+        }
+      ],
+      "row_list": [
+        [
+          1,
+          104,
+          1001,
+          5,
+          "Great event",
+          "2023-01-01"
+        ],
+        [
+          2,
+          104,
+          1002,
+          5,
+          "Awesome experience",
+          "2023-01-02"
+        ],
+        [
+          3,
+          104,
+          1003,
+          5,
+          "Loved it",
+          "2023-01-03"
+        ],
+        [
+          4,
+          101,
+          1004,
+          5,
+          "Good session",
+          "2023-02-01"
+        ],
+        [
+          5,
+          101,
+          1005,
+          5,
+          "Very helpful",
+          "2023-02-02"
+        ],
+        [
+          6,
+          101,
+          1006,
+          4,
+          "Informative",
+          "2023-02-03"
+        ],
+        [
+          7,
+          105,
+          1007,
+          5,
+          "Superb workshop",
+          "2023-03-01"
+        ],
+        [
+          8,
+          105,
+          1008,
+          5,
+          "Excellent content",
+          "2023-03-02"
+        ],
+        [
+          9,
+          105,
+          1009,
+          4,
+          "Well organized",
+          "2023-03-03"
+        ],
+        [
+          10,
+          105,
+          1010,
+          4,
+          "Useful tips",
+          "2023-03-04"
+        ],
+        [
+          11,
+          101,
+          1011,
+          4,
+          "Good materials",
+          "2023-04-01"
+        ],
+        [
+          12,
+          102,
+          1012,
+          5,
+          "Engaging speaker",
+          "2023-05-01"
+        ],
+        [
+          13,
+          102,
+          1013,
+          4,
+          "Clear examples",
+          "2023-05-02"
+        ],
+        [
+          14,
+          102,
+          1014,
+          4,
+          "Practical knowledge",
+          "2023-05-03"
+        ],
+        [
+          15,
+          102,
+          1015,
+          3,
+          "Room for improvement",
+          "2023-05-04"
+        ],
+        [
+          16,
+          107,
+          1016,
+          5,
+          "Inspiring talk",
+          "2023-06-01"
+        ],
+        [
+          17,
+          107,
+          1017,
+          3,
+          "Average session",
+          "2023-06-02"
+        ],
+        [
+          18,
+          103,
+          1018,
+          4,
+          "Decent content",
+          "2023-07-01"
+        ],
+        [
+          19,
+          103,
+          1019,
+          4,
+          "Helpful for beginners",
+          "2023-07-02"
+        ],
+        [
+          20,
+          103,
+          1020,
+          3,
+          "Basic info",
+          "2023-07-03"
+        ],
+        [
+          21,
+          106,
+          1021,
+          3,
+          "Needs more depth",
+          "2023-08-01"
+        ],
+        [
+          22,
+          106,
+          1022,
+          3,
+          "Too short",
+          "2023-08-02"
+        ]
+      ]
+    },
+    "skill_list": [
+      "column_alias",
+      "group_by_single_column",
+      "order_by_single_column",
+      "select"
+    ]
+  },
+  "19": {
+    "instruction": "Delete maintenance logs with a cost exceeding 1000, where the logs to delete are selected by first ordering all high-cost logs (cost > 1000) by maintenance date (newest first) and cost (lowest first), then skipping the first 2 entries in this ordered list, and deleting the next 5 entries from the remaining subset.",
+    "answer_info": {
+      "direct": null,
+      "md5": "e585b548bdfaf5afe0b4b23988a3731a",
+      "sql": "DELETE FROM vehicle_maintenance_logs WHERE log_id IN (SELECT log_id FROM (SELECT log_id FROM vehicle_maintenance_logs WHERE cost > 1000 ORDER BY maintenance_date DESC, cost ASC LIMIT 5 OFFSET 2) AS sub);"
+    },
+    "database_name": "test_db",
+    "table_info": {
+      "name": "vehicle_maintenance_logs",
+      "column_info_list": [
+        {
+          "name": "log_id",
+          "type": "INT"
+        },
+        {
+          "name": "vehicle_id",
+          "type": "INT"
+        },
+        {
+          "name": "maintenance_date",
+          "type": "TEXT"
+        },
+        {
+          "name": "service_type",
+          "type": "TEXT"
+        },
+        {
+          "name": "cost",
+          "type": "INT"
+        },
+        {
+          "name": "technician",
+          "type": "TEXT"
+        }
+      ],
+      "row_list": [
+        [
+          1,
+          1,
+          "2024-05-01",
+          "Engine Overhaul",
+          1100,
+          "Tech A"
+        ],
+        [
+          2,
+          1,
+          "2024-05-01",
+          "Transmission Repair",
+          1200,
+          "Tech B"
+        ],
+        [
+          3,
+          2,
+          "2024-04-30",
+          "Brake Replacement",
+          1001,
+          "Tech C"
+        ],
+        [
+          4,
+          2,
+          "2024-04-30",
+          "Suspension Fix",
+          1050,
+          "Tech D"
+        ],
+        [
+          5,
+          3,
+          "2024-04-29",
+          "Exhaust System",
+          1100,
+          "Tech E"
+        ],
+        [
+          6,
+          3,
+          "2024-04-28",
+          "AC Repair",
+          1200,
+          "Tech F"
+        ],
+        [
+          7,
+          4,
+          "2024-04-27",
+          "Electrical Work",
+          1300,
+          "Tech G"
+        ],
+        [
+          8,
+          4,
+          "2024-04-26",
+          "Oil Change",
+          1400,
+          "Tech H"
+        ],
+        [
+          9,
+          5,
+          "2024-04-25",
+          "Tire Replacement",
+          1500,
+          "Tech I"
+        ],
+        [
+          10,
+          5,
+          "2024-04-24",
+          "Battery Replacement",
+          1600,
+          "Tech J"
+        ],
+        [
+          11,
+          1,
+          "2024-04-23",
+          "Oil Change",
+          100,
+          "Tech K"
+        ],
+        [
+          12,
+          2,
+          "2024-04-22",
+          "Tire Rotation",
+          200,
+          "Tech L"
+        ],
+        [
+          13,
+          3,
+          "2024-04-21",
+          "Filter Replacement",
+          300,
+          "Tech M"
+        ],
+        [
+          14,
+          4,
+          "2024-04-20",
+          "Wheel Alignment",
+          400,
+          "Tech N"
+        ],
+        [
+          15,
+          5,
+          "2024-04-19",
+          "Windshield Repair",
+          500,
+          "Tech O"
+        ],
+        [
+          16,
+          1,
+          "2024-04-18",
+          "Light Replacement",
+          600,
+          "Tech P"
+        ],
+        [
+          17,
+          2,
+          "2024-04-17",
+          "Fluid Top-Up",
+          700,
+          "Tech Q"
+        ],
+        [
+          18,
+          3,
+          "2024-04-16",
+          "Battery Check",
+          800,
+          "Tech R"
+        ],
+        [
+          19,
+          4,
+          "2024-04-15",
+          "Diagnostic Test",
+          900,
+          "Tech S"
+        ],
+        [
+          20,
+          5,
+          "2024-04-14",
+          "Spark Plug Change",
+          1000,
+          "Tech T"
+        ],
+        [
+          21,
+          1,
+          "2024-04-13",
+          "Air Filter Change",
+          950,
+          "Tech U"
+        ],
+        [
+          22,
+          2,
+          "2024-04-12",
+          "Coolant Flush",
+          850,
+          "Tech V"
+        ],
+        [
+          23,
+          3,
+          "2024-04-11",
+          "Belt Replacement",
+          750,
+          "Tech W"
+        ],
+        [
+          24,
+          4,
+          "2024-04-10",
+          "Paint Repair",
+          650,
+          "Tech X"
+        ],
+        [
+          25,
+          5,
+          "2024-04-09",
+          "Upholstery Clean",
+          550,
+          "Tech Y"
+        ]
+      ]
+    },
+    "skill_list": [
+      "delete",
+      "select",
+      "subquery_nested",
+      "table_alias",
+      "where_single_condition"
+    ]
+  }
+}

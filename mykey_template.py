@@ -403,3 +403,10 @@ native_oai_config = {
 # dingtalk_client_id = 'your_app_key'
 # dingtalk_client_secret = 'your_app_secret'
 # dingtalk_allowed_users = ['your_staff_id']        # 留空或 ['*'] 表示允许所有钉钉用户
+
+# 可选：Langfuse 追踪。不设此项则不 import langfuse，零影响
+# langfuse_config = {
+#     'public_key': 'pk-lf-...',
+#     'secret_key': 'sk-lf-...',
+#     'host': 'https://cloud.langfuse.com',   # 或自托管地址
+# }

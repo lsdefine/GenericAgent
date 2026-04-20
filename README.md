@@ -6,7 +6,7 @@
 </div>
 
 <p align="center">
-  <a href="#english">English</a> | <a href="#chinese">中文</a> | 📄 <a href="assets/GenericAgent_Technical_Report.pdf">Technical Report</a>
+  <a href="#english">English</a> | <a href="#chinese">中文</a> | 📄 Technical Report:&nbsp;<a href="assets/GenericAgent_Technical_Report.pdf"><img src="https://img.shields.io/badge/-PDF-EA4335?logo=adobeacrobatreader&logoColor=white" alt="Technical Report PDF" height="18"/></a>&nbsp;<a href="https://github.com/JinyiHan99/GA-Technical-Report"><img src="https://img.shields.io/badge/-Code%20%26%20Data-181717?logo=github&logoColor=white" alt="Experiments & Reproduction Repo" height="18"/></a> | 📘 <a href="https://datawhalechina.github.io/hello-generic-agent/">教程</a>
 </p>
 
 ---
@@ -199,6 +199,8 @@ Thanks for the support from the LinuxDo community!
 
 MIT License — see [LICENSE](LICENSE)
 
+*Disclaimer: This project does not build or operate any commercial website. Apart from DintalClaw, no institution, organization, or individual is currently officially authorized to conduct commercial activities under the GenericAgent name.*
+
 
 ---
 <a name="chinese"></a>
@@ -283,6 +285,8 @@ python launch.pyw
 完整引导流程见 [GETTING_STARTED.md](GETTING_STARTED.md)。
 
 📖 新手使用指南（图文版）：[飞书文档](https://my.feishu.cn/wiki/CGrDw0T76iNFuskmwxdcWrpinPb)
+
+📘 完整入门教程（Datawhale 出品）：[Hello GenericAgent](https://datawhalechina.github.io/hello-generic-agent/) · [GitHub](https://github.com/datawhalechina/hello-generic-agent)
 
 ---
 
@@ -458,6 +462,8 @@ GenericAgent 通过**分层记忆 × 最小工具集 × 自主执行循环**完�
 
 ## 📄 许可
 MIT License — 详见 [LICENSE](LICENSE)
+
+*声明：本项目未构建任何商业站点；除 DintalClaw 外，目前未官方授权任何机构、组织或个人以 GenericAgent 名义从事商业活动。*
 
 ## 📈 Star History
 

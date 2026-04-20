@@ -9,11 +9,12 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from llmcore import LLMSession, ToolClient, ClaudeSession, MixinSession, NativeToolClient, NativeClaudeSession, NativeOAISession
 from agent_loop import agent_runner_loop
 from ga import GenericAgentHandler, smart_format, get_global_memory, format_error, consume_file
+from ga_switch import get_service
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 def load_tool_schema(suffix=''):
     global TOOLS_SCHEMA
-    TS = open(os.path.join(script_dir, f'assets/tools_schema{suffix}.json'), 'r', encoding='utf-8').read()
+    with open(os.path.join(script_dir, f'assets/tools_schema{suffix}.json'), 'r', encoding='utf-8') as f: TS = f.read()
     TOOLS_SCHEMA = json.loads(TS if os.name == 'nt' else TS.replace('powershell', 'bash'))
 load_tool_schema()
 
@@ -21,16 +22,24 @@ lang_suffix = '_en' if os.environ.get('GA_LANG', '') == 'en' else ''
 mem_dir = os.path.join(script_dir, 'memory')
 if not os.path.exists(mem_dir): os.makedirs(mem_dir)
 mem_txt = os.path.join(mem_dir, 'global_mem.txt')
-if not os.path.exists(mem_txt): open(mem_txt, 'w', encoding='utf-8').write('# [Global Memory - L2]\n')
+if not os.path.exists(mem_txt):
+    with open(mem_txt, 'w', encoding='utf-8') as f:
+        f.write('# [Global Memory - L2]\n')
 mem_insight = os.path.join(mem_dir, 'global_mem_insight.txt')
 if not os.path.exists(mem_insight):
     t = os.path.join(script_dir, f'assets/global_mem_insight_template{lang_suffix}.txt')
-    open(mem_insight, 'w', encoding='utf-8').write(open(t, encoding='utf-8').read() if os.path.exists(t) else '')
+    template = ''
+    if os.path.exists(t):
+        with open(t, encoding='utf-8') as f:
+            template = f.read()
+    with open(mem_insight, 'w', encoding='utf-8') as f:
+        f.write(template)
 cdp_cfg = os.path.join(script_dir, 'assets/tmwd_cdp_bridge/config.js')
 if not os.path.exists(cdp_cfg):
     try:
         os.makedirs(os.path.dirname(cdp_cfg), exist_ok=True)
-        open(cdp_cfg, 'w', encoding='utf-8').write(f"const TID = '__ljq_{hex(random.randint(0, 99999999))[2:8]}';")
+        with open(cdp_cfg, 'w', encoding='utf-8') as f:
+            f.write(f"const TID = '__ljq_{hex(random.randint(0, 99999999))[2:8]}';")
     except Exception as e: print(f'[WARN] CDP config init failed: {e} — advanced web features (tmwebdriver) will be unavailable.')
 
 def get_system_prompt():
@@ -43,47 +52,180 @@ class GeneraticAgent:
     def __init__(self):
         script_dir = os.path.dirname(os.path.abspath(__file__))
         os.makedirs(os.path.join(script_dir, 'temp'), exist_ok=True)
-        from llmcore import mykeys
-        llm_sessions = []
-        for k, cfg in mykeys.items():
-            if not any(x in k for x in ['api', 'config', 'cookie']): continue
-            try:
-                if 'native' in k and 'claude' in k: llm_sessions += [NativeToolClient(NativeClaudeSession(cfg=cfg))]
-                elif 'native' in k and 'oai' in k: llm_sessions += [NativeToolClient(NativeOAISession(cfg=cfg))]
-                elif 'claude' in k: llm_sessions += [ToolClient(ClaudeSession(cfg=cfg))]
-                elif 'oai' in k: llm_sessions += [ToolClient(LLMSession(cfg=cfg))]
-                elif 'mixin' in k: llm_sessions += [{'mixin_cfg': cfg}]
-            except: pass
-        for i, s in enumerate(llm_sessions):
-            if isinstance(s, dict) and 'mixin_cfg' in s:
-                try:
-                    mixin = MixinSession(llm_sessions, s['mixin_cfg'])
-                    if isinstance(mixin._sessions[0], (NativeClaudeSession, NativeOAISession)): llm_sessions[i] = NativeToolClient(mixin)
-                    else: llm_sessions[i] = ToolClient(mixin)
-                except Exception as e: print(f'[WARN] Failed to init MixinSession with cfg {s["mixin_cfg"]}: {e}')
-        self.llmclients = llm_sessions
         self.lock = threading.Lock()
         self.task_dir = None
         self.history = []
         self.task_queue = queue.Queue() 
         self.is_running = False; self.stop_sig = False
-        self.llm_no = 0;  self.inc_out = False
+        self.llm_no = 0; self.llmclient = None; self.llmclients = []
+        self.config_source = 'legacy'; self.config_meta = {}
+        self.ga_switch = get_service()
+        self.inc_out = False
         self.handler = None; self.verbose = True
-        self.llmclient = self.llmclients[self.llm_no]
+        self._reload_clients(initial=True)
 
-    def next_llm(self, n=-1):
-        self.llm_no = ((self.llm_no + 1) if n < 0 else n) % len(self.llmclients)
-        lastc = self.llmclient
-        self.llmclient = self.llmclients[self.llm_no]
-        self.llmclient.backend.history = lastc.backend.history
-        self.llmclient.last_tools = ''
+    def _sync_tool_schema(self):
         name = self.get_llm_name().lower()
         if 'glm' in name or 'minimax' in name or 'kimi' in name: load_tool_schema('_cn')
         else: load_tool_schema()
-    def list_llms(self): return [(i, self.get_llm_name(b), i == self.llm_no) for i, b in enumerate(self.llmclients)]
-    def get_llm_name(self, b=None):
-        b = self.llmclient if b is None else b
-        return f"{type(b.backend).__name__}/{b.backend.name}" if not isinstance(b, dict) else "BADCONFIG_MIXIN"
+
+    def _tag_client(self, client, *, route_name=None, route_kind='single', backend_kind=None, members=None):
+        client.ga_switch_route_id = getattr(client, 'ga_switch_route_id', None)
+        client.ga_switch_route_name = route_name or getattr(client, 'ga_switch_route_name', getattr(client.backend, 'name', ''))
+        client.ga_switch_route_kind = route_kind
+        client.ga_switch_backend_kind = backend_kind or getattr(client, 'ga_switch_backend_kind', None)
+        client.ga_switch_members = list(members or getattr(client, 'ga_switch_members', []))
+        return client
+
+    def build_llmclients_from_store(self):
+        return self.ga_switch.build_clients_from_store()
+
+    def build_llmclients_from_legacy_mykey(self):
+        from llmcore import mykeys
+        llm_sessions = []
+        for k, cfg in mykeys.items():
+            if not any(x in k for x in ['api', 'config', 'cookie']):
+                continue
+            try:
+                if 'native' in k and 'claude' in k:
+                    llm_sessions.append(self._tag_client(NativeToolClient(NativeClaudeSession(cfg=cfg)), route_name=cfg.get('name') or k, backend_kind='native_claude'))
+                elif 'native' in k and 'oai' in k:
+                    llm_sessions.append(self._tag_client(NativeToolClient(NativeOAISession(cfg=cfg)), route_name=cfg.get('name') or k, backend_kind='native_oai'))
+                elif 'claude' in k:
+                    llm_sessions.append(self._tag_client(ToolClient(ClaudeSession(cfg=cfg)), route_name=cfg.get('name') or k, backend_kind='claude_text'))
+                elif 'oai' in k:
+                    llm_sessions.append(self._tag_client(ToolClient(LLMSession(cfg=cfg)), route_name=cfg.get('name') or k, backend_kind='oai_text'))
+                elif 'mixin' in k:
+                    llm_sessions.append({'mixin_cfg': cfg, 'route_name': cfg.get('name') or k})
+            except Exception as e:
+                print(f'[WARN] Failed to init legacy session {k}: {e}')
+        for i, s in enumerate(llm_sessions):
+            if isinstance(s, dict) and 'mixin_cfg' in s:
+                try:
+                    mixin = MixinSession(llm_sessions, s['mixin_cfg'])
+                    client = NativeToolClient(mixin) if isinstance(mixin._sessions[0], (NativeClaudeSession, NativeOAISession)) else ToolClient(mixin)
+                    llm_sessions[i] = self._tag_client(client, route_name=s['route_name'], route_kind='failover', backend_kind='mixin')
+                except Exception as e:
+                    print(f'[WARN] Failed to init MixinSession with cfg {s["mixin_cfg"]}: {e}')
+        llm_sessions = [s for s in llm_sessions if not isinstance(s, dict)]
+        return llm_sessions, {'source': 'legacy', 'active_index': min(self.llm_no, max(len(llm_sessions) - 1, 0)), 'routes': []}
+
+    def _build_client_set(self):
+        if self.ga_switch.use_structured_config() and self.ga_switch.has_usable_routes():
+            try:
+                clients, meta = self.build_llmclients_from_store()
+                if clients:
+                    meta = dict(meta or {}, source='store')
+                    return clients, meta
+            except Exception as e:
+                print(f'[WARN] Structured config load failed, fallback to legacy: {e}')
+        return self.build_llmclients_from_legacy_mykey()
+
+    def _reload_clients(self, *, initial=False, preserve_history=True):
+        old_client = self.llmclient
+        old_history = getattr(old_client.backend, 'history', None) if old_client and preserve_history else None
+        old_route_id = getattr(old_client, 'ga_switch_route_id', None) if old_client else None
+        old_idx = self.llm_no
+        clients, meta = self._build_client_set()
+        self.llmclients = clients
+        self.config_source = meta.get('source', 'legacy')
+        self.config_meta = meta
+        if not self.llmclients:
+            self.llm_no = 0
+            self.llmclient = None
+            return []
+        target_idx = meta.get('active_index', 0)
+        if not initial and preserve_history:
+            if self.config_source == 'store' and old_route_id is not None:
+                matched_idx = next((i for i, client in enumerate(self.llmclients) if getattr(client, 'ga_switch_route_id', None) == old_route_id), None)
+                if matched_idx is not None:
+                    target_idx = matched_idx
+            elif old_idx < len(self.llmclients):
+                target_idx = old_idx
+        self.llm_no = target_idx % len(self.llmclients)
+        self.llmclient = self.llmclients[self.llm_no]
+        if preserve_history and old_history is not None:
+            self.llmclient.backend.history = old_history
+        if self.config_source == 'store' and getattr(self.llmclient, 'ga_switch_route_id', None) is not None:
+            self.ga_switch.set_active_route(self.llmclient.ga_switch_route_id)
+        self._sync_tool_schema()
+        return self.llmclients
+
+    def next_llm(self, n=-1):
+        if not self.llmclients:
+            self.llmclient = None
+            return None
+        self.llm_no = ((self.llm_no + 1) if n < 0 else n) % len(self.llmclients)
+        lastc = self.llmclient
+        self.llmclient = self.llmclients[self.llm_no]
+        if lastc is not None:
+            self.llmclient.backend.history = lastc.backend.history
+        if hasattr(self.llmclient, 'last_tools'):
+            self.llmclient.last_tools = ''
+        if self.config_source == 'store' and getattr(self.llmclient, 'ga_switch_route_id', None) is not None:
+            self.ga_switch.set_active_route(self.llmclient.ga_switch_route_id)
+        self._sync_tool_schema()
+        return self.llmclient
+
+    def set_active_route(self, route_id_or_idx):
+        if self.config_source == 'store':
+            target_idx = next((i for i, client in enumerate(self.llmclients) if getattr(client, 'ga_switch_route_id', None) == route_id_or_idx), None)
+            if target_idx is None and isinstance(route_id_or_idx, int) and 0 <= route_id_or_idx < len(self.llmclients):
+                target_idx = route_id_or_idx
+            if target_idx is None:
+                raise ValueError(f'Unknown route id: {route_id_or_idx}')
+            self.next_llm(target_idx)
+            return self.describe_llms()[self.llm_no]
+        if not isinstance(route_id_or_idx, int):
+            raise ValueError(f'Legacy mode only supports index switching, got {route_id_or_idx!r}')
+        self.next_llm(route_id_or_idx)
+        return self.describe_llms()[self.llm_no]
+
+    def reload_llm_config(self, preserve_history=True):
+        if self.is_running:
+            raise RuntimeError('Cannot reload LLM config while agent is running.')
+        self._reload_clients(initial=False, preserve_history=preserve_history)
+        return self.describe_llms()
+
+    def describe_llms(self):
+        result = []
+        for idx, client in enumerate(self.llmclients):
+            backend = client.backend
+            diag = backend.describe_diagnostics() if hasattr(backend, 'describe_diagnostics') else {}
+            members = getattr(client, 'ga_switch_members', [])
+            route_name = getattr(client, 'ga_switch_route_name', getattr(backend, 'name', ''))
+            backend_class = type(backend).__name__
+            item = {
+                'idx': idx,
+                'active': idx == self.llm_no,
+                'source': self.config_source,
+                'route_id': getattr(client, 'ga_switch_route_id', None),
+                'name': route_name,
+                'route_kind': getattr(client, 'ga_switch_route_kind', 'single'),
+                'backend_class': backend_class,
+                'backend_kind': getattr(client, 'ga_switch_backend_kind', getattr(backend, 'backend_kind', None)),
+                'provider_id': getattr(backend, 'provider_id', None),
+                'provider_name': getattr(backend, 'provider_name', getattr(backend, 'name', None)),
+                'model': getattr(backend, 'model', None),
+                'api_mode': getattr(backend, 'api_mode', None),
+                'native_tools': isinstance(client, NativeToolClient) or 'Native' in backend_class,
+                'member_names': [m.get('name', '') if isinstance(m, dict) else str(m) for m in members],
+                'active_member_name': getattr(backend, 'active_member_name', getattr(backend, 'name', None)),
+                'last_switch_reason': getattr(backend, 'last_switch_reason', ''),
+                'spring_back_seconds': getattr(backend, '_spring_sec', None),
+            }
+            item.update(diag)
+            result.append(item)
+        return result
+
+    def list_llms(self):
+        return [(item['idx'], f"{item['name']} [{item['backend_class']}/{item.get('provider_name') or self.llmclients[item['idx']].backend.name}]", item['active']) for item in self.describe_llms()]
+
+    def get_llm_name(self):
+        if self.llmclient is None:
+            return 'No LLM'
+        item = self.describe_llms()[self.llm_no]
+        return f"{item['name']} [{item['backend_class']}/{item.get('provider_name') or self.llmclient.backend.name}]"
 
     def abort(self):
         if not self.is_running: return

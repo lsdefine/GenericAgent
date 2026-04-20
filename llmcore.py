@@ -1,5 +1,6 @@
 import os, json, re, time, requests, sys, threading, urllib3, base64, mimetypes, uuid
 from datetime import datetime
+from ga_switch.diagnostics import classify_error, normalize_message, utcnow_iso
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 _RESP_CACHE_KEY = str(uuid.uuid4()) 
 
@@ -253,7 +254,7 @@ def _stamp_oai_cache_markers(messages, model):
 
 def _openai_stream(api_base, api_key, messages, model, api_mode='chat_completions', *,
                    temperature=0.5, max_tokens=None, tools=None, reasoning_effort=None,
-                   max_retries=0, connect_timeout=10, read_timeout=300, proxies=None):
+                   max_retries=0, connect_timeout=10, read_timeout=300, proxies=None, session=None):
     """Shared OpenAI-compatible streaming request with retry. Yields text chunks, returns list[content_block]."""
     ml = model.lower()
     if 'kimi' in ml or 'moonshot' in ml: temperature = 1
@@ -287,6 +288,8 @@ def _openai_stream(api_base, api_key, messages, model, api_mode='chat_completion
         try: ra = float((resp.headers or {}).get("retry-after"))
         except: ra = None
         return max(0.5, ra if ra is not None else min(30.0, 1.5 * (2 ** attempt)))
+    started_at = time.perf_counter()
+    first_chunk_at = None
     for attempt in range(max_retries + 1):
         streamed = False
         try:
@@ -306,8 +309,23 @@ def _openai_stream(api_base, api_key, messages, model, api_mode='chat_completion
                         e._err_body = err_body; raise
                 gen = _parse_openai_sse(r.iter_lines(), api_mode)
                 try:
-                    while True: streamed = True; yield next(gen)
+                    while True:
+                        chunk = next(gen)
+                        streamed = True
+                        if first_chunk_at is None:
+                            first_chunk_at = time.perf_counter()
+                        yield chunk
                 except StopIteration as e:
+                    if session is not None:
+                        session._record_success(
+                            status_code=r.status_code,
+                            message="OK",
+                            extra={
+                                "latency_ms": int((time.perf_counter() - started_at) * 1000),
+                                "ttfb_ms": int((((first_chunk_at or time.perf_counter()) - started_at) * 1000)),
+                                "api_mode": api_mode,
+                            },
+                        )
                     return e.value or []
         except requests.HTTPError as e:
             resp = getattr(e, "response", None); status = getattr(resp, "status_code", None)
@@ -321,6 +339,8 @@ def _openai_stream(api_base, api_key, messages, model, api_mode='chat_completion
             try: h = resp.headers or {}; rid = h.get("x-request-id","") or h.get("request-id",""); ra = h.get("retry-after",""); ct = h.get("content-type","")
             except: pass
             err = f"Error: HTTP {status} {e}; content_type: {ct or '<empty>'}; retry_after: {ra or '<empty>'}; request_id: {rid or '<empty>'}; body: {body or '<empty>'}"
+            if session is not None:
+                session._record_error(err, status_code=status, body=body, exc_type=type(e).__name__, extra={"request_id": rid, "retry_after": ra, "content_type": ct, "api_mode": api_mode})
             yield err; return [{"type": "text", "text": err}]
         except (requests.Timeout, requests.ConnectionError) as e:
             if attempt < max_retries and not streamed:
@@ -328,9 +348,13 @@ def _openai_stream(api_base, api_key, messages, model, api_mode='chat_completion
                 print(f"[LLM Retry] {type(e).__name__}, retry in {d:.1f}s ({attempt+1}/{max_retries+1})")
                 time.sleep(d); continue
             err = f"Error: {type(e).__name__}: {e}"
+            if session is not None:
+                session._record_error(err, exc_type=type(e).__name__, extra={"api_mode": api_mode})
             yield err; return [{"type": "text", "text": err}]
         except Exception as e:
             err = f"Error: {e}"
+            if session is not None:
+                session._record_error(err, exc_type=type(e).__name__, extra={"api_mode": api_mode})
             yield err; return [{"type": "text", "text": err}]
 
 def _to_responses_input(messages):
@@ -424,7 +448,7 @@ class BaseSession:
         self.max_retries = max(0, int(cfg.get('max_retries', 1)))
         self.stream = cfg.get('stream', True)
         default_ct, default_rt = (5, 30) if self.stream else (10, 240)
-        self.connect_timeout = max(1, int(cfg.get('timeout', default_ct)))
+        self.connect_timeout = max(1, int(cfg.get('timeout', cfg.get('connect_timeout', default_ct))))
         self.read_timeout = max(5, int(cfg.get('read_timeout', default_rt)))
         def _enum(key, valid):
             v = cfg.get(key); v = None if v is None else str(v).strip().lower()
@@ -436,6 +460,72 @@ class BaseSession:
         self.api_mode = 'responses' if mode in ('responses', 'response') else 'chat_completions'
         self.temperature = cfg.get('temperature', 1)
         self.max_tokens = cfg.get('max_tokens', 8192)
+        self.last_error_kind = None
+        self.last_error_message = ''
+        self.last_error_at = None
+        self.last_ok_at = None
+        self.last_status_code = None
+        self.last_latency_ms = None
+        self.last_ttfb_ms = None
+        self.route_id = cfg.get('route_id')
+        self.route_name = cfg.get('route_name')
+        self.route_kind = cfg.get('route_kind')
+        self.provider_id = cfg.get('provider_id')
+        self.provider_name = cfg.get('provider_name', self.name)
+        self.backend_kind = cfg.get('backend_kind')
+        self._diagnostic_recorder = cfg.get('_diagnostic_recorder')
+
+    def _record_success(self, status_code=200, message='OK', extra=None):
+        extra = dict(extra or {})
+        self.last_status_code = status_code
+        self.last_ok_at = utcnow_iso()
+        self.last_error_kind = None
+        self.last_error_message = ''
+        if 'latency_ms' in extra:
+            self.last_latency_ms = extra.get('latency_ms')
+        if 'ttfb_ms' in extra:
+            self.last_ttfb_ms = extra.get('ttfb_ms')
+        if callable(self._diagnostic_recorder):
+            self._diagnostic_recorder({
+                'provider_id': self.provider_id,
+                'route_id': self.route_id,
+                'backend_name': self.name,
+                'ok': True,
+                'error_kind': None,
+                'message': normalize_message(message),
+                'status_code': status_code,
+                'extra': extra,
+            })
+
+    def _record_error(self, message, *, status_code=None, body='', exc_type='', error_kind=None, extra=None):
+        kind = error_kind or classify_error(status_code=status_code, message=message, body=body, exc_type=exc_type)
+        self.last_error_kind = kind
+        self.last_error_message = normalize_message(message)
+        self.last_error_at = utcnow_iso()
+        self.last_status_code = status_code
+        if callable(self._diagnostic_recorder):
+            self._diagnostic_recorder({
+                'provider_id': self.provider_id,
+                'route_id': self.route_id,
+                'backend_name': self.name,
+                'ok': False,
+                'error_kind': kind,
+                'message': self.last_error_message,
+                'status_code': status_code,
+                'extra': dict(extra or {}, body=normalize_message(body, 1200), exc_type=exc_type or None),
+            })
+
+    def describe_diagnostics(self):
+        return {
+            'last_error_kind': self.last_error_kind,
+            'last_error_message': self.last_error_message,
+            'last_error_at': self.last_error_at,
+            'last_ok_at': self.last_ok_at,
+            'last_status_code': self.last_status_code,
+            'last_latency_ms': self.last_latency_ms,
+            'last_ttfb_ms': self.last_ttfb_ms,
+        }
+
     def _apply_claude_thinking(self, payload):
         if self.thinking_type:
             thinking = {"type": self.thinking_type}
@@ -474,11 +564,35 @@ class ClaudeSession(BaseSession):
         if self.temperature != 1: payload["temperature"] = self.temperature
         self._apply_claude_thinking(payload)
         if self.system: payload["system"] = [{"type": "text", "text": self.system, "cache_control": {"type": "persistent"}}]
+        started_at = time.perf_counter()
+        first_chunk_at = None
         try:
             with requests.post(auto_make_url(self.api_base, "messages"), headers=headers, json=payload, stream=True, timeout=(self.connect_timeout, self.read_timeout)) as r:
-                if r.status_code != 200: raise Exception(f"HTTP {r.status_code} {r.content.decode('utf-8', errors='replace')[:500]}")
-                return (yield from _parse_claude_sse(r.iter_lines())) or []
+                if r.status_code != 200:
+                    body = r.content.decode('utf-8', errors='replace')[:500]
+                    err = f"HTTP {r.status_code} {body}"
+                    self._record_error(err, status_code=r.status_code, body=body, extra={"api_base": self.api_base})
+                    yield (err_text := f"Error: {err}")
+                    return [{"type": "text", "text": err_text}]
+                gen = _parse_claude_sse(r.iter_lines())
+                try:
+                    while True:
+                        chunk = next(gen)
+                        if first_chunk_at is None:
+                            first_chunk_at = time.perf_counter()
+                        yield chunk
+                except StopIteration as e:
+                    self._record_success(
+                        status_code=r.status_code,
+                        message="OK",
+                        extra={
+                            "latency_ms": int((time.perf_counter() - started_at) * 1000),
+                            "ttfb_ms": int((((first_chunk_at or time.perf_counter()) - started_at) * 1000)),
+                        },
+                    )
+                    return e.value or []
         except Exception as e:
+            self._record_error(str(e), exc_type=type(e).__name__, extra={"api_base": self.api_base})
             yield (err := f"Error: {e}")
             return [{"type": "text", "text": err}]
     def make_messages(self, raw_list):
@@ -493,7 +607,7 @@ class LLMSession(BaseSession):
         return (yield from _openai_stream(self.api_base, self.api_key, messages, self.model, self.api_mode,
                                   temperature=self.temperature, reasoning_effort=self.reasoning_effort,
                                   max_tokens=self.max_tokens, max_retries=self.max_retries, 
-                                  connect_timeout=self.connect_timeout, read_timeout=self.read_timeout, proxies=self.proxies))
+                                  connect_timeout=self.connect_timeout, read_timeout=self.read_timeout, proxies=self.proxies, session=self))
     def make_messages(self, raw_list): return _msgs_claude2oai(raw_list)
 
 def _fix_messages(messages):
@@ -550,10 +664,34 @@ class NativeClaudeSession(BaseSession):
         for idx in user_idxs[-2:]:
             messages[idx] = {**messages[idx], "content": list(messages[idx]["content"])}
             messages[idx]["content"][-1] = dict(messages[idx]["content"][-1], cache_control={"type": "ephemeral"})
+        started_at = time.perf_counter()
+        first_chunk_at = None
         try:
             with requests.post(auto_make_url(self.api_base, "messages")+'?beta=true', headers=headers, json=payload, stream=self.stream, timeout=(self.connect_timeout, self.read_timeout)) as resp:
-                if resp.status_code != 200: raise Exception(f"HTTP {resp.status_code} {resp.content.decode('utf-8', errors='replace')[:500]}")
-                if self.stream: return (yield from _parse_claude_sse(resp.iter_lines())) or []
+                if resp.status_code != 200:
+                    body = resp.content.decode('utf-8', errors='replace')[:500]
+                    err = f"HTTP {resp.status_code} {body}"
+                    self._record_error(err, status_code=resp.status_code, body=body, extra={"api_base": self.api_base})
+                    yield (err_text := f"Error: {err}")
+                    return [{"type": "text", "text": err_text}]
+                if self.stream:
+                    gen = _parse_claude_sse(resp.iter_lines())
+                    try:
+                        while True:
+                            chunk = next(gen)
+                            if first_chunk_at is None:
+                                first_chunk_at = time.perf_counter()
+                            yield chunk
+                    except StopIteration as e:
+                        self._record_success(
+                            status_code=resp.status_code,
+                            message="OK",
+                            extra={
+                                "latency_ms": int((time.perf_counter() - started_at) * 1000),
+                                "ttfb_ms": int((((first_chunk_at or time.perf_counter()) - started_at) * 1000)),
+                            },
+                        )
+                        return e.value or []
                 else:
                     data = resp.json(); content_blocks = data.get("content", [])
                     usage = data.get("usage", {})
@@ -561,8 +699,14 @@ class NativeClaudeSession(BaseSession):
                     for b in content_blocks:
                         if b.get("type") == "text": yield b.get("text", "")
                         elif b.get("type") == "thinking": yield ""
+                    self._record_success(
+                        status_code=resp.status_code,
+                        message="OK",
+                        extra={"latency_ms": int((time.perf_counter() - started_at) * 1000), "ttfb_ms": 0},
+                    )
                     return content_blocks
         except Exception as e:
+            self._record_error(str(e), exc_type=type(e).__name__, extra={"api_base": self.api_base})
             yield (err := f"Error: {e}")
             return [{"type": "text", "text": err}]
 
@@ -603,7 +747,7 @@ class NativeOAISession(NativeClaudeSession):
                                           temperature=self.temperature, max_tokens=self.max_tokens, 
                                           tools=self.tools, reasoning_effort=self.reasoning_effort,
                                           max_retries=self.max_retries, connect_timeout=self.connect_timeout,
-                                          read_timeout=self.read_timeout, proxies=self.proxies))
+                                          read_timeout=self.read_timeout, proxies=self.proxies, session=self))
 
 def openai_tools_to_claude(tools):
     """[{type:'function', function:{name,description,parameters}}] → [{name,description,input_schema}]."""
@@ -821,6 +965,16 @@ class MixinSession:
         self._sessions[0].raw_ask = self._raw_ask
         self.model = getattr(self._sessions[0], 'model', None)
         self._cur_idx, self._switched_at = 0, 0.0
+        self.active_session_index = 0
+        self.active_member_name = self._sessions[0].name
+        self.last_switch_reason = ''
+        self.last_error_kind = None
+        self.last_error_message = ''
+        self.last_error_at = None
+        self.last_ok_at = None
+        self.last_status_code = None
+        self.last_latency_ms = None
+        self.last_ttfb_ms = None
     def __getattr__(self, name): return getattr(self._sessions[0], name)
     _BROADCAST_ATTRS = frozenset({'system', 'tools', 'temperature', 'max_tokens', 'reasoning_effort'})
     def __setattr__(self, name, value):
@@ -831,8 +985,29 @@ class MixinSession:
         else: object.__setattr__(self, name, value)
     @property
     def primary(self): return self._sessions[0]
+    def _sync_diagnostics_from(self, session):
+        for attr in ('last_error_kind', 'last_error_message', 'last_error_at', 'last_ok_at', 'last_status_code', 'last_latency_ms', 'last_ttfb_ms'):
+            setattr(self, attr, getattr(session, attr, None))
+    def describe_diagnostics(self):
+        return {
+            'last_error_kind': self.last_error_kind,
+            'last_error_message': self.last_error_message,
+            'last_error_at': self.last_error_at,
+            'last_ok_at': self.last_ok_at,
+            'last_status_code': self.last_status_code,
+            'last_latency_ms': self.last_latency_ms,
+            'last_ttfb_ms': self.last_ttfb_ms,
+            'active_session_index': self.active_session_index,
+            'active_member_name': self.active_member_name,
+            'last_switch_reason': self.last_switch_reason,
+            'spring_back_seconds': self._spring_sec,
+        }
     def _pick(self):
-        if self._cur_idx and time.time() - self._switched_at > self._spring_sec: self._cur_idx = 0
+        if self._cur_idx and time.time() - self._switched_at > self._spring_sec:
+            self._cur_idx = 0
+            self.active_session_index = 0
+            self.active_member_name = self._sessions[0].name
+            self.last_switch_reason = 'spring_back'
         return self._cur_idx
     def _raw_ask(self, *args, **kwargs):
         base, n = self._pick(), len(self._sessions)
@@ -850,8 +1025,18 @@ class MixinSession:
             except StopIteration as e: return_val = e.value or []
             is_err = test_error(last_chunk)
             if not is_err:
-                if attempt > 0: self._cur_idx = idx; self._switched_at = time.time()
+                if attempt > 0:
+                    self._cur_idx = idx
+                    self._switched_at = time.time()
+                    self.last_switch_reason = f'fallback_success:{self._sessions[idx].name}'
+                self.active_session_index = idx
+                self.active_member_name = self._sessions[idx].name
+                self._sync_diagnostics_from(self._sessions[idx])
                 return return_val
+            self.active_session_index = idx
+            self.active_member_name = self._sessions[idx].name
+            self.last_switch_reason = (last_chunk or '')[:240]
+            self._sync_diagnostics_from(self._sessions[idx])
             if attempt >= self._retries:
                 yield last_chunk; return return_val
             nxt = (base + attempt + 1) % n

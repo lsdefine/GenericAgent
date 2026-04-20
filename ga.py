@@ -17,7 +17,7 @@ def code_run(code, code_type="python", timeout=60, cwd=None, code_cwd=None, stop
     yield f"[Action] Running {code_type} in {os.path.basename(cwd)}: {preview}\n"
     script_dir = os.path.dirname(os.path.abspath(__file__))
     cwd = cwd or os.path.join(script_dir, 'temp'); tmp_path = None
-    if code_type == "python":
+    if code_type in ["python", "py"]:
         tmp_file = tempfile.NamedTemporaryFile(suffix=".ai.py", delete=False, mode='w', encoding='utf-8', dir=code_cwd)
         cr_header = os.path.join(script_dir, 'assets', 'code_run_header.py')
         if os.path.exists(cr_header): tmp_file.write(open(cr_header, encoding='utf-8').read())
@@ -25,7 +25,7 @@ def code_run(code, code_type="python", timeout=60, cwd=None, code_cwd=None, stop
         tmp_path = tmp_file.name
         tmp_file.close()
         cmd = [sys.executable, "-X", "utf8", "-u", tmp_path]   
-    elif code_type in ["powershell", "bash"]:
+    elif code_type in ["powershell", "bash", "sh", "shell", "ps1", "pwsh"]:
         if os.name == 'nt': cmd = ["powershell", "-NoProfile", "-NonInteractive", "-Command", code]
         else: cmd = ["bash", "-c", code]
     else:
@@ -110,12 +110,10 @@ def first_init_driver():
         time.sleep(3)
 
 def web_scan(tabs_only=False, switch_tab_id=None, text_only=False):
-    """
-    获取当前页面的简化HTML内容和标签页列表。注意：简化过程会过滤边栏、浮动元素等非主体内容。
+    """获取当前页面的简化HTML内容和标签页列表。注意：简化过程会过滤边栏、浮动元素等非主体内容。
     tabs_only: 仅返回标签页列表，不获取HTML内容（节省token）。
     switch_tab_id: 可选参数，如果提供，则在扫描前切换到该标签页。
-    应当多用execute_js，少全量观察html。
-    """
+    应当多用execute_js，少全量观察html"""
     global driver
     try:
         if driver is None: first_init_driver()
@@ -265,13 +263,15 @@ class GenericAgentHandler(BaseHandler):
         self.cwd = cwd;  self.current_turn = 0
         self.history_info = last_history if last_history else []
         self.code_stop_signal = []
+        self._done_hooks = []
 
     def _get_abs_path(self, path):
         if not path: return ""
         return os.path.abspath(os.path.join(self.cwd, path))   
 
     def _extract_code_block(self, response, code_type):
-        matches = re.findall(rf"```{code_type}\n(.*?)\n```", response.content, re.DOTALL)
+        code_type = {'python':'python|py', 'powershell':'powershell|ps1|pwsh', 'bash':'bash|sh|shell'}.get(code_type, re.escape(code_type))
+        matches = re.findall(rf"```(?:{code_type})\n(.*?)\n```", response.content, re.DOTALL)
         return matches[-1].strip() if matches else None
 
     def do_code_run(self, args, response):
@@ -280,7 +280,7 @@ class GenericAgentHandler(BaseHandler):
         code = args.get("code") or args.get("script")
         if not code:
             code = self._extract_code_block(response, code_type)
-            if not code: return StepOutcome("[Error] Code missing. Use ```{code_type} block or 'script' arg.", next_prompt="\n")
+            if not code: return StepOutcome("[Error] Code missing. Must use reply code block or 'script' arg.", next_prompt="\n")
         timeout = args.get("timeout", 60)
         raw_path = os.path.join(self.cwd, args.get("cwd", './'))
         cwd = os.path.normpath(os.path.abspath(raw_path))
@@ -309,8 +309,7 @@ class GenericAgentHandler(BaseHandler):
     def do_web_scan(self, args, response):
         '''获取当前页面内容和标签页列表。也可用于切换标签页。
         注意：HTML经过简化，边栏/浮动元素等可能被过滤。如需查看被过滤的内容请用execute_js。
-        tabs_only=true时仅返回标签页列表，不获取HTML（省token）。
-        '''
+        tabs_only=true时仅返回标签页列表，不获取HTML（省token）'''
         tabs_only = args.get("tabs_only", False)
         switch_tab_id = args.get("switch_tab_id", None)
         text_only = args.get("text_only", False)
@@ -523,7 +522,7 @@ class GenericAgentHandler(BaseHandler):
             clean_args = {k: v for k, v in args.items() if not k.startswith('_')}
             summary = f"调用工具{tool_name}, args: {clean_args}"
             if tool_name == 'no_tool': summary = "直接回答了用户问题"
-            next_prompt += "\n[DANGER] 上一轮遗漏了<summary>，已根据物理动作自动补全。在下次回复中记得<summary>协议。" 
+            next_prompt += "\n[DANGER] 上一轮遗漏了<summary>，需要按协议在<summary>中输出极简单行摘要！" 
         summary = smart_format(summary, max_str_len=100)
         self.history_info.append(f'[Agent] {summary}')
         if turn % 35 == 0 and 'plan' not in str(self.working.get('related_sop')):

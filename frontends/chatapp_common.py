@@ -301,3 +301,8 @@ class AgentChatMixin:
             await self.send_text(chat_id, f"❌ 错误: {e}", **ctx)
         finally:
             self.user_tasks.pop(chat_id, None)
+
+
+from agentmain import GeneraticAgent as _GA
+from continue_cmd import install as _install_continue
+_install_continue(_GA)

@@ -238,6 +238,39 @@ def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
             blocks.append({"type": "tool_use", "id": tc["id"], "name": tc["name"], "input": inp})
         return blocks
 
+def _parse_openai_json(data, api_mode="chat_completions"):
+    blocks = []
+    if api_mode == "responses":
+        usage = data.get("usage", {})
+        cached = (usage.get("input_tokens_details") or {}).get("cached_tokens", 0)
+        inp = usage.get("input_tokens", 0)
+        if inp: print(f"[Cache] input={inp} cached={cached}")
+        for item in (data.get("output") or []):
+            if item.get("type") == "message":
+                for p in (item.get("content") or []):
+                    if p.get("type") in ("output_text", "text") and p.get("text"):
+                        blocks.append({"type": "text", "text": p["text"]}); yield p["text"]
+            elif item.get("type") == "function_call":
+                try: args = json.loads(item.get("arguments", "")) if item.get("arguments") else {}
+                except: args = {"_raw": item.get("arguments", "")}
+                blocks.append({"type": "tool_use", "id": item.get("call_id", item.get("id", "")),
+                               "name": item.get("name", ""), "input": args})
+    else:
+        usage = data.get("usage") or {}
+        if usage:
+            cached = (usage.get("prompt_tokens_details") or {}).get("cached_tokens", 0)
+            print(f"[Cache] input={usage.get('prompt_tokens', 0)} cached={cached}")
+        msg = (data.get("choices") or [{}])[0].get("message", {})
+        content = msg.get("content", "")
+        if content:
+            blocks.append({"type": "text", "text": content}); yield content
+        for tc in (msg.get("tool_calls") or []):
+            fn = tc.get("function", {})
+            try: args = json.loads(fn.get("arguments", "")) if fn.get("arguments") else {}
+            except: args = {"_raw": fn.get("arguments", "")}
+            blocks.append({"type": "tool_use", "id": tc.get("id", ""), "name": fn.get("name", ""), "input": args})
+    return blocks
+
 def _stamp_oai_cache_markers(messages, model):
     """Add cache_control to last 2 user messages for Anthropic models via OAI-compatible relay."""
     ml = model.lower()
@@ -253,7 +286,8 @@ def _stamp_oai_cache_markers(messages, model):
 
 def _openai_stream(api_base, api_key, messages, model, api_mode='chat_completions', *,
                    temperature=0.5, max_tokens=None, tools=None, reasoning_effort=None,
-                   max_retries=0, connect_timeout=10, read_timeout=300, proxies=None, verify=True):
+                   max_retries=0, connect_timeout=10, read_timeout=300, proxies=None, verify=True,
+                   stream=True):
     """Shared OpenAI-compatible streaming request with retry. Yields text chunks, returns list[content_block]."""
     ml = model.lower()
     if 'kimi' in ml or 'moonshot' in ml: temperature = 1
@@ -261,27 +295,17 @@ def _openai_stream(api_base, api_key, messages, model, api_mode='chat_completion
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "Accept": "text/event-stream"}
     if api_mode == "responses":
         url = auto_make_url(api_base, "responses")
-        payload = {"model": model, "input": _to_responses_input(messages), "stream": True, "prompt_cache_key": _RESP_CACHE_KEY}
+        payload = {"model": model, "input": _to_responses_input(messages), "stream": stream, "prompt_cache_key": _RESP_CACHE_KEY}
         if reasoning_effort: payload["reasoning"] = {"effort": reasoning_effort}
     else:
         url = auto_make_url(api_base, "chat/completions")
         _stamp_oai_cache_markers(messages, model)
-        payload = {"model": model, "messages": messages, "stream": True, "stream_options": {"include_usage": True}}
+        payload = {"model": model, "messages": messages, "stream": stream}
+        if stream: payload["stream_options"] = {"include_usage": True}
         if temperature != 1: payload["temperature"] = temperature
         if max_tokens: payload["max_tokens"] = max_tokens
         if reasoning_effort: payload["reasoning_effort"] = reasoning_effort
-    if tools:
-        if api_mode == "responses":
-            # Responses API: flatten {type, function: {name, ...}} -> {type, name, ...}
-            resp_tools = []
-            for t in tools:
-                if t.get("type") == "function" and "function" in t:
-                    rt = {"type": "function"}
-                    rt.update(t["function"])
-                    resp_tools.append(rt)
-                else: resp_tools.append(t)
-            payload["tools"] = resp_tools
-        else: payload["tools"] = tools
+    if tools: payload["tools"] = _prepare_oai_tools(tools, api_mode)
     RETRYABLE = {408, 409, 425, 429, 500, 502, 503, 504, 529}
     def _delay(resp, attempt):
         try: ra = float((resp.headers or {}).get("retry-after"))
@@ -297,41 +321,37 @@ def _openai_stream(api_base, api_key, messages, model, api_mode='chat_completion
                         d = _delay(r, attempt)
                         print(f"[LLM Retry] HTTP {r.status_code}, retry in {d:.1f}s ({attempt+1}/{max_retries+1})")
                         time.sleep(d); continue
-                    # Read error body before raise (stream mode closes connection after raise)
-                    err_body = ""
-                    try: err_body = r.text.strip()[:1200]
+                    body = ""
+                    try: body = r.text.strip()[:500]
                     except: pass
-                    try: r.raise_for_status()
-                    except requests.HTTPError as e:
-                        e._err_body = err_body; raise
-                gen = _parse_openai_sse(r.iter_lines(), api_mode)
+                    err = f"Error: HTTP {r.status_code}" + (f": {body}" if body else "")
+                    yield err; return [{"type": "text", "text": err}]
+                gen = _parse_openai_sse(r.iter_lines(), api_mode) if stream else _parse_openai_json(r.json(), api_mode)
                 try:
                     while True: streamed = True; yield next(gen)
                 except StopIteration as e:
                     return e.value or []
-        except requests.HTTPError as e:
-            resp = getattr(e, "response", None); status = getattr(resp, "status_code", None)
-            if status in RETRYABLE and attempt < max_retries and not streamed:
-                d = _delay(resp, attempt)
-                print(f"[LLM Retry] HTTP {status}, retry in {d:.1f}s ({attempt+1}/{max_retries+1})")
-                time.sleep(d); continue
-            body = ""; rid = ""; ra = ""; ct = ""
-            try: body = getattr(e, '_err_body', '') or (resp.text or "").strip()[:1200]
-            except: pass
-            try: h = resp.headers or {}; rid = h.get("x-request-id","") or h.get("request-id",""); ra = h.get("retry-after",""); ct = h.get("content-type","")
-            except: pass
-            err = f"Error: HTTP {status} {e}; content_type: {ct or '<empty>'}; retry_after: {ra or '<empty>'}; request_id: {rid or '<empty>'}; body: {body or '<empty>'}"
-            yield err; return [{"type": "text", "text": err}]
         except (requests.Timeout, requests.ConnectionError) as e:
             if attempt < max_retries and not streamed:
                 d = _delay(None, attempt)
                 print(f"[LLM Retry] {type(e).__name__}, retry in {d:.1f}s ({attempt+1}/{max_retries+1})")
                 time.sleep(d); continue
-            err = f"Error: {type(e).__name__}: {e}"
+            err = f"Error: {type(e).__name__}"
             yield err; return [{"type": "text", "text": err}]
         except Exception as e:
-            err = f"Error: {e}"
+            err = f"Error: {type(e).__name__}: {e}"
             yield err; return [{"type": "text", "text": err}]
+        
+def _prepare_oai_tools(tools, api_mode="chat_completions"):
+    if api_mode == "responses":
+        resp_tools = []
+        for t in tools:
+            if t.get("type") == "function" and "function" in t:
+                rt = {"type": "function"}; rt.update(t["function"])
+                resp_tools.append(rt)
+            else: resp_tools.append(t)
+        return resp_tools
+    return tools
 
 def _to_responses_input(messages):
     result = []
@@ -607,7 +627,7 @@ class NativeOAISession(NativeClaudeSession):
         """OpenAI streaming. yields text chunks, generator return = list[content_block]"""
         msgs = ([{"role": "system", "content": self.system}] if self.system else []) + _msgs_claude2oai(messages)
         return (yield from _openai_stream(self.api_base, self.api_key, msgs, self.model, self.api_mode,
-                                          temperature=self.temperature, max_tokens=self.max_tokens, 
+                                          temperature=self.temperature, max_tokens=self.max_tokens,
                                           tools=self.tools, reasoning_effort=self.reasoning_effort,
                                           max_retries=self.max_retries, connect_timeout=self.connect_timeout,
                                           read_timeout=self.read_timeout, proxies=self.proxies,
@@ -830,7 +850,7 @@ class MixinSession:
         self.model = getattr(self._sessions[0], 'model', None)
         self._cur_idx, self._switched_at = 0, 0.0
     def __getattr__(self, name): return getattr(self._sessions[0], name)
-    _BROADCAST_ATTRS = frozenset({'system', 'tools', 'temperature', 'max_tokens', 'reasoning_effort'})
+    _BROADCAST_ATTRS = frozenset({'system', 'tools', 'temperature', 'max_tokens', 'reasoning_effort', 'history'})
     def __setattr__(self, name, value):
         if name in self._BROADCAST_ATTRS:
             for s in self._sessions:

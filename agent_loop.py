@@ -28,10 +28,7 @@ class BaseHandler:
             yield f"未知工具: {tool_name}\n"
             return StepOutcome(None, next_prompt=f"未知工具 {tool_name}", should_exit=False)
 
-def json_default(o):
-    if isinstance(o, set): return list(o)
-    return str(o) 
-
+def json_default(o): return list(o) if isinstance(o, set) else str(o)
 def exhaust(g):
     try: 
         while True: next(g)
@@ -47,7 +44,7 @@ def agent_runner_loop(client, system_prompt, user_input, handler, tools_schema, 
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": initial_user_content if initial_user_content is not None else user_input}
     ]
-    turn = 0; handler._done_hooks = [];  handler.max_turns = max_turns
+    turn = 0;  handler.max_turns = max_turns
     while turn < handler.max_turns:
         turn += 1; md = '**' if verbose else ''
         yield f"{md}LLM Running (Turn {turn}) ...{md}\n\n"
@@ -65,7 +62,7 @@ def agent_runner_loop(client, system_prompt, user_input, handler, tools_schema, 
         else: tool_calls = [{'tool_name': tc.function.name, 'args': json.loads(tc.function.arguments), 'id': tc.id}
                           for tc in response.tool_calls]
        
-        tool_results = []; next_prompts = set(); exit_reason = None
+        tool_results = []; next_prompts = set(); exit_reason = {}
         for ii, tc in enumerate(tool_calls):
             tool_name, args, tid = tc['tool_name'], tc['args'], tc.get('id', '')
             if tool_name == 'no_tool': pass
@@ -92,7 +89,7 @@ def agent_runner_loop(client, system_prompt, user_input, handler, tools_schema, 
                 tool_results.append({'tool_use_id': tid, 'content': datastr})
             next_prompts.add(outcome.next_prompt)
         if len(next_prompts) == 0 or exit_reason:
-            if len(handler._done_hooks) == 0: break
+            if len(handler._done_hooks) == 0 or exit_reason.get('result', '') == 'EXITED': break
             next_prompts.add(handler._done_hooks.pop(0))
         next_prompt = handler.turn_end_callback(response, tool_calls, tool_results, turn, '\n'.join(next_prompts), exit_reason)
         messages = [{"role": "user", "content": next_prompt, "tool_results": tool_results}]   # just new message, history is kept in *Session

@@ -11,8 +11,8 @@ from agentmain import GeneraticAgent
 API = 'https://ilinkai.weixin.qq.com'
 TOKEN_FILE = Path.home() / '.wxbot' / 'token.json'
 TOKEN_FILE.parent.mkdir(exist_ok=True)
-VER, MSG_USER, MSG_BOT, ITEM_TEXT, STATE_FINISH = '0.2.5', 1, 2, 1, 2
-ITEM_FILE = 4
+VER, MSG_USER, MSG_BOT, ITEM_TEXT, STATE_FINISH = '2.1.8', 1, 2, 1, 2
+ITEM_IMAGE, ITEM_FILE, ITEM_VIDEO = 2, 4, 5
 CDN_BASE = 'https://novac2c.cdn.weixin.qq.com/c2c'
 
 def _uin():
@@ -94,47 +94,71 @@ class WxBotClient:
             'to_user_id': to_user_id, 'typing_ticket': typing_ticket,
             'typing_status': 2 if cancel else 1, 'base_info': {'channel_version': VER}})
 
-    def send_file(self, to_user_id, file_path, context_token=''):
-        """Send a file to user via CDN upload."""
+    def _enc(self, raw, aes_key):
+        pad = 16 - (len(raw) % 16)
+        return AES.new(aes_key, AES.MODE_ECB).encrypt(raw + bytes([pad] * pad))
+
+    def _upload(self, filekey, upload_param, raw, aes_key, timeout=120, upload_url=''):
+        url = upload_url.strip() if upload_url else f'{CDN_BASE}/upload?encrypted_query_param={quote(upload_param)}&filekey={filekey}'
+        data = self._enc(raw, aes_key)
+        last_err = None
+        for attempt in range(1, 4):
+            try:
+                r = requests.post(url, data=data, headers={'Content-Type': 'application/octet-stream'}, timeout=timeout)
+                if 400 <= r.status_code < 500:
+                    msg = r.headers.get('x-error-message') or r.text[:300]
+                    raise RuntimeError(f'CDN upload client error {r.status_code}: {msg}')
+                if r.status_code != 200:
+                    msg = r.headers.get('x-error-message') or f'status {r.status_code}'
+                    raise RuntimeError(f'CDN upload server error: {msg}')
+                eq = r.headers.get('x-encrypted-param', '')
+                if not eq: raise RuntimeError('CDN upload response missing x-encrypted-param header')
+                return {'encrypt_query_param': eq,
+                        'aes_key': base64.b64encode(aes_key.hex().encode()).decode(), 'encrypt_type': 1}
+            except Exception as e:
+                last_err = e
+                if 'client error' in str(e) or attempt >= 3: break
+                print(f'[WX] CDN upload retry {attempt}: {e}', file=sys.__stdout__)
+        raise last_err
+
+    def _send_media(self, to_user_id, file_path, media_type, item_type, item_key, context_token=''):
         fp = Path(file_path)
         raw = fp.read_bytes()
-        rawsize = len(raw)
-        rawfilemd5 = hashlib.md5(raw).hexdigest()
-        aes_key = os.urandom(16)
         filekey = uuid.uuid4().hex
-        ciphertext_size = ((rawsize // 16) + 1) * 16
-        # 1. get upload url
-        resp = self._post('ilink/bot/getuploadurl', {
-            'filekey': filekey, 'media_type': 3, 'to_user_id': to_user_id,
-            'rawsize': rawsize, 'rawfilemd5': rawfilemd5,
+        aes_key = os.urandom(16)
+        ciphertext_size = ((len(raw) // 16) + 1) * 16
+        body = {
+            'filekey': filekey, 'media_type': media_type, 'to_user_id': to_user_id,
+            'rawsize': len(raw), 'rawfilemd5': hashlib.md5(raw).hexdigest(),
             'filesize': ciphertext_size, 'no_need_thumb': True,
-            'aeskey': aes_key.hex(),
-            'base_info': {'channel_version': VER}})
+            'aeskey': aes_key.hex(), 'base_info': {'channel_version': VER}}
+        resp = self._post('ilink/bot/getuploadurl', body)
         upload_param = resp.get('upload_param', '')
-        if not upload_param:
-            raise RuntimeError(f'getuploadurl failed: {resp}')
-        # 2. AES-128-ECB encrypt (PKCS7)
-        cipher = AES.new(aes_key, AES.MODE_ECB)
-        pad_len = 16 - (rawsize % 16)
-        ciphertext = cipher.encrypt(raw + bytes([pad_len] * pad_len))
-        # 3. upload to CDN
-        upload_url = (f'{CDN_BASE}/upload?encrypted_query_param='
-                      f'{quote(upload_param)}&filekey={filekey}')
-        r = requests.post(upload_url, data=ciphertext, headers={'Content-Type': 'application/octet-stream'}, timeout=120)
-        r.raise_for_status()
-        download_param = r.headers.get('x-encrypted-param', '')
-        if not download_param:
-            raise RuntimeError(f'CDN upload: no x-encrypted-param. status={r.status_code}')
-        # 4. send message with file attachment
+        upload_url = resp.get('upload_full_url', '')
+        if not (upload_param or upload_url): raise RuntimeError(f'getuploadurl failed: {resp}')
+        media = self._upload(filekey, upload_param, raw, aes_key=aes_key, upload_url=upload_url)
+        item = {'media': media}
+        if item_key == 'file_item':
+            item.update({'file_name': fp.name, 'len': str(len(raw))})
+        elif item_key == 'image_item':
+            item.update({'mid_size': ciphertext_size})
+        elif item_key == 'video_item':
+            item.update({'video_size': ciphertext_size})
         msg = {'from_user_id': '', 'to_user_id': to_user_id,
                'client_id': f'pyclient-{uuid.uuid4().hex[:16]}',
                'message_type': MSG_BOT, 'message_state': STATE_FINISH,
-               'item_list': [{'type': ITEM_FILE, 'file_item': {
-                   'media': {'encrypt_query_param': download_param,
-                             'aes_key': base64.b64encode(aes_key.hex().encode()).decode(), 'encrypt_type': 1},
-                   'file_name': fp.name, 'len': str(rawsize)}}]}
+               'item_list': [{'type': item_type, item_key: item}]}
         if context_token: msg['context_token'] = context_token
         return self._post('ilink/bot/sendmessage', {'msg': msg, 'base_info': {'channel_version': VER}})
+
+    def send_file(self, to_user_id, file_path, context_token=''):
+        return self._send_media(to_user_id, file_path, 3, ITEM_FILE, 'file_item', context_token)
+
+    def send_image(self, to_user_id, file_path, context_token=''):
+        return self._send_media(to_user_id, file_path, 1, ITEM_IMAGE, 'image_item', context_token)
+
+    def send_video(self, to_user_id, file_path, context_token=''):
+        return self._send_media(to_user_id, file_path, 2, ITEM_VIDEO, 'video_item', context_token)
 
     @staticmethod
     def extract_text(msg):
@@ -190,7 +214,7 @@ def _dl_media(items):
 agent = GeneraticAgent()
 agent.verbose = False
 
-_TAG_PATS = [r'<' + t + r'>.*?</' + t + r'>' for t in ('thinking', 'summary', 'tool_use')]
+_TAG_PATS = [r'<' + t + r'>.*?</' + t + r'>' for t in ('thinking', 'tool_use')]
 _TAG_PATS.append(r'<file_content>.*?</file_content>')
 
 def _strip_md(t):
@@ -213,8 +237,11 @@ def _strip_md(t):
     return re.sub(r'\n{3,}', '\n\n', t).strip()
 
 def _clean(t):
+    t = re.sub(r'^\s*LLM Running \(Turn \d+\) \.{3}\s*$', '', t, flags=re.M)
+    t = re.sub(r'^\s*🛠️\s*[A-Za-z_][A-Za-z0-9_]*\(.*$', '', t, flags=re.M)
     for p in _TAG_PATS:
         t = re.sub(p, '', t, flags=re.DOTALL)
+    t = re.sub(r'</?summary>', '', t)
     return re.sub(r'\n{3,}', '\n\n', _strip_md(t)).strip() or '...'
 
 def _split(text, limit=1800):
@@ -270,7 +297,8 @@ def on_message(bot, msg):
                 if 'done' in item: result = item['done']; break
         except queue.Empty: result = '[超时]'
         files = re.findall(r'\[FILE:([^\]]+)\]', result)
-        files = [f for f in files if (f if os.path.isabs(f) else os.path.join(_TEMP_DIR, f)) not in media_paths]
+        bad = {'filepath', '<filepath>', 'path', '<path>', 'file_path', '<file_path>', '...'}
+        files = [f for f in files if f.strip().lower() not in bad and (f if os.path.isabs(f) else os.path.join(_TEMP_DIR, f)) not in media_paths]
         show = _clean(result)
         chunks = _split(show)
         _MAX_MSGS = 6
@@ -285,9 +313,12 @@ def on_message(bot, msg):
             if not os.path.isabs(fpath): fpath = os.path.join(_TEMP_DIR, fpath)
             try:
                 if not os.path.exists(fpath): raise FileNotFoundError(f"文件不存在: {fpath}")
-                bot.send_file(uid, fpath, context_token=ctx)
-                print(f'[WX] sent file: {fpath}', file=sys.__stdout__)
-            except Exception as e: print(f'[WX] send_file err: {e}', file=sys.__stdout__)
+                ext = os.path.splitext(fpath)[1].lower()
+                sender = bot.send_video if ext in {'.mp4', '.mov', '.m4v', '.webm'} else \
+                         bot.send_image if ext in {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'} else bot.send_file
+                sender(uid, fpath, context_token=ctx)
+                print(f'[WX] sent media: {fpath}', file=sys.__stdout__)
+            except Exception as e: print(f'[WX] send media err: {e}', file=sys.__stdout__)
 
     threading.Thread(target=_handle, daemon=True).start()
 

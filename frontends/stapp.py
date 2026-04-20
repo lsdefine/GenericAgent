@@ -9,10 +9,12 @@ try: sys.stderr.reconfigure(errors='replace')
 except: pass
 script_dir = os.path.dirname(__file__)
 sys.path.append(os.path.abspath(os.path.join(script_dir, '..')))
+sys.path.append(os.path.abspath(script_dir))
 
 import streamlit as st
 import time, json, re, threading, queue
 from agentmain import GeneraticAgent
+import chatapp_common  # activate /continue command (monkey patches GeneraticAgent)
 
 st.set_page_config(page_title="Cowork", layout="wide")
 

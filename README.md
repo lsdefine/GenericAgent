@@ -1,28 +1,32 @@
 <div align="center">
 <img src="assets/images/bar.jpg" width="880"/>
+
+<a href="https://trendshift.io/repositories/25944" target="_blank"><img src="https://trendshift.io/api/badge/repositories/25944" alt="lsdefine%2FGenericAgent | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
+
 </div>
 
 <p align="center">
-  <a href="#english">English</a> | <a href="#chinese">中文</a>
+  <a href="#english">English</a> | <a href="#chinese">中文</a> | 📄 Technical Report:&nbsp;<a href="assets/GenericAgent_Technical_Report.pdf"><img src="https://img.shields.io/badge/-PDF-EA4335?logo=adobeacrobatreader&logoColor=white" alt="Technical Report PDF" height="18"/></a>&nbsp;<a href="https://github.com/JinyiHan99/GA-Technical-Report"><img src="https://img.shields.io/badge/-Code%20%26%20Data-181717?logo=github&logoColor=white" alt="Experiments & Reproduction Repo" height="18"/></a> | 📘 <a href="https://datawhalechina.github.io/hello-generic-agent/">教程</a>
 </p>
 
 ---
 <a name="english"></a>
 ## 🌟 Overview
 
-**GenericAgent** is a minimal, self-evolving autonomous agent framework. Its core is just **~3,300 lines of code**. Through **7 atomic tools + a 92-line Agent Loop**, it grants any LLM system-level control over a local computer — covering browser, terminal, filesystem, keyboard/mouse input, screen vision, and mobile devices (ADB).
+**GenericAgent** is a minimal, self-evolving autonomous agent framework. Its core is just **~3K lines of code**. Through **9 atomic tools + a ~100-line Agent Loop**, it grants any LLM system-level control over a local computer — covering browser, terminal, filesystem, keyboard/mouse input, screen vision, and mobile devices (ADB).
 
 Its design philosophy: **don't preload skills — evolve them.**
 
-Every time GenericAgent solves a new task, it automatically crystallizes the execution path into an skill for direct reuse later. The longer you use it, the more skills accumulate — forming a skill tree that belongs entirely to you, grown from 3,300 lines of seed code.
+Every time GenericAgent solves a new task, it automatically crystallizes the execution path into an skill for direct reuse later. The longer you use it, the more skills accumulate — forming a skill tree that belongs entirely to you, grown from 3K lines of seed code.
 
 > **🤖 Self-Bootstrap Proof** — Everything in this repository, from installing Git and running `git init` to every commit message, was completed autonomously by GenericAgent. The author never opened a terminal once.
 
 ## 📋 Core Features
 - **Self-Evolving**: Automatically crystallizes each task into an skill. Capabilities grow with every use, forming your personal skill tree.
-- **Minimal Architecture**: ~3,300 lines of core code. Agent Loop is just 92 lines. No complex dependencies, zero deployment overhead.
-- **Strong Execution**: Injects into a real browser (preserving login sessions). 7 atomic tools take direct control of the system.
-- **High Compatibility**: Supports Claude / Gemini / Kimi and other major models. Cross-platform.
+- **Minimal Architecture**: ~3K lines of core code. Agent Loop is ~100 lines. No complex dependencies, zero deployment overhead.
+- **Strong Execution**: Injects into a real browser (preserving login sessions). 9 atomic tools take direct control of the system.
+- **High Compatibility**: Supports Claude / Gemini / Kimi / MiniMax and other major models. Cross-platform.
+- **Token Efficient**: <30K context window — a fraction of the 200K–1M other agents consume. Layered memory ensures the right knowledge is always in scope. Less noise, fewer hallucinations, higher success rate — at a fraction of the cost.
 
 
 ## 🧬 Self-Evolution Mechanism
@@ -40,7 +44,7 @@ This is what fundamentally distinguishes GenericAgent from every other agent fra
 | *"Monitor stocks and alert me"* | Install mootdx → build selection flow → configure cron → save skill | **one-line start** |
 | *"Send this file via Gmail"* | Configure OAuth → write send script → save skill | **ready to use** |
 
-After a few weeks, your agent instance will have a skill tree no one else in the world has — all grown from 3,300 lines of seed code.
+After a few weeks, your agent instance will have a skill tree no one else in the world has — all grown from 3K lines of seed code.
 
 
 ##### 🎯 Demo Showcase
@@ -55,183 +59,81 @@ After a few weeks, your agent instance will have a skill tree no one else in the
 
 ## 📅 Latest News
 
+- **2026-04-11:** Introduced **L4 session archive memory** and scheduler cron integration
+- **2026-03-23:** Support personal WeChat as a bot frontend
 - **2026-03-10:** [Released million-scale Skill Library](https://mp.weixin.qq.com/s/q2gQ7YvWoiAcwxzaiwpuiQ?scene=1&click_id=7)
 - **2026-03-08:** [Released "Dintal Claw" — a GenericAgent-powered government affairs bot](https://mp.weixin.qq.com/s/eiEhwo-j6S-WpLxgBnNxBg)
 - **2026-03-01:** [GenericAgent featured by Jiqizhixin (机器之心)](https://mp.weixin.qq.com/s/uVWpTTF5I1yzAENV_qm7yg)
-- **2026-01-11:** GenericAgent V1.0 public release
+- **2026-01-16:** GenericAgent V1.0 public release
 
 ---
 
 ## 🚀 Quick Start
 
-#### Method 1: Existing Desktop / Streamlit Flow
+#### Method 1: Standard Installation
 
 ```bash
 # 1. Clone the repo
 git clone https://github.com/lsdefine/GenericAgent.git
 cd GenericAgent
 
-# 2. Install GUI dependencies
+# 2. Install minimal dependencies
 pip install streamlit pywebview
 
-# 3. Launch the desktop window / Streamlit flow
+# 3. Configure API Key
+cp mykey_template.py mykey.py
+# Edit mykey.py and fill in your LLM API Key
+
+# 4. Launch
 python launch.pyw
 ```
 
-#### Method 2: New CLI Flow
+Full guide: [GETTING_STARTED.md](GETTING_STARTED.md)
 
-```bash
-# 1. Clone the repo
-git clone https://github.com/lsdefine/GenericAgent.git
-cd GenericAgent
-
-# 2. Install minimal CLI dependencies
-pip install prompt_toolkit rich
-
-# 3. Launch the CLI onboarding
-python cli.py
-
-# The CLI will guide you through:
-# - choosing a model provider
-# - filling api key / api base / model
-# - optionally configuring chat bots
-```
-
-After onboarding, the CLI includes:
-- `/model` for switching, adding, editing, removing, and setting the default model
-- `/chatbot` for checking bot status, starting/stopping bots, and configuring bot credentials
-- `/auto` and `/auto-now` for idle autonomous mode
-- dropdown command completion and selectable `ask_user` options
-
-#### Method 3: Windows Portable Version (Recommended for beginners)
-
-[Download portable version](http://kw.fudan.edu.cn/resources/PC-Agent-Portable.zip) (19MB, unzip and run)
-
-Full guide: [WELCOME_NEW_USER.md](WELCOME_NEW_USER.md)
-
-#### Method 4: Android (Termux)
-
-```bash
-cd /sdcard/ga
-python agentmain.py
-```
 ---
 
-## 🤖 Bot Interfaces (Optional)
-
-The original GUI / desktop flow remains available. CLI is an additional entry point, not a replacement.
-
-You can still launch bots directly with their standalone scripts, or use the new CLI flow:
-
-```bash
-python cli.py
-# then use /chatbot
-```
-
-The `/chatbot` panel can:
-- show which bots are configured and currently running
-- run startup preflight checks
-- start or stop supported bots
-- guide users through bot credential setup
-
-For CLI onboarding and `/chatbot` setup, QQ / Feishu / WeCom / DingTalk default `*_allowed_users` to `['*']` so beginners can skip that field. Telegram is stricter and should be set to your own Telegram `user_id`.
-
-### QQ Bot
-
-Uses `qq-botpy` WebSocket long connection — **no public webhook required**:
-
-```bash
-pip install qq-botpy
-```
-
-Add to `mykey.py`:
-
-```python
-qq_app_id = "YOUR_APP_ID"
-qq_app_secret = "YOUR_APP_SECRET"
-qq_allowed_users = ["*"]  # optional, defaults to public access in the CLI wizard
-```
-
-```bash
-python frontends/qqapp.py
-# or launch together with the desktop floating window
-python launch.pyw --qq
-```
-
-> Create a bot at the [QQ Open Platform](https://q.qq.com) to get AppID / AppSecret. After the first message, user openid is logged in `temp/qqapp.log`.
-
-
-### Lark (Feishu)
-
-```bash
-pip install lark-oapi
-python frontends/fsapp.py          # or python launch.pyw --feishu
-```
-
-```python
-fs_app_id = "cli_xxx"
-fs_app_secret = "xxx"
-fs_allowed_users = ["*"]  # optional, defaults to public access in the CLI wizard
-```
-
-**Inbound support**: text, rich text post, images, files, audio, media, interactive cards / share cards
-**Outbound support**: streaming progress cards, image replies, file / media replies
-**Vision model**: Images are sent as true multimodal input to OpenAI Vision-compatible backends on the first turn
-
-Full setup: [assets/SETUP_FEISHU.md](assets/SETUP_FEISHU.md)
-
-
-### WeCom (Enterprise WeChat)
-
-```bash
-pip install wecom_aibot_sdk
-python frontends/wecomapp.py       # or python launch.pyw --wecom
-```
-
-```python
-wecom_bot_id = "your_bot_id"
-wecom_secret = "your_bot_secret"
-wecom_allowed_users = ["*"]  # optional
-wecom_welcome_message = "Hello, I'm online."
-```
-
-### DingTalk
-
-```bash
-pip install dingtalk-stream
-python frontends/dingtalkapp.py    # or python launch.pyw --dingtalk
-```
-
-```python
-dingtalk_client_id = "your_app_key"
-dingtalk_client_secret = "your_app_secret"
-dingtalk_allowed_users = ["*"]  # optional
-```
-
+## 🤖 Bot Interface (Optional)
 
 ### Telegram Bot
 
 ```python
 # mykey.py
 tg_bot_token = 'YOUR_BOT_TOKEN'
-tg_allowed_users = [YOUR_TELEGRAM_USER_ID]
+tg_allowed_users = [YOUR_USER_ID]
 ```
 
 ```bash
 python frontends/tgapp.py
 ```
 
+### Alternative App Frontends
+
+Besides the default Streamlit web UI, you can also try other frontend styles:
+
+```bash
+python frontends/qtapp.py                # Qt-based desktop app
+streamlit run frontends/stapp2.py        # Alternative Streamlit UI
+```
+
+### Common Chat Commands
+
+The default Streamlit desktop UI started by `python launch.pyw`, plus the QQ / Feishu / WeCom / DingTalk frontends, support these chat commands:
+
+- `/new` - start a fresh conversation and clear the current context
+- `/continue` - list recoverable conversation snapshots
+- `/continue N` - restore the `N`th recoverable conversation
+
 
 ## 📊 Comparison with Similar Tools
 
 | Feature | GenericAgent | OpenClaw | Claude Code |
 |------|:---:|:---:|:---:|
-| **Codebase** | ~3,300 lines | ~530,000 lines | Open-sourced (large) |
+| **Codebase** | ~3K lines | ~530,000 lines | Open-sourced (large) |
 | **Deployment** | `pip install` + API Key | Multi-service orchestration | CLI + subscription |
 | **Browser Control** | Real browser (session preserved) | Sandbox / headless browser | Via MCP plugin |
 | **OS Control** | Mouse/kbd, vision, ADB | Multi-agent delegation | File + terminal |
 | **Self-Evolution** | Autonomous skill growth | Plugin ecosystem | Stateless between sessions |
-| **Out of the Box** | 10 .py files + 5 skills | Hundreds of modules | Rich CLI toolset |
+| **Out of the Box** | A few core files + starter skills | Hundreds of modules | Rich CLI toolset |
 
 
 ## 🧠 How It Works
@@ -242,17 +144,19 @@ GenericAgent accomplishes complex tasks through **Layered Memory × Minimal Tool
 > _Memory crystallizes throughout task execution, letting the agent build stable, efficient working patterns over time._
 
 - **L0 — Meta Rules**: Core behavioral rules and system constraints of the agent
+- **L1 — Insight Index**: Minimal memory index for fast routing and recall
 - **L2 — Global Facts**: Stable knowledge accumulated over long-term operation
-- **L3 — Task Skillss**: Workflows for completing specific task types
+- **L3 — Task Skills / SOPs**: Reusable workflows for completing specific task types
+- **L4 — Session Archive**: Archived task records distilled from finished sessions for long-horizon recall
 
 2️⃣ **Autonomous Execution Loop**
 
 > _Perceive environment state → Task reasoning → Execute tools → Write experience to memory → Loop_
 
-The entire core loop is just **92 lines of code** (`agent_loop.py`).
+The entire core loop is just **~100 lines of code** (`agent_loop.py`).
 
 3️⃣ **Minimal Toolset**
-> _GenericAgent provides only **7 atomic tools**, forming the foundational capabilities for interacting with the outside world._
+> _GenericAgent provides only **9 atomic tools**, forming the foundational capabilities for interacting with the outside world._
 
 | Tool | Function |
 |------|------|
@@ -284,33 +188,46 @@ If this project helped you, please consider leaving a **Star!** 🙏
 You're also welcome to join our **GenericAgent Community Group** for discussion, feedback, and co-building 👏
 
 <div align="center">
-<img src="assets/images/wechat_group.jpg" width="280"/>
+  <table>
+    <tr>
+      <td align="center"><strong>WeChat Group 5</strong><br><img src="assets/images/wechat_group5.jpg" alt="WeChat Group 5 QR Code" width="250"/></td>
+      <td align="center"><strong>WeChat Group 6</strong><br><img src="assets/images/wechat_group6.jpg" alt="WeChat Group 6 QR Code" width="250"/></td>
+      <td align="center"><strong>WeChat Group 7</strong><br><img src="assets/images/wechat_group7.jpg" alt="WeChat Group 7 QR Code" width="250"/></td>
+    </tr>
+  </table>
 </div>
 
+## 🚩 Friendly Links
 
+Thanks for the support from the LinuxDo community!
+
+[![LinuxDo](https://img.shields.io/badge/社区-LinuxDo-blue?style=for-the-badge)](https://linux.do/)
 
 ## 📄 License
 
 MIT License — see [LICENSE](LICENSE)
+
+*Disclaimer: This project does not build or operate any commercial website. Apart from DintalClaw, no institution, organization, or individual is currently officially authorized to conduct commercial activities under the GenericAgent name.*
 
 
 ---
 <a name="chinese"></a>
 ## 🌟 项目简介
 
-**GenericAgent** 是一个极简、可自我进化的自主 Agent 框架。核心仅 **~3,300 行代码**，通过 **7 个原子工具 + 92 行 Agent Loop**，赋予任意 LLM 对本地计算机的系统级控制能力，覆盖浏览器、终端、文件系统、键鼠输入、屏幕视觉及移动设备。
+**GenericAgent** 是一个极简、可自我进化的自主 Agent 框架。核心仅 **~3K 行代码**，通过 **9 个原子工具 + ~100 行 Agent Loop**，赋予任意 LLM 对本地计算机的系统级控制能力，覆盖浏览器、终端、文件系统、键鼠输入、屏幕视觉及移动设备。
 
 它的设计哲学是：**不预设技能，靠进化获得能力。**
 
-每解决一个新任务，GenericAgent 就将执行路径自动固化为 Skill，供后续直接调用。使用时间越长，沉淀的技能越多，形成一棵完全属于你、从 3,300 行种子代码生长出来的专属技能树。
+每解决一个新任务，GenericAgent 就将执行路径自动固化为 Skill，供后续直接调用。使用时间越长，沉淀的技能越多，形成一棵完全属于你、从 3K 行种子代码生长出来的专属技能树。
 
 > **🤖 自举实证** — 本仓库的一切，从安装 Git、`git init` 到每一条 commit message，均由 GenericAgent 自主完成。作者全程未打开过一次终端。
 
 ## 📋 核心特性
 - **自我进化**: 每次任务自动沉淀 Skill，能力随使用持续增长，形成专属技能树
-- **极简架构**: ~3,300 行核心代码，Agent Loop 仅 92 行，无复杂依赖，部署零负担
-- **强执行力**: 注入真实浏览器（保留登录态），7 个原子工具直接接管系统
-- **高兼容性**: 支持 Claude / Gemini / Kimi 等主流模型，跨平台运行 
+- **极简架构**: ~3K 行核心代码，Agent Loop 约百行，无复杂依赖，部署零负担
+- **强执行力**: 注入真实浏览器（保留登录态），9 个原子工具直接接管系统
+- **高兼容性**: 支持 Claude / Gemini / Kimi / MiniMax 等主流模型，跨平台运行
+- **极致省 Token**: 上下文窗口不到 30K，是其他 Agent（200K–1M）的零头。分层记忆让关键信息始终在场——噪声更少，幻觉更低，成功率反而更高，而成本低一个数量级。
 
 ## 🧬 自我进化机制
 
@@ -326,7 +243,7 @@ MIT License — see [LICENSE](LICENSE)
 | *"监控股票并提醒我"* | 安装 mootdx → 构建选股流程 → 配置定时任务 → 保存 Skill | **一句话启动** |
 | *"用 Gmail 发这个文件"* | 配置 OAuth → 编写发送脚本 → 保存 Skill | **直接可用** |
 
-用几周后，你的 Agent 实例将拥有一套任何人都没有的专属技能树，全部从 3,300 行种子代码中生长而来。
+用几周后，你的 Agent 实例将拥有一套任何人都没有的专属技能树，全部从 3K 行种子代码中生长而来。
 
 <!-- | *"帮我读取微信消息"* | 安装依赖 → 逆向数据库 → 写读取脚本 → 保存 Skill | **一句话调用** | -->
 
@@ -344,87 +261,55 @@ MIT License — see [LICENSE](LICENSE)
 
 ## 📅 最新动态
 
+- **2026-04-11:** 引入 **L4 会话归档记忆**，并接入 scheduler cron 调度
+- **2026-03-23:** 支持个人微信接入作为 Bot 前端
 - **2026-03-10:** [发布百万级 Skill 库](https://mp.weixin.qq.com/s/q2gQ7YvWoiAcwxzaiwpuiQ?scene=1&click_id=7)
 - **2026-03-08:** [发布以 GenericAgent 为核心的"政务龙虾" Dintal Claw](https://mp.weixin.qq.com/s/eiEhwo-j6S-WpLxgBnNxBg)
 - **2026-03-01:** [GenericAgent 被机器之心报道](https://mp.weixin.qq.com/s/uVWpTTF5I1yzAENV_qm7yg)
-- **2026-01-11:** GenericAgent V1.0 公开版本发布
+- **2026-01-16:** GenericAgent V1.0 公开版本发布
 
 ---
 
 ## 🚀 快速开始
 
-#### 方法一：保留原有桌面 / Streamlit 方式
+#### 方法一：标准安装
 
 ```bash
 # 1. 克隆仓库
 git clone https://github.com/lsdefine/GenericAgent.git
 cd GenericAgent
 
-# 2. 安装 GUI 依赖
+# 2. 安装最小依赖
 pip install streamlit pywebview
 
-# 3. 启动原有桌面窗口
+# 3. 配置 API Key
+cp mykey_template.py mykey.py
+# 编辑 mykey.py，填入你的 LLM API Key
+
+# 4. 启动
 python launch.pyw
 ```
 
-#### 方法二：新增 CLI 方式
+完整引导流程见 [GETTING_STARTED.md](GETTING_STARTED.md)。
 
-```bash
-# 1. 克隆仓库
-git clone https://github.com/lsdefine/GenericAgent.git
-cd GenericAgent
+📖 新手使用指南（图文版）：[飞书文档](https://my.feishu.cn/wiki/CGrDw0T76iNFuskmwxdcWrpinPb)
 
-# 2. 安装 CLI 依赖
-pip install prompt_toolkit rich
-
-# 3. 启动 CLI 新手引导
-python cli.py
-
-# CLI 会一步步引导你：
-# - 选择模型厂商
-# - 填写 apikey / apibase / model
-# - 可选配置聊天机器人
-```
-
-初始化完成后，CLI 还支持：
-- `/model`：切换、添加、编辑、删除模型，以及设置默认模型
-- `/chatbot`：查看机器人状态、启动/停止机器人、补全机器人配置
-- `/auto` 和 `/auto-now`：空闲自主行动
-- 命令下拉补全，以及 `ask_user` 的上下键候选选择
-
-#### 方法三：Windows 便携版（推荐新手）
-
-[下载便携版](http://kw.fudan.edu.cn/resources/PC-Agent-Portable.zip)（19MB，解压即用）
-
-完整引导流程见 [WELCOME_NEW_USER.md](WELCOME_NEW_USER.md)。
-
-#### 方法四：Android（Termux）
-
-```bash
-cd /sdcard/ga
-python agentmain.py
-```
+📘 完整入门教程（Datawhale 出品）：[Hello GenericAgent](https://datawhalechina.github.io/hello-generic-agent/) · [GitHub](https://github.com/datawhalechina/hello-generic-agent)
 
 ---
 
 ## 🤖 Bot 接口（可选）
 
-原有桌面 / Streamlit 方式仍然保留，CLI 只是新增入口。
+### 微信 Bot（个人微信）
 
-除了直接运行各个平台脚本，也可以使用新增的 CLI 方式：
+无需额外配置，扫码登录即可：
 
 ```bash
-python cli.py
-# 然后输入 /chatbot
+pip install pycryptodome qrcode requests
+python frontends/wechatapp.py
 ```
 
-`/chatbot` 面板会：
-- 展示哪些机器人已配置、哪些正在运行
-- 在启动前检查依赖和必要配置
-- 统一启动/停止机器人
-- 引导补全机器人配置
-
-在 CLI 引导或 `/chatbot` 配置过程中，QQ / 飞书 / 企业微信 / 钉钉会默认把 `*_allowed_users` 写成 `['*']`；Telegram 则会要求你显式填写自己的 `user_id`。
+> 首次启动会弹出二维码，用微信扫码完成绑定。之后通过微信消息与 Agent 交互。
 
 ### QQ Bot
 
@@ -439,13 +324,11 @@ pip install qq-botpy
 ```python
 qq_app_id = "YOUR_APP_ID"
 qq_app_secret = "YOUR_APP_SECRET"
-qq_allowed_users = ["*"]  # 可选，CLI 向导默认公开访问
+qq_allowed_users = ["YOUR_USER_OPENID"]  # 或 ['*'] 公开访问
 ```
 
 ```bash
 python frontends/qqapp.py
-# 或与桌面悬浮窗一起启动
-python launch.pyw --qq
 ```
 
 > 在 [QQ 开放平台](https://q.qq.com) 创建机器人获取 AppID / AppSecret。首次消息后，用户 openid 记录于 `temp/qqapp.log`。
@@ -454,13 +337,13 @@ python launch.pyw --qq
 
 ```bash
 pip install lark-oapi
-python frontends/fsapp.py          # 或 python launch.pyw --feishu
+python frontends/fsapp.py
 ```
 
 ```python
 fs_app_id = "cli_xxx"
 fs_app_secret = "xxx"
-fs_allowed_users = ["*"]  # 可选，CLI 向导默认公开访问
+fs_allowed_users = ["ou_xxx"]  # 或 ['*']
 ```
 
 **入站支持**：文本、富文本 post、图片、文件、音频、media、交互卡片 / 分享卡片  
@@ -474,13 +357,13 @@ fs_allowed_users = ["*"]  # 可选，CLI 向导默认公开访问
 
 ```bash
 pip install wecom_aibot_sdk
-python frontends/wecomapp.py       # 或 python launch.pyw --wecom
+python frontends/wecomapp.py
 ```
 
 ```python
 wecom_bot_id = "your_bot_id"
 wecom_secret = "your_bot_secret"
-wecom_allowed_users = ["*"]  # 可选
+wecom_allowed_users = ["your_user_id"]
 wecom_welcome_message = "你好，我在线上。"
 ```
 
@@ -488,39 +371,43 @@ wecom_welcome_message = "你好，我在线上。"
 
 ```bash
 pip install dingtalk-stream
-python frontends/dingtalkapp.py    # 或 python launch.pyw --dingtalk
+python frontends/dingtalkapp.py
 ```
 
 ```python
 dingtalk_client_id = "your_app_key"
 dingtalk_client_secret = "your_app_secret"
-dingtalk_allowed_users = ["*"]  # 可选
+dingtalk_allowed_users = ["your_staff_id"]  # 或 ['*']
 ```
 
+### 其他 App 前端
 
-### Telegram Bot
-
-```python
-# mykey.py
-tg_bot_token = 'YOUR_BOT_TOKEN'
-tg_allowed_users = [YOUR_TELEGRAM_USER_ID]
-```
+除默认的 Streamlit Web UI 外，还可以尝试不同风格的前端：
 
 ```bash
-python frontends/tgapp.py
+python frontends/qtapp.py                # 基于 Qt 的桌面应用
+streamlit run frontends/stapp2.py        # 另一种 Streamlit 风格 UI
 ```
+
+### 通用聊天命令
+
+默认通过 `python launch.pyw` 启动的 Streamlit 桌面 UI，以及 QQ / 飞书 / 企业微信 / 钉钉前端，都支持以下命令：
+
+- `/new` - 开启新对话并清空当前上下文
+- `/continue` - 列出可恢复会话快照
+- `/continue N` - 恢复第 `N` 个可恢复会话
 
 
 ## 📊 与同类产品对比
 
 | 特性 | GenericAgent | OpenClaw | Claude Code |
 |------|:---:|:---:|:---:|
-| **代码量** | ~3,300 行 | ~530,000 行 | 已开源（体量大） |
+| **代码量** | ~3K 行 | ~530,000 行 | 已开源（体量大） |
 | **部署方式** | `pip install` + API Key | 多服务编排 | CLI + 订阅 |
 | **浏览器控制** | 注入真实浏览器（保留登录态） | 沙箱 / 无头浏览器 | 通过 MCP 插件 |
 | **OS 控制** | 键鼠、视觉、ADB | 多 Agent 委派 | 文件 + 终端 |
 | **自我进化** | 自主生长 Skill 和工具 | 插件生态 | 会话间无状态 |
-| **出厂配置** | 10 个 .py + 5 个 Skills | 数百模块 | 丰富 CLI 工具集 |
+| **出厂配置** | 几个核心文件 + 少量初始 Skills | 数百模块 | 丰富 CLI 工具集 |
 
 
 ## 🧠 工作机制
@@ -532,17 +419,19 @@ GenericAgent 通过**分层记忆 × 最小工具集 × 自主执行循环**完�
 
 
 - **L0 — 元规则（Meta Rules）**：Agent 的基础行为规则和系统约束
+- **L1 — 记忆索引（Insight Index）**：极简索引层，用于快速路由与召回
 - **L2 — 全局事实（Global Facts）**：在长期运行过程中积累的稳定知识
-- **L3 — 任务 Skills（Standard Operating Procedure）**：完成特定任务的操作流程
+- **L3 — 任务 Skills / SOPs**：完成特定任务类型的可复用流程
+- **L4 — 会话归档（Session Archive）**：从已完成任务中提炼出的归档记录，用于长程召回
 
 2️⃣ **自主执行循环**
 
 > 感知环境状态  →  任务推理  →  调用工具执行  →  经验写入记忆  →  循环
 
-整个核心循环仅 **92 行代码**（`agent_loop.py`）。
+整个核心循环仅 **约百行代码**（`agent_loop.py`）。
 
 3️⃣ **最小工具集**
->GenericAgent 仅提供 **7 个原子工具**，构成与外部世界交互的基础能力
+>GenericAgent 仅提供 **9 个原子工具**，构成与外部世界交互的基础能力
 
 | 工具 | 功能 |
 |------|------|
@@ -566,15 +455,38 @@ GenericAgent 通过**分层记忆 × 最小工具集 × 自主执行循环**完�
   <br><em>GenericAgent 工作流程图</em>
 </div>
 
-
 ## ⭐ 支持
 如果这个项目对您有帮助，欢迎点一个 **Star!** 🙏
 
 同时也欢迎加入我们的**GenericAgent体验交流群**，一起交流、反馈和共建 👏
 <div align="center">
-<img src="assets/images/wechat_group.jpg" width="280"/>
+  <table>
+    <tr>
+      <td align="center"><strong>微信群 5</strong><br><img src="assets/images/wechat_group5.jpg" alt="微信群 5 二维码" width="250"/></td>
+      <td align="center"><strong>微信群 6</strong><br><img src="assets/images/wechat_group6.jpg" alt="微信群 6 二维码" width="250"/></td>
+      <td align="center"><strong>微信群 7</strong><br><img src="assets/images/wechat_group7.jpg" alt="微信群 7 二维码" width="250"/></td>
+    </tr>
+  </table>
 </div>
+
+## 🚩 友情链接
+
+感谢 **LinuxDo** 社区的支持！
+
+[![LinuxDo](https://img.shields.io/badge/社区-LinuxDo-blue?style=for-the-badge)](https://linux.do/)
 
 
 ## 📄 许可
 MIT License — 详见 [LICENSE](LICENSE)
+
+*声明：本项目未构建任何商业站点；除 DintalClaw 外，目前未官方授权任何机构、组织或个人以 GenericAgent 名义从事商业活动。*
+
+## 📈 Star History
+
+<a href="https://star-history.com/#lsdefine/GenericAgent&Date">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=lsdefine/GenericAgent&type=Date&theme=dark" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=lsdefine/GenericAgent&type=Date" />
+   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=lsdefine/GenericAgent&type=Date" />
+ </picture>
+</a>

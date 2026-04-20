@@ -107,6 +107,9 @@
 #                   默认 False。关键字段：**所有反代/镜像 Claude Code 协议的渠道
 #                   都必须置 True**（CC switch、anyrouter、claude-relay-service
 #                   等）。真 Anthropic 端点（sk-ant-）不需要开。
+#   user_agent      默认 'claude-cli/2.1.113 (external, cli)'。可传入任意版本号
+#                   字符串覆盖。某些第三方中转（tabcode、anyrouter 等）会按 UA
+#                   白名单校验，CC 升版本后被拒可在此 pin 老版本绕过。
 # ══════════════════════════════════════════════════════════════════════════════
 
 
@@ -123,8 +126,10 @@
 #  llm_nos 里的字符串必须和被引用 session 的 'name' 字段匹配（也可以写整数索
 #  引）。约束：引用的 session 必须全是 Native 系列（NativeClaudeSession 和
 #  NativeOAISession 可以混用）或者全不是 Native，不能 Native 与非 Native 混。
+#  请你按需
 mixin_config = {
-    'llm_nos': ['cc-relay-1', 'cc-relay-2', 'gpt-native'],  # 按优先级排列；Claude 与 GPT 混用
+    'llm_nos': ['gpt-native'],   # 按优先级排列；Claude 与 GPT 混用
+    # 'llm_nos': ['cc-relay-1', 'cc-relay-2', 'gpt-native'],  # 按优先级排列；Claude 与 GPT 混用，注意: 启用时需要启用'cc-relay-1', 'cc-relay-2'配置!
     'max_retries': 10,           # int；整个 rotation 的总重试次数上限
     'base_delay': 0.5,           # float 秒；指数退避起始延迟（retry n 时延迟≈base_delay * 2^n）
     # 'spring_back': 300,        # int 秒；切到备用节点后多久再尝试回到第一个节点
@@ -142,24 +147,27 @@ mixin_config = {
 # ── 1a. CC switch 适配渠道（最常用）────────────────────────────────────────
 #  这类渠道把 Claude Code 协议透传到上游，apikey 格式各异（sk-user-*, sk-*, cr_*
 #  等），统一走 Bearer 鉴权。必须设置 fake_cc_system_prompt=True。
-native_claude_config0 = {
-    'name': 'cc-relay-1',                       # /llms 显示名 & mixin 引用名
-    'apikey': 'sk-user-<your-relay-key>',        # 非 sk-ant- 前缀 → Bearer 鉴权
-    'apibase': 'https://<your-cc-switch-host>/claude/office',   # CC switch 端点
-    'model': 'claude-opus-4-6',                  # 或 claude-sonnet-4-6
-    'fake_cc_system_prompt': True,               # CC 透传渠道必须置 True
-}
+# native_claude_config0 = {
+#     'name': 'cc-relay-1',                        # /llms 显示名 & mixin 引用名
+#     'apikey': 'sk-user-<your-relay-key>',        # 非 sk-ant- 前缀 → Bearer 鉴权
+#     'apibase': 'https://<your-cc-switch-host>/claude/office',   # CC switch 端点
+#     'model': 'claude-opus-4-7',                  # 或 claude-sonnet-4-6
+#     'fake_cc_system_prompt': True,               # CC 透传渠道必须置 True
+#     'thinking_type': 'adaptive',                 # 某些渠道必须要求填写thinking_type字段
+# }
 
-native_claude_config1 = {
-    'name': 'cc-relay-2',                        # /llms 显示名 & mixin 引用名
-    'apikey': 'sk-<your-second-relay-key>',
-    'apibase': 'https://<your-second-host>',
-    'model': 'claude-opus-4-6[1m]',              # [1m] 触发 1m 上下文 beta
-    'fake_cc_system_prompt': True,
-    'max_retries': 3,
-    'read_timeout': 300,                         # 1m 上下文响应可能较慢
-    # 'stream': False,                           # 某些渠道不支持 SSE 流式时改 False
-}
+# native_claude_config1 = {
+#     'name': 'cc-relay-2',                        # /llms 显示名 & mixin 引用名
+#     'apikey': 'sk-<your-second-relay-key>',
+#     'apibase': 'https://<your-second-host>',
+#     'model': 'claude-opus-4-7[1m]',              # [1m] 触发 1m 上下文 beta
+#     'fake_cc_system_prompt': True,
+#     'thinking_type': 'adaptive',                 # 某些渠道必须要求填写thinking_type字段
+#     'max_retries': 3,
+#     'read_timeout': 300,                         # 1m 上下文响应可能较慢
+#     'stream': False,                             # 某些渠道不支持 SSE 流式时改 False
+#     # 'user_agent': 'claude-cli/2.1.113 (external, cli)',
+# }
 
 # ── 1b. Anthropic 官方直连 ──────────────────────────────────────────────────
 #  官方端点，apikey 以 sk-ant- 开头 → 自动切到 x-api-key 鉴权。
@@ -168,7 +176,7 @@ native_claude_config1 = {
 #     'name': 'anthropic-direct',              # /llms 显示名 & mixin 引用名
 #     'apikey': 'sk-ant-<your-anthropic-key>', # sk-ant- 前缀 → 自动走 x-api-key 头
 #     'apibase': 'https://api.anthropic.com',  # NativeClaudeSession 自动附加 ?beta=true
-#     'model': 'claude-opus-4-6[1m]',          # [1m] 触发 1m 上下文 beta
+#     'model': 'claude-opus-4-7[1m]',          # [1m] 触发 1m 上下文 beta
 #     # ── 思考控制（thinking_type 与 reasoning_effort 独立，可同时写）──
 #     'thinking_type': 'adaptive',             # 合法值: 'adaptive' / 'enabled' / 'disabled'
 #                                              #   adaptive = Claude Code 默认，模型自决预算
@@ -199,7 +207,7 @@ native_claude_config1 = {
 #     'name': 'crs-claude-max',                # /llms 显示名
 #     'apikey': 'cr_<your-crs-key>',           # cr_ 开头 → Bearer 鉴权（64 位 hex）
 #     'apibase': 'https://<your-crs-host>/api',# CRS 的 Anthropic 兼容路径
-#     'model': 'claude-opus-4-6[1m]',          # [1m] 触发 1m beta
+#     'model': 'claude-opus-4-7[1m]',          # [1m] 触发 1m beta
 #     'fake_cc_system_prompt': True,           # bool 必填 True；CRS 也校验 CC 系统串
 #     'thinking_type': 'adaptive',             # 'adaptive'/'enabled'/'disabled'
 #     # 'reasoning_effort': 'high',            # 可选；写进 output_config.effort
@@ -211,15 +219,15 @@ native_claude_config1 = {
 # ── 1d. CRS Gemini Ultra (Antigravity 通道) ─────────────────────────────────
 #  CRS 把 Google Antigravity (Gemini Ultra) 包装成 Anthropic 风格接口。
 #  URL 路径带 /antigravity/api：
-#    - 'claude-opus-4-6-thinking'  (CRS 原始名)
-#    - 'claude-opus-4-6[1m]'       (触发 1m beta，CRS 会忽略多余的 beta)
-#    - 'claude-opus-4-6'           (最简)
+#    - 'claude-opus-4-7-thinking'  (CRS 原始名)
+#    - 'claude-opus-4-7[1m]'       (触发 1m beta，CRS 会忽略多余的 beta)
+#    - 'claude-opus-4-7'           (最简)
 #  ⚠ 此通道不支持 SSE 流式，必须 stream=False。
 # native_claude_config_crs_gemini = {
 #     'name': 'crs-gemini-ultra',              # /llms 显示名
 #     'apikey': 'cr_<your-crs-gemini-key>',    # cr_ 前缀 → Bearer
 #     'apibase': 'https://<your-crs-gemini-host>/antigravity/api',
-#     'model': 'claude-opus-4-6-thinking',     # 或 'claude-opus-4-6[1m]' 或 'claude-opus-4-6'
+#     'model': 'claude-opus-4-7-thinking',     # 或 'claude-opus-4-7[1m]' 或 'claude-opus-4-7'
 #     'stream': False,                         # Antigravity 不支持 SSE 流式，stream=True 会返回伪错误
 #     'max_tokens': 32768,                     # int
 #     'max_retries': 3,                        # int
@@ -309,7 +317,7 @@ native_oai_config = {
 #     'name': 'my-oai-proxy',                          # /llms 显示名 & mixin 引用名
 #     'apikey': 'sk-<your-proxy-key>',                 # Bearer 鉴权
 #     'apibase': 'http://<your-proxy-host>:2001',      # 自动补 /v1/chat/completions
-#     'model': 'gpt-5.4',                              # 或 claude-opus-4-6、gemini-3-flash 等
+#     'model': 'gpt-5.4',                              # 或 claude-opus-4-7、gemini-3-flash 等
 #     'api_mode': 'chat_completions',                  # 'chat_completions'（默认）|'responses'
 #     # 'reasoning_effort': 'high',                    # none|minimal|low|medium|high|xhigh
 #     'max_retries': 3,                                # int 默认 1
@@ -325,7 +333,7 @@ native_oai_config = {
 # # oai_config2 = {
 # #     'apikey': 'sk-...',
 # #     'apibase': 'http://your-proxy:2001',
-# #     'model': 'claude-opus-4-6',
+# #     'model': 'claude-opus-4-7',
 # # }
 
 
@@ -359,12 +367,12 @@ native_oai_config = {
 
 # ── 4c. OpenRouter (OAI 协议多模型中继) ─────────────────────────────────────
 #  OpenRouter 是最通用的多模型 OAI 中继，https://openrouter.ai/api/v1。
-#  model 名用 provider/model 格式（如 anthropic/claude-opus-4-6）。
+#  model 名用 provider/model 格式（如 anthropic/claude-opus-4-7）。
 # oai_config_openrouter = {
 #     'name': 'openrouter-claude',                   # /llms 显示名 & mixin 引用名；省略则取 model
 #     'apikey': 'sk-or-<your-openrouter-key>',       # OpenRouter key 形如 sk-or-xxx；Bearer 鉴权
 #     'apibase': 'https://openrouter.ai/api/v1',     # 补齐到 /v1/chat/completions
-#     'model': 'anthropic/claude-opus-4-6',          # provider/model 格式
+#     'model': 'anthropic/claude-opus-4-7',          # provider/model 格式
 #     'max_retries': 3,                              # int 默认 1
 #     'connect_timeout': 10,                         # int 秒 默认 5（最小 1）
 #     'read_timeout': 120,                           # int 秒 默认 30（最小 5）
@@ -395,3 +403,10 @@ native_oai_config = {
 # dingtalk_client_id = 'your_app_key'
 # dingtalk_client_secret = 'your_app_secret'
 # dingtalk_allowed_users = ['your_staff_id']        # 留空或 ['*'] 表示允许所有钉钉用户
+
+# 可选：Langfuse 追踪。不设此项则不 import langfuse，零影响
+# langfuse_config = {
+#     'public_key': 'pk-lf-...',
+#     'secret_key': 'sk-lf-...',
+#     'host': 'https://cloud.langfuse.com',   # 或自托管地址
+# }

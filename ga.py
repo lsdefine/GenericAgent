@@ -290,15 +290,6 @@ class GenericAgentHandler(BaseHandler):
         if generic: return (candidates[0] if candidates else "python"), generic[-1].strip()
         return None, None
 
-    def _code_run_retry_hint(self):
-        project_root = os.path.abspath(os.path.join(self.cwd, '..'))
-        return (
-            "[System] Invalid code_run call. Provide a non-empty arguments.script, or put exactly one fenced "
-            "code block immediately before the tool call. Never call code_run with only type/cwd/inline_eval. "
-            f"Runtime scratch cwd is {self.cwd}. Project root is {project_root}; use cwd:'../' for the current "
-            "project folder/repo root. If you only need to inspect existing files, prefer file_read."
-        )
-
     def do_code_run(self, args, response):
         '''执行代码片段，有长度限制，不允许代码中放大量数据，如有需要应当通过文件读取进行。'''
         explicit_type = args.get("type")
@@ -308,10 +299,7 @@ class GenericAgentHandler(BaseHandler):
             inferred_type, inferred_code = self._extract_code_block(response, code_type if explicit_type else None)
             code_type, code = inferred_type or code_type, inferred_code
             if not code:
-                return StepOutcome(
-                    "[Error] code_run requires a non-empty script. Use arguments.script or exactly one fenced code block immediately before the tool call.",
-                    next_prompt=self._get_anchor_prompt(skip=args.get('_index', 0) > 0) + "\n" + self._code_run_retry_hint()
-                )
+                return StepOutcome("[Error] Code missing. Must use reply code block or 'script' arg.", next_prompt="\n")
         timeout = args.get("timeout", 60)
         raw_path = os.path.join(self.cwd, args.get("cwd", './'))
         cwd = os.path.normpath(os.path.abspath(raw_path))
@@ -589,5 +577,11 @@ def get_global_memory():
         prompt += f"\n[Memory] (../memory)\n"
         prompt += structure + '\n../memory/global_mem_insight.txt:\n'
         prompt += insight + "\n"
+        # L2: 注入全局记忆
+        l2_path = os.path.join(script_dir, 'memory/global_mem.txt')
+        if os.path.exists(l2_path):
+            with open(l2_path, 'r', encoding='utf-8', errors='replace') as f: l2_content = f.read()
+            if l2_content.strip():
+                prompt += "\n../memory/global_mem.txt (L2环境事实):\n" + l2_content + "\n"
     except FileNotFoundError: pass
     return prompt

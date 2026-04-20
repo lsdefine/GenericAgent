@@ -77,13 +77,15 @@ class GeneraticAgent:
         self.llmclient = self.llmclients[self.llm_no]
         self.llmclient.backend.history = lastc.backend.history
         self.llmclient.last_tools = ''
-        name = self.get_llm_name().lower()
+        name = self.get_llm_name(model=True)
         if 'glm' in name or 'minimax' in name or 'kimi' in name: load_tool_schema('_cn')
         else: load_tool_schema()
     def list_llms(self): return [(i, self.get_llm_name(b), i == self.llm_no) for i, b in enumerate(self.llmclients)]
-    def get_llm_name(self, b=None):
+    def get_llm_name(self, b=None, model=False):
         b = self.llmclient if b is None else b
-        return f"{type(b.backend).__name__}/{b.backend.name}" if not isinstance(b, dict) else "BADCONFIG_MIXIN"
+        if isinstance(b, dict): return 'BADCONFIG_MIXIN'
+        if model: return b.backend.model.lower()
+        return f"{type(b.backend).__name__}/{b.backend.name}"
 
     def abort(self):
         if not self.is_running: return
@@ -109,7 +111,7 @@ class GeneraticAgent:
             display_queue.put({'done': smart_format(f"✅ session.{k} = {repr(v)}", max_str_len=500), 'source': 'system'})
             return None
         if raw_query.strip() == '/resume':
-            return '简单看看model_responses中的最近几次对话结尾部分(除了本次)，分别简单总结一下让我选择，然后你简单阅读了解情况后作为我们接下来聊天的基础'
+            return r'用re.findall(r"<history>\\n\[(?:USER\|Agent)\].*?</history>", content, re.DOTALL) 扫temp/model_responses/下时间最近的10个文件(除本PID)，取每文件最后一个匹配(注意JSON里换行是字面\\n)作为该会话内容，按mtime倒序，每个用一句话总结聊了什么让我选择；选定后再简单读该文件末尾作为聊天基础'
         return raw_query
 
     def run(self):
@@ -135,11 +137,10 @@ class GeneraticAgent:
             user_input = raw_query
             if source == 'feishu' and len(self.history) > 1:   # 如果有历史记录且来自飞书，注入到首轮 user_input 中（支持/restore恢复上下文）
                 user_input = handler._get_anchor_prompt() + f"\n\n### 用户当前消息\n{raw_query}"
-            initial_user_content = None
+            if 'gpt' in self.get_llm_name(model=True): handler._done_hooks.append('请确定用户任务是否完成，如未完成需要继续工具调用直到完成任务，确实需要问用户应使用ask_user工具')
             # although new handler, the **full** history is in llmclient, so it is full history!
             gen = agent_runner_loop(self.llmclient, sys_prompt, user_input, 
-                                handler, TOOLS_SCHEMA, max_turns=40, verbose=self.verbose,
-                                initial_user_content=initial_user_content)
+                                handler, TOOLS_SCHEMA, max_turns=40, verbose=self.verbose)
             try:
                 full_resp = ""; last_pos = 0
                 for chunk in gen:

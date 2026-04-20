@@ -71,6 +71,27 @@ def _sanitize_leading_user_msg(msg):
     msg['content'] = [{"type": "text", "text": '\n'.join(t for t in texts if t)}]
     return msg
 
+def _normalize_content_blocks(content):
+    """Normalize message content into Claude content-block list."""
+    if isinstance(content, list):
+        blocks = []
+        for block in content:
+            if isinstance(block, dict):
+                blocks.append(block)
+            elif isinstance(block, str):
+                blocks.append({"type": "text", "text": block})
+            else:
+                blocks.append({"type": "text", "text": str(block)})
+        return blocks or [{"type": "text", "text": ""}]
+    if isinstance(content, dict):
+        return [content]
+    return [{"type": "text", "text": "" if content is None else str(content)}]
+
+def _with_ephemeral_last_block(content):
+    blocks = _normalize_content_blocks(content)
+    blocks[-1] = dict(blocks[-1], cache_control={"type": "ephemeral"})
+    return blocks
+
 def trim_messages_history(history, context_win):
     compress_history_tags(history)
     cost = sum(len(json.dumps(m, ensure_ascii=False)) for m in history) 
@@ -238,13 +259,26 @@ def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
             blocks.append({"type": "tool_use", "id": tc["id"], "name": tc["name"], "input": inp})
         return blocks
 
+def _record_usage(usage, api_mode):
+    if not usage: return
+    if api_mode == 'responses':
+        cached = (usage.get("input_tokens_details") or {}).get("cached_tokens", 0)
+        inp = usage.get("input_tokens", 0)
+        print(f"[Cache] input={inp} cached={cached}")
+    elif api_mode == 'chat_completions':
+        cached = (usage.get("prompt_tokens_details") or {}).get("cached_tokens", 0)
+        inp = usage.get("prompt_tokens", 0)
+        print(f"[Cache] input={inp} cached={cached}")
+    elif api_mode == 'messages':
+        ci = usage.get("cache_creation_input_tokens", 0)
+        cr = usage.get("cache_read_input_tokens", 0)
+        inp = usage.get("input_tokens", 0)
+        print(f"[Cache] input={inp} creation={ci} read={cr}")
+
 def _parse_openai_json(data, api_mode="chat_completions"):
     """Parse non-stream OpenAI-compatible JSON into content blocks."""
     if api_mode == "responses":
-        usage = data.get("usage", {})
-        cached = (usage.get("input_tokens_details") or {}).get("cached_tokens", 0)
-        inp = usage.get("input_tokens", 0)
-        if inp: print(f"[Cache] input={inp} cached={cached}")
+        _record_usage(data.get("usage") or {}, api_mode)
         blocks = []
         for item in (data.get("output") or []):
             if item.get("type") == "message":
@@ -259,9 +293,7 @@ def _parse_openai_json(data, api_mode="chat_completions"):
                 except: inp = {"_raw": args}
                 blocks.append({"type": "tool_use", "id": item.get("call_id", item.get("id", "")), "name": item.get("name", ""), "input": inp})
         return blocks
-    usage = data.get("usage") or {}
-    cached = (usage.get("prompt_tokens_details") or {}).get("cached_tokens", 0)
-    if usage: print(f"[Cache] input={usage.get('prompt_tokens',0)} cached={cached}")
+    _record_usage(data.get("usage") or {}, api_mode)
     msg = ((data.get("choices") or [{}])[0]).get("message") or {}
     content = msg.get("content", "")
     text = ""
@@ -539,10 +571,10 @@ class ClaudeSession(BaseSession):
             yield (err := f"Error: {e}")
             return [{"type": "text", "text": err}]
     def make_messages(self, raw_list):
-        msgs = [{"role": m['role'], "content": list(m['content'])} for m in raw_list]
+        msgs = [{"role": m['role'], "content": _normalize_content_blocks(m.get('content'))} for m in raw_list]
         user_idxs = [i for i, m in enumerate(msgs) if m['role'] == 'user']
         for idx in user_idxs[-2:]:
-            msgs[idx]["content"][-1] = dict(msgs[idx]["content"][-1], cache_control={"type": "ephemeral"})
+            msgs[idx]["content"] = _with_ephemeral_last_block(msgs[idx]["content"])
         return msgs
 
 class LLMSession(BaseSession):
@@ -602,12 +634,13 @@ class NativeClaudeSession(BaseSession):
         else: print("[ERROR] No tools provided for this session.")
         payload['system'] = [{"type": "text", "text": "You are Claude Code, Anthropic's official CLI for Claude.", "cache_control": {"type": "ephemeral"}}]
         if self.system:
-            if self.fake_cc_system_prompt: messages[0]["content"].insert(0, {"type": "text", "text": self.system})
+            if self.fake_cc_system_prompt:
+                messages[0]["content"] = _normalize_content_blocks(messages[0].get("content"))
+                messages[0]["content"].insert(0, {"type": "text", "text": self.system})
             else: payload["system"] = [{"type": "text", "text": self.system}]
         user_idxs = [i for i, m in enumerate(messages) if m['role'] == 'user']
         for idx in user_idxs[-2:]:
-            messages[idx] = {**messages[idx], "content": list(messages[idx]["content"])}
-            messages[idx]["content"][-1] = dict(messages[idx]["content"][-1], cache_control={"type": "ephemeral"})
+            messages[idx] = {**messages[idx], "content": _with_ephemeral_last_block(messages[idx].get("content"))}
         try:
             with requests.Session() as sess:
                 sess.trust_env = False
@@ -617,8 +650,7 @@ class NativeClaudeSession(BaseSession):
                     if self.stream: return (yield from _parse_claude_sse(resp.iter_lines())) or []
                     else:
                         data = resp.json(); content_blocks = data.get("content", [])
-                        usage = data.get("usage", {})
-                        print(f"[Cache] input={usage.get('input_tokens',0)} creation={usage.get('cache_creation_input_tokens',0)} read={usage.get('cache_read_input_tokens',0)}")
+                        _record_usage(data.get("usage", {}), "messages")
                         for b in content_blocks:
                             if b.get("type") == "text": yield b.get("text", "")
                             elif b.get("type") == "thinking": yield ""
@@ -632,7 +664,7 @@ class NativeClaudeSession(BaseSession):
         with self.lock:
             self.history.append(msg)
             trim_messages_history(self.history, self.context_win)
-            messages = [{"role": m["role"], "content": list(m["content"])} for m in self.history]
+            messages = [{"role": m["role"], "content": _normalize_content_blocks(m.get("content"))} for m in self.history]
         content_blocks = None
         gen = self.raw_ask(messages)
         try:

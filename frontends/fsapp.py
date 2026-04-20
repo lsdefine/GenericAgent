@@ -4,6 +4,8 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 os.chdir(PROJECT_ROOT)
 from agentmain import GeneraticAgent
+from frontends.chatapp_common import format_restore
+from frontends.continue_cmd import handle_frontend_command as handle_continue_frontend, reset_conversation
 from llmcore import mykeys
 
 import lark_oapi as lark
@@ -221,7 +223,7 @@ def _extract_post_content(content_json):
 
 APP_ID = str(mykeys.get("fs_app_id", "") or "").strip()
 APP_SECRET = str(mykeys.get("fs_app_secret", "") or "").strip()
-ALLOWED_USERS = _to_allowed_set(mykeys.get("fs_allowed_users", ["*"]))
+ALLOWED_USERS = _to_allowed_set(mykeys.get("fs_allowed_users", []))
 PUBLIC_ACCESS = not ALLOWED_USERS or "*" in ALLOWED_USERS
 
 agent = GeneraticAgent()
@@ -507,33 +509,24 @@ def handle_command(open_id, cmd, chat_id=None):
         agent.abort()
         _send_cmd_response("正在停止...")
     elif cmd == "/new":
-        agent.abort()
-        agent.history = []
-        _send_cmd_response("已清空当前共享上下文")
+        _send_cmd_response(reset_conversation(agent))
     elif cmd == "/help":
-        _send_cmd_response("命令列表:\n/stop - 停止当前任务\n/status - 查看状态\n/restore - 恢复上次对话历史\n/new - 开启新对话\n/help - 显示帮助")
+        _send_cmd_response("命令列表:\n/stop - 停止当前任务\n/status - 查看状态\n/restore - 恢复上次对话历史\n/continue - 列出可恢复会话\n/continue [n] - 恢复第 n 个会话\n/new - 开启新对话并清空当前上下文\n/help - 显示帮助")
     elif cmd == "/status":
         _send_cmd_response(f"状态: {'空闲' if not agent.is_running else '运行中'}")
     elif cmd == "/restore":
         try:
-            files = glob.glob("./temp/model_responses_*.txt")
-            if not files:
-                return _send_cmd_response("没有找到历史记录")
-            latest = max(files, key=os.path.getmtime)
-            with open(latest, "r", encoding="utf-8") as f:
-                content = f.read()
-            users = re.findall(r"=== USER ===\n(.+?)(?==== |$)", content, re.DOTALL)
-            resps = re.findall(r"=== Response ===.*?\n(.+?)(?==== Prompt|$)", content, re.DOTALL)
-            count = 0
-            for u, r in zip(users, resps):
-                u, r = u.strip(), r.strip()[:500]
-                if u and r:
-                    agent.history.extend([f"[USER]: {u}", f"[Agent] {r}"])
-                    count += 1
+            restored_info, err = format_restore()
+            if err:
+                return _send_cmd_response(err.replace("❌ ", ""))
+            restored, fname, count = restored_info
+            agent.history.extend(restored)
             agent.abort()
-            _send_cmd_response(f"已恢复 {count} 轮对话\n来源: {os.path.basename(latest)}\n(仅恢复上下文，请输入新问题继续)")
+            _send_cmd_response(f"已恢复 {count} 轮对话\n来源: {fname}\n(仅恢复上下文，请输入新问题继续)")
         except Exception as e:
             _send_cmd_response(f"恢复失败: {e}")
+    elif cmd.startswith("/continue"):
+        _send_cmd_response(handle_continue_frontend(agent, cmd))
     else:
         _send_cmd_response(f"未知命令: {cmd}")
 

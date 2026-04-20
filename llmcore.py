@@ -1,8 +1,16 @@
 import os, json, re, time, requests, sys, threading, urllib3, base64, mimetypes, uuid
-from datetime import datetime
-from ga_switch.diagnostics import classify_error, normalize_message, utcnow_iso
+from datetime import datetime, timezone
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 _RESP_CACHE_KEY = str(uuid.uuid4()) 
+
+
+def _utcnow_iso():
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _normalize_message(message, limit=2000):
+    text = "" if message is None else str(message).strip()
+    return text[:limit]
 
 def _load_mykeys():
     try:
@@ -460,64 +468,30 @@ class BaseSession:
         self.api_mode = 'responses' if mode in ('responses', 'response') else 'chat_completions'
         self.temperature = cfg.get('temperature', 1)
         self.max_tokens = cfg.get('max_tokens', 8192)
-        self.last_error_kind = None
         self.last_error_message = ''
         self.last_error_at = None
         self.last_ok_at = None
         self.last_status_code = None
         self.last_latency_ms = None
         self.last_ttfb_ms = None
-        self.route_id = cfg.get('route_id')
-        self.route_name = cfg.get('route_name')
-        self.route_kind = cfg.get('route_kind')
-        self.provider_id = cfg.get('provider_id')
-        self.provider_name = cfg.get('provider_name', self.name)
-        self.backend_kind = cfg.get('backend_kind')
-        self._diagnostic_recorder = cfg.get('_diagnostic_recorder')
 
     def _record_success(self, status_code=200, message='OK', extra=None):
         extra = dict(extra or {})
         self.last_status_code = status_code
-        self.last_ok_at = utcnow_iso()
-        self.last_error_kind = None
+        self.last_ok_at = _utcnow_iso()
         self.last_error_message = ''
         if 'latency_ms' in extra:
             self.last_latency_ms = extra.get('latency_ms')
         if 'ttfb_ms' in extra:
             self.last_ttfb_ms = extra.get('ttfb_ms')
-        if callable(self._diagnostic_recorder):
-            self._diagnostic_recorder({
-                'provider_id': self.provider_id,
-                'route_id': self.route_id,
-                'backend_name': self.name,
-                'ok': True,
-                'error_kind': None,
-                'message': normalize_message(message),
-                'status_code': status_code,
-                'extra': extra,
-            })
 
     def _record_error(self, message, *, status_code=None, body='', exc_type='', error_kind=None, extra=None):
-        kind = error_kind or classify_error(status_code=status_code, message=message, body=body, exc_type=exc_type)
-        self.last_error_kind = kind
-        self.last_error_message = normalize_message(message)
-        self.last_error_at = utcnow_iso()
+        self.last_error_message = _normalize_message(message)
+        self.last_error_at = _utcnow_iso()
         self.last_status_code = status_code
-        if callable(self._diagnostic_recorder):
-            self._diagnostic_recorder({
-                'provider_id': self.provider_id,
-                'route_id': self.route_id,
-                'backend_name': self.name,
-                'ok': False,
-                'error_kind': kind,
-                'message': self.last_error_message,
-                'status_code': status_code,
-                'extra': dict(extra or {}, body=normalize_message(body, 1200), exc_type=exc_type or None),
-            })
 
     def describe_diagnostics(self):
         return {
-            'last_error_kind': self.last_error_kind,
             'last_error_message': self.last_error_message,
             'last_error_at': self.last_error_at,
             'last_ok_at': self.last_ok_at,
@@ -968,7 +942,6 @@ class MixinSession:
         self.active_session_index = 0
         self.active_member_name = self._sessions[0].name
         self.last_switch_reason = ''
-        self.last_error_kind = None
         self.last_error_message = ''
         self.last_error_at = None
         self.last_ok_at = None
@@ -986,11 +959,10 @@ class MixinSession:
     @property
     def primary(self): return self._sessions[0]
     def _sync_diagnostics_from(self, session):
-        for attr in ('last_error_kind', 'last_error_message', 'last_error_at', 'last_ok_at', 'last_status_code', 'last_latency_ms', 'last_ttfb_ms'):
+        for attr in ('last_error_message', 'last_error_at', 'last_ok_at', 'last_status_code', 'last_latency_ms', 'last_ttfb_ms'):
             setattr(self, attr, getattr(session, attr, None))
     def describe_diagnostics(self):
         return {
-            'last_error_kind': self.last_error_kind,
             'last_error_message': self.last_error_message,
             'last_error_at': self.last_error_at,
             'last_ok_at': self.last_ok_at,

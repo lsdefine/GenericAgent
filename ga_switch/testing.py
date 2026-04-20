@@ -1,5 +1,8 @@
 import time
 
+from .diagnostics import classify_error
+from .runtime_bridge import build_test_client
+
 
 class ModelTester:
     def __init__(self, service):
@@ -11,12 +14,9 @@ class ModelTester:
             raise ValueError(f"Provider not found: {provider_id}")
         family = provider["backend_family"]
         test_cfg = self.service.store.get_test_config(family) or {}
-        client = self.service.build_client_from_provider(
+        client = build_test_client(
+            self.service,
             provider,
-            route_id=None,
-            route_name=f"test:{provider['name']}",
-            route_kind="single",
-            for_testing=True,
             override={
                 "model": test_cfg.get("test_model") or provider.get("model"),
                 "api_mode": test_cfg.get("api_mode") or provider.get("api_mode"),
@@ -42,7 +42,7 @@ class ModelTester:
         latency_ms = int((finished - started) * 1000)
         ttfb_ms = int(((first_chunk_at or finished) - started) * 1000)
         last_error = getattr(backend, "last_error_message", "") or ""
-        error_kind = getattr(backend, "last_error_kind", None)
+        error_kind = classify_error(status_code=getattr(backend, "last_status_code", None), message=last_error) if last_error else None
         success = not (raw_text.startswith("Error:") or last_error)
         status = "healthy" if success else "failed"
         if success and latency_ms >= 15000:

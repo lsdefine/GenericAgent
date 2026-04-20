@@ -2,9 +2,28 @@ import importlib.util
 import json
 import os
 
-from .models import PROVIDER_BACKEND_KINDS, is_native_backend_kind
+from .diagnostics import classify_error, normalize_message
 from .store import GASwitchStore
 from .testing import ModelTester
+
+
+SAFE_PROVIDER_FIELDS = (
+    "id",
+    "name",
+    "backend_kind",
+    "backend_family",
+    "model",
+    "api_mode",
+    "is_native",
+    "is_enabled",
+    "stream",
+    "timeout",
+    "read_timeout",
+    "max_retries",
+    "reasoning_effort",
+    "thinking_type",
+    "thinking_budget_tokens",
+)
 
 
 class GASwitchService:
@@ -91,13 +110,13 @@ class GASwitchService:
         if not path or not os.path.exists(path):
             raise FileNotFoundError("Legacy config not found.")
         if path.lower().endswith(".json"):
-            with open(path, "r", encoding="utf-8") as f:
-                payload = json.load(f)
+            with open(path, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
         else:
             spec = importlib.util.spec_from_file_location("ga_switch_legacy_mykey", path)
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
-            payload = {k: v for k, v in vars(module).items() if not k.startswith("_")}
+            payload = {key: value for key, value in vars(module).items() if not key.startswith("_")}
         return payload, path
 
     def import_legacy_mykey(self, path=None):
@@ -123,19 +142,18 @@ class GASwitchService:
         for var_name, cfg in payload.items():
             if not (isinstance(cfg, dict) and "mixin" in str(var_name).lower()):
                 continue
-            llm_nos = cfg.get("llm_nos") or []
             member_ids = []
-            for ref in llm_nos:
+            for ref in cfg.get("llm_nos") or []:
                 if isinstance(ref, int):
                     if ref < 0 or ref >= len(ordered_providers):
                         raise ValueError(f"Invalid mixin index {ref} in {var_name}")
                     member_ids.append(ordered_providers[ref]["id"])
-                else:
-                    ref_name = str(ref).strip()
-                    provider = providers_by_name.get(ref_name)
-                    if provider is None:
-                        raise ValueError(f"Mixin {var_name} references unknown provider name {ref_name}")
-                    member_ids.append(provider["id"])
+                    continue
+                ref_name = str(ref).strip()
+                provider = providers_by_name.get(ref_name)
+                if provider is None:
+                    raise ValueError(f"Mixin {var_name} references unknown provider name {ref_name}")
+                member_ids.append(provider["id"])
             self.store.upsert_route({
                 "name": cfg.get("name") or var_name,
                 "kind": "failover",
@@ -158,196 +176,50 @@ class GASwitchService:
             "routes": self.store.list_routes(enabled_only=False),
         }
 
-    def export_legacy_config(self):
-        payload = {}
-        for provider in self.store.list_providers(enabled_only=False):
-            payload[provider["name"]] = {
-                "name": provider["name"],
-                "apikey": provider["apikey"],
-                "apibase": provider["apibase"],
-                "model": provider["model"],
-                "api_mode": provider["api_mode"],
-                "temperature": provider["temperature"],
-                "max_tokens": provider["max_tokens"],
-                "context_win": provider["context_win"],
-                "proxy": provider["proxy"],
-                "timeout": provider["timeout"],
-                "read_timeout": provider["read_timeout"],
-                "max_retries": provider["max_retries"],
-                "reasoning_effort": provider["reasoning_effort"],
-                "thinking_type": provider["thinking_type"],
-                "thinking_budget_tokens": provider["thinking_budget_tokens"],
-                "stream": provider["stream"],
-            }
-        for route in self.store.list_routes(enabled_only=False):
-            if route["kind"] != "failover":
-                continue
-            payload[f"mixin_{route['name']}"] = {
-                "name": route["name"],
-                "llm_nos": [member["name"] for member in route["members"]],
-                "max_retries": route["config"].get("max_retries", 3),
-                "base_delay": route["config"].get("base_delay", 1.5),
-                "spring_back": route["config"].get("spring_back", 300),
-            }
-        return payload
+    def _safe_provider(self, provider):
+        if provider is None:
+            return None
+        safe = {field: provider.get(field) for field in SAFE_PROVIDER_FIELDS}
+        safe["health"] = dict(provider.get("health") or {})
+        return safe
 
-    def _build_provider_cfg(self, provider, override=None):
-        cfg = {
-            "name": provider["name"],
-            "apikey": provider["apikey"],
-            "apibase": provider["apibase"],
-            "model": provider.get("model") or "",
-            "api_mode": provider.get("api_mode") or "chat_completions",
-            "temperature": provider.get("temperature", 1.0),
-            "max_tokens": provider.get("max_tokens", 8192),
-            "context_win": provider.get("context_win", 24000),
-            "proxy": provider.get("proxy"),
-            "timeout": provider.get("timeout", 5),
-            "read_timeout": provider.get("read_timeout", 30),
-            "max_retries": provider.get("max_retries", 1),
-            "reasoning_effort": provider.get("reasoning_effort"),
-            "thinking_type": provider.get("thinking_type"),
-            "thinking_budget_tokens": provider.get("thinking_budget_tokens"),
-            "stream": provider.get("stream", True),
+    def _safe_route(self, route):
+        if route is None:
+            return None
+        return {
+            "id": route["id"],
+            "name": route["name"],
+            "kind": route["kind"],
+            "is_enabled": route["is_enabled"],
+            "is_default": route["is_default"],
+            "active": route.get("active", False),
+            "config": dict(route.get("config") or {}),
+            "provider": self._safe_provider(route.get("provider")),
+            "members": [self._safe_provider(member) for member in route.get("members", [])],
+            "member_provider_ids": list(route.get("member_provider_ids", [])),
         }
-        if override:
-            cfg.update({k: v for k, v in override.items() if v is not None})
-        return cfg
 
-    def _diagnostic_recorder(self, provider, route_id, route_name):
-        def _record(event):
-            self.store.append_diagnostic_event(
-                provider_id=provider["id"],
-                route_id=route_id,
-                backend_name=event.get("backend_name") or provider["name"],
-                ok=event.get("ok", False),
-                error_kind=event.get("error_kind"),
-                message=event.get("message", ""),
-                status_code=event.get("status_code"),
-                extra=event.get("extra") or {"route_name": route_name},
-            )
-            if event.get("ok"):
-                self.store.update_provider_health(
-                    provider["id"],
-                    status="healthy",
-                    latency_ms=(event.get("extra") or {}).get("latency_ms"),
-                    ttfb_ms=(event.get("extra") or {}).get("ttfb_ms"),
-                    last_error="",
-                )
-            else:
-                self.store.update_provider_health(
-                    provider["id"],
-                    status="failed",
-                    last_error=event.get("message", ""),
-                )
-        return _record
-
-    def build_client_from_provider(self, provider, *, route_id=None, route_name=None, route_kind="single", for_testing=False, override=None):
-        from llmcore import LLMSession, ToolClient, ClaudeSession, NativeToolClient, NativeClaudeSession, NativeOAISession
-
-        cfg = self._build_provider_cfg(provider, override=override)
-        backend_kind = provider["backend_kind"]
-        if backend_kind not in PROVIDER_BACKEND_KINDS:
-            raise ValueError(f"Unsupported backend_kind: {backend_kind}")
-        if backend_kind == "native_claude":
-            backend = NativeClaudeSession(cfg=cfg)
-            client = NativeToolClient(backend)
-        elif backend_kind == "native_oai":
-            backend = NativeOAISession(cfg=cfg)
-            client = NativeToolClient(backend)
-        elif backend_kind == "claude_text":
-            backend = ClaudeSession(cfg=cfg)
-            client = ToolClient(backend)
-        else:
-            backend = LLMSession(cfg=cfg)
-            client = ToolClient(backend)
-        backend.provider_id = provider["id"]
-        backend.provider_name = provider["name"]
-        backend.route_id = route_id
-        backend.route_name = route_name or provider["name"]
-        backend.route_kind = route_kind
-        backend.backend_kind = backend_kind
-        backend._diagnostic_recorder = self._diagnostic_recorder(provider, route_id, route_name or provider["name"])
-        backend._ga_switch_testing = bool(for_testing)
-        client.ga_switch_provider = provider
-        client.ga_switch_route_id = route_id
-        client.ga_switch_route_name = route_name or provider["name"]
-        client.ga_switch_route_kind = route_kind
-        client.ga_switch_backend_kind = backend_kind
-        return client
-
-    def build_client_for_route(self, route):
-        from llmcore import MixinSession, ToolClient, NativeToolClient
-
-        if route["kind"] == "single":
-            provider = route["provider"]
-            if provider is None:
-                raise ValueError(f"Single route {route['name']} is missing provider.")
-            client = self.build_client_from_provider(
-                provider,
-                route_id=route["id"],
-                route_name=route["name"],
-                route_kind=route["kind"],
-            )
-            client.ga_switch_members = [provider]
-            return client
-        members = [
-            self.build_client_from_provider(
-                provider,
-                route_id=route["id"],
-                route_name=route["name"],
-                route_kind=route["kind"],
-            )
-            for provider in route["members"]
-        ]
-        mixin_cfg = {
-            "llm_nos": [member.backend.name for member in members],
-            "max_retries": route["config"].get("max_retries", 3),
-            "base_delay": route["config"].get("base_delay", 1.5),
-            "spring_back": route["config"].get("spring_back", 300),
-        }
-        mixin = MixinSession(members, mixin_cfg)
-        mixin.name = route["name"]
-        mixin.route_id = route["id"]
-        mixin.route_name = route["name"]
-        mixin.route_kind = route["kind"]
-        mixin.ga_switch_members = route["members"]
-        if is_native_backend_kind(route["members"][0]["backend_kind"]):
-            client = NativeToolClient(mixin)
-        else:
-            client = ToolClient(mixin)
-        client.ga_switch_provider = None
-        client.ga_switch_route_id = route["id"]
-        client.ga_switch_route_name = route["name"]
-        client.ga_switch_route_kind = route["kind"]
-        client.ga_switch_backend_kind = "mixin"
-        client.ga_switch_members = route["members"]
-        return client
-
-    def build_clients_from_store(self):
-        routes = self.store.list_routes(enabled_only=True)
-        clients = [self.build_client_for_route(route) for route in routes]
-        active_route_id = self.store.get_setting("active_route_id")
-        if not clients:
-            return [], {"active_route_id": active_route_id, "routes": routes, "source": "store", "active_index": 0}
-        active_index = next((i for i, route in enumerate(routes) if route["id"] == active_route_id), 0)
-        return clients, {"active_route_id": active_route_id, "routes": routes, "source": "store", "active_index": active_index}
-
-    def run_model_test(self, provider_id):
-        return self.tester.run(provider_id)
-
-    def reload_agent(self, agent, preserve_history=True):
-        return agent.reload_llm_config(preserve_history=preserve_history)
-
-    def get_runtime_snapshot(self, agent=None):
-        providers = self.store.list_providers(enabled_only=False)
-        routes = self.store.list_routes(enabled_only=False)
+    def get_config_snapshot(self):
+        providers = [self._safe_provider(provider) for provider in self.store.list_providers(enabled_only=False)]
+        routes = [self._safe_route(route) for route in self.store.list_routes(enabled_only=False)]
         events = self.store.list_diagnostic_events(limit=100)
-        runtime = agent.describe_llms() if agent is not None and hasattr(agent, "describe_llms") else []
-        active_route_id = self.get_active_route_id()
-        active_route = next((route for route in routes if route["id"] == active_route_id), None)
-        runtime_by_route_id = {item["route_id"]: item for item in runtime if item.get("route_id") is not None}
-        active_runtime = runtime_by_route_id.get(active_route_id) or next((item for item in runtime if item.get("active")), None)
+        return {
+            "use_structured_config": self.use_structured_config(),
+            "active_route_id": self.get_active_route_id(),
+            "providers": providers,
+            "routes": routes,
+            "events": events,
+            "stats": {
+                "provider_count": len(providers),
+                "route_count": len(routes),
+            },
+        }
+
+    def get_runtime_diagnostics(self, config_snapshot, runtime_items):
+        active_route_id = config_snapshot["active_route_id"]
+        active_route = next((route for route in config_snapshot["routes"] if route["id"] == active_route_id), None)
+        runtime_by_route_id = {item["route_id"]: item for item in runtime_items if item.get("route_id") is not None}
+        active_runtime = runtime_by_route_id.get(active_route_id) or next((item for item in runtime_items if item.get("active")), None)
         active_route_summary = {
             "route_id": active_route_id,
             "route_name": (active_route or {}).get("name"),
@@ -368,31 +240,43 @@ class GASwitchService:
             "last_switch_reason": (active_runtime or {}).get("last_switch_reason"),
         }
         return {
-            "use_structured_config": self.use_structured_config(),
+            "use_structured_config": config_snapshot["use_structured_config"],
             "active_route_id": active_route_id,
             "active_route_summary": active_route_summary,
-            "providers": providers,
-            "routes": routes,
-            "runtime": runtime,
-            "events": events,
-            "stats": {
-                "provider_count": len(providers),
-                "route_count": len(routes),
-                "runtime_count": len(runtime),
+            "providers": config_snapshot["providers"],
+            "routes": config_snapshot["routes"],
+            "events": config_snapshot["events"],
+            "runtime": runtime_items,
+            "stats": dict(config_snapshot["stats"], runtime_count=len(runtime_items)),
+        }
+
+    def record_runtime_event(self, provider, *, route_id=None, route_name=None, backend_name="", ok=False, message="", status_code=None, latency_ms=None, ttfb_ms=None, body="", exc_type=""):
+        error_kind = None if ok else classify_error(status_code=status_code, message=message, body=body, exc_type=exc_type)
+        self.store.append_diagnostic_event(
+            provider_id=provider["id"] if provider else None,
+            route_id=route_id,
+            backend_name=backend_name or (provider["name"] if provider else ""),
+            ok=ok,
+            error_kind=error_kind,
+            message=normalize_message(message),
+            status_code=status_code,
+            extra={
+                "route_name": route_name,
+                "latency_ms": latency_ms,
+                "ttfb_ms": ttfb_ms,
+                "body": normalize_message(body, 1200),
+                "exc_type": exc_type or None,
             },
-        }
+        )
+        if provider is None:
+            return
+        self.store.update_provider_health(
+            provider["id"],
+            status="healthy" if ok else "failed",
+            latency_ms=latency_ms if ok else None,
+            ttfb_ms=ttfb_ms if ok else None,
+            last_error="" if ok else normalize_message(message),
+        )
 
-    def get_ui_snapshot(self, agent=None):
-        return self.get_runtime_snapshot(agent)
-
-    def get_runtime_diagnostics(self, agent=None):
-        snapshot = self.get_runtime_snapshot(agent)
-        return {
-            "use_structured_config": snapshot["use_structured_config"],
-            "active_route_id": snapshot["active_route_id"],
-            "providers": snapshot["providers"],
-            "routes": snapshot["routes"],
-            "events": snapshot["events"],
-            "runtime": snapshot["runtime"],
-            "active_route_summary": snapshot["active_route_summary"],
-        }
+    def run_model_test(self, provider_id):
+        return self.tester.run(provider_id)

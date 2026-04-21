@@ -1,0 +1,6 @@
+
+[ENV-REGRESSION] 2026-04-22T02:33:34+08:00
+  mykey.py mtime: 2026-04-22T02:15:08
+  last-known-good commit: P1.4_Pre
+  root cause: 占位符模板覆盖 (Local Env Reset) - 主理人双槽真 key 填入
+  prevention: 后续必须重构为 os.environ 读取,禁止 key 明文落盘

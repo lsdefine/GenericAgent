@@ -115,7 +115,7 @@ def _parse_claude_sse(resp_lines):
         elif evt_type == "content_block_start":
             block = evt.get("content_block", {})
             if block.get("type") == "text": current_block = {"type": "text", "text": ""}
-            elif block.get("type") == "thinking": current_block = {"type": "thinking", "thinking": ""}
+            elif block.get("type") == "thinking": current_block = {"type": "thinking", "thinking": "", "signature": ""}
             elif block.get("type") == "tool_use":
                 current_block = {"type": "tool_use", "id": block.get("id", ""), "name": block.get("name", ""), "input": {}}
                 tool_json_buf = ""
@@ -127,6 +127,9 @@ def _parse_claude_sse(resp_lines):
                 if text: yield text
             elif delta.get("type") == "thinking_delta":
                 if current_block and current_block.get("type") == "thinking": current_block["thinking"] += delta.get("thinking", "")
+            elif delta.get("type") == "signature_delta":
+                if current_block and current_block.get("type") == "thinking":
+                    current_block["signature"] = current_block.get("signature", "") + delta.get("signature", "")
             elif delta.get("type") == "input_json_delta": tool_json_buf += delta.get("partial_json", "")
         elif evt_type == "content_block_stop":
             if current_block:

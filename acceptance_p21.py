@@ -52,6 +52,8 @@ while time.time() - t0 < 35:
     except Exception:
         pass
 
-print(f"\n[ACC] ===== 验收结束 elapsed={time.time()-t0:.1f}s got_done={got_done} =====", flush=True)
-time.sleep(2)  # 等最后日志 flush
+print(f"\n[ACC] ===== PHASE A/B 结束 elapsed={time.time()-t0:.1f}s got_done={got_done} =====", flush=True)
+
+# PHASE C 已拆分到独立沙盒脚本 acceptance_p21_phase_c.py (避免真实 HB 污染强制反证)
+time.sleep(1)  # 等最后日志 flush
 os._exit(0)

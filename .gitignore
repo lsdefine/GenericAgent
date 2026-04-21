@@ -111,3 +111,4 @@ memory.db
 memory.db-journal
 .pytest_cache/
 __pycache__/
+*.safety_backup

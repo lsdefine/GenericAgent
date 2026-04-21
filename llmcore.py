@@ -1,27 +1,33 @@
 import os, json, re, time, requests, sys, threading, urllib3, base64, mimetypes, uuid
 from datetime import datetime
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-_RESP_CACHE_KEY = str(uuid.uuid4()) 
+_RESP_CACHE_KEY = str(uuid.uuid4())
 
 def _load_mykeys():
-    try:
-        import mykey; return {k: v for k, v in vars(mykey).items() if not k.startswith('_')}
-    except ImportError: pass
-    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'mykey.json')
-    if not os.path.exists(p): raise Exception('[ERROR] mykey.py or mykey.json not found, please create one from mykey_template.')
-    with open(p, encoding='utf-8') as f: return json.load(f)
+    """
+    单一事实源: config.AgentSettings。
+    绝对禁止回退到 mykey.py / mykey.json。
+    若 .env 缺失必填字段，pydantic.ValidationError 会当场崩溃 (Fail-fast)。
+    """
+    from config import get_settings
+    s = get_settings()
+    return {
+        "proxy": s.proxy,
+        "mixin_config": s.mixin_config,
+        "native_oai_config_kimi": s.native_oai_config_kimi,
+    }
 
 def __getattr__(name):  # once guard in PEP 562
-    if name in ('mykeys', 'proxies'):  
+    if name in ("mykeys", "proxies"):
         mk = _load_mykeys()
-        proxy = mk.get("proxy", 'http://127.0.0.1:2082')
+        proxy = mk.get("proxy", "http://127.0.0.1:2082")
         px = {"http": proxy, "https": proxy} if proxy else None
         globals().update(mykeys=mk, proxies=px)
-        if mk.get('langfuse_config'):
+        if mk.get("langfuse_config"):
             try: from plugins import langfuse_tracing
             except Exception: pass
         return globals()[name]
-    raise AttributeError(f"module 'llmcore' has no attribute {name}")
+    raise AttributeError(f'module "llmcore" has no attribute {name}')
 
 def compress_history_tags(messages, keep_recent=10, max_len=800, force=False):
     """Compress <thinking>/<tool_use>/<tool_result> tags in older messages to save tokens."""

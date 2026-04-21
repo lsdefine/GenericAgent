@@ -11,6 +11,42 @@ from agent_loop import agent_runner_loop
 from ga import GenericAgentHandler, smart_format, get_global_memory, format_error, consume_file
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
+
+class TrackedLock:
+    """
+    为 RLock 提供 locked 状态与递归深度追踪。
+    Python 3.11 的 threading.RLock 没有 .locked()，此处补齐。
+    """
+    def __init__(self):
+        self._lock = threading.RLock()
+        self._depth = 0
+
+    def acquire(self, blocking=True, timeout=-1):
+        ok = self._lock.acquire(blocking=blocking, timeout=timeout)
+        if ok:
+            self._depth += 1
+        return ok
+
+    def release(self):
+        self._depth -= 1
+        self._lock.release()
+
+    @property
+    def locked(self):
+        return self._depth > 0
+
+    @property
+    def depth(self):
+        return self._depth
+
+    def __enter__(self):
+        self.acquire()
+        return self
+
+    def __exit__(self, *args):
+        self.release()
+        return False
+
 def load_tool_schema(suffix=''):
     global TOOLS_SCHEMA
     TS = open(os.path.join(script_dir, f'assets/tools_schema{suffix}.json'), 'r', encoding='utf-8').read()
@@ -81,7 +117,7 @@ class GeneraticAgent:
         self.llmclients = llm_sessions
         self.lock = threading.Lock()
         # P2.1 CTO硬核令: LLM 推理闸升级 RLock,heartbeat 生产端改非阻塞 acquire(blocking=False) 探测
-        self.llm_busy_lock = threading.RLock()
+        self.llm_busy_lock = TrackedLock()  # 带 depth 追踪，支持并发排队提示
         self.task_dir = None
         self.history = []
         self.task_queue = queue.Queue() 
@@ -174,7 +210,10 @@ class GeneraticAgent:
             if raw_query is None:
                 self.task_queue.task_done(); continue
             self.is_running = True
+            if self.llm_busy_lock.locked:
+                print(f"\n⏳ [UserTurn] queued, waiting lock (depth={self.llm_busy_lock.depth}) - 教授正在处理后台事务，请稍候...", flush=True)
             self.llm_busy_lock.acquire()  # P1.4 CTO验收: 闸上锁,heartbeat 生产端检测到则跳过本轮突袭
+            print("[UserTurn] lock acquired, processing...", flush=True)
             # P2.1 CTO硬核令: source=="system" 即心跳触发的主动突袭,前置打标识便于 log 证据②抓取
             if source == 'system':
                 print(f"\n🔔 [教授突袭] {time.strftime('%H:%M:%S')} 主动发难 (trigger=heartbeat)", flush=True)

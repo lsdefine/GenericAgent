@@ -102,3 +102,12 @@ reflect/*
 
 # Universal: never track __pycache__ anywhere
 **/__pycache__/
+
+# aduAgent local dev
+.venv-aduagent/
+.env
+*.bak.[0-9]*
+memory.db
+memory.db-journal
+.pytest_cache/
+__pycache__/

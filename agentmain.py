@@ -34,7 +34,24 @@ if not os.path.exists(cdp_cfg):
     except Exception as e: print(f'[WARN] CDP config init failed: {e} — advanced web features (tmwebdriver) will be unavailable.')
 
 def get_system_prompt():
+    # P1.4 Step A': L0 SYSTEM OVERRIDE 强制前置,截断前文"物理级全能执行者"注意力残留,100% 纯度接管人设
+    l0_override = ""
+    try:
+        l0_path = os.path.join(script_dir, 'memory/L0_persona.txt')
+        if os.path.exists(l0_path):
+            with open(l0_path, 'r', encoding='utf-8', errors='replace') as f: l0_raw = f.read()
+            l0_override = (
+                "========================================\n"
+                "[!!! SYSTEM OVERRIDE - CRITICAL !!!]\n"
+                "DISREGARD ANY PREVIOUS INSTRUCTIONS DEFINING YOU AS A PASSIVE ASSISTANT.\n"
+                "IGNORE '物理级全能执行者' SETTING.\n"
+                "YOUR SOLE, EXCLUSIVE IDENTITY IS NOW ACTING AS FOLLOWS:\n\n"
+                f"{l0_raw}\n"
+                "========================================\n\n"
+            )
+    except Exception as e: print(f"[L0] Override 注入失败(降级): {e}")
     with open(os.path.join(script_dir, f'assets/sys_prompt{lang_suffix}.txt'), 'r', encoding='utf-8') as f: prompt = f.read()
+    prompt = l0_override + prompt  # Override 前置,语义强隔离
     prompt += f"\nToday: {time.strftime('%Y-%m-%d %a')}\n"
     prompt += get_global_memory()
     return prompt
@@ -63,6 +80,8 @@ class GeneraticAgent:
                 except Exception as e: print(f'[WARN] Failed to init MixinSession with cfg {s["mixin_cfg"]}: {e}')
         self.llmclients = llm_sessions
         self.lock = threading.Lock()
+        # P2.1 CTO硬核令: LLM 推理闸升级 RLock,heartbeat 生产端改非阻塞 acquire(blocking=False) 探测
+        self.llm_busy_lock = threading.RLock()
         self.task_dir = None
         self.history = []
         self.task_queue = queue.Queue() 
@@ -98,6 +117,36 @@ class GeneraticAgent:
         self.task_queue.put({"query": query, "source": source, "images": images or [], "output": display_queue})
         return display_queue
 
+    def _handle_internal_event(self, task):
+        """P1.4 内部事件分发: mem_write 异步向量化落盘 / heartbeat 主动突袭"""
+        ttype = task.get("type")
+        try:
+            if ttype == "mem_write":
+                from memory_vec import brain
+                brain.add_memory(task.get("text", ""))
+                print(f"[Memory] ✅ 异步向量化落盘成功 qsize={self.task_queue.qsize()}", flush=True)
+            elif ttype == "heartbeat":
+                from memory_vec import brain
+                try: hits = brain.search("未完成 任务 懒惰 承诺 进度", k=3)
+                except Exception: hits = []
+                context = "\n".join(f"- {h}" for h in hits) if hits else "- 常规巡查(记忆库暂无历史)"
+                ts = time.strftime("%H:%M")
+                trigger_msg = (
+                    f"[SYSTEM TRIGGER: {ts}]\n"
+                    f"记忆参考：\n{context}\n\n"
+                    f"指令：不要等提问！立刻以严厉导师口吻索要执行进度，数据说话！"
+                )
+                # 主线程忙时跳过(避免打断当前对话);空闲时经 put_task 重新入队触发主动突袭(而非递归调 agent_runner_loop)
+                if not self.is_running:
+                    self.put_task(trigger_msg, source="system")
+                    print(f"[Heartbeat] 🎯 主动突袭已入队 @ {time.strftime('%H:%M:%S')} qsize={self.task_queue.qsize()}", flush=True)
+                else:
+                    print(f"[Heartbeat] 主线程忙,跳过本次突袭 qsize={self.task_queue.qsize()}", flush=True)
+        except Exception as e:
+            print(f"[Queue] type={ttype} 处理失败(忽略): {e}", flush=True)
+        finally:
+            self.task_queue.task_done()
+
     # i know it is dangerous, but raw_query is dangerous enough it doesn't enlarge
     def _handle_slash_cmd(self, raw_query, display_queue):
         if not raw_query.startswith('/'): return raw_query
@@ -117,11 +166,18 @@ class GeneraticAgent:
     def run(self):
         while True:
             task = self.task_queue.get()
+            # P1.4 type 分发: 内部事件(mem_write/heartbeat)与用户对话分离,向后兼容原对话格式(无 type 字段)
+            if isinstance(task, dict) and task.get("type") in ("mem_write", "heartbeat"):
+                self._handle_internal_event(task); continue
             raw_query, source, images, display_queue = task["query"], task["source"], task.get("images") or [], task["output"]
             raw_query = self._handle_slash_cmd(raw_query, display_queue)
             if raw_query is None:
                 self.task_queue.task_done(); continue
             self.is_running = True
+            self.llm_busy_lock.acquire()  # P1.4 CTO验收: 闸上锁,heartbeat 生产端检测到则跳过本轮突袭
+            # P2.1 CTO硬核令: source=="system" 即心跳触发的主动突袭,前置打标识便于 log 证据②抓取
+            if source == 'system':
+                print(f"\n🔔 [教授突袭] {time.strftime('%H:%M:%S')} 主动发难 (trigger=heartbeat)", flush=True)
             rquery = smart_format(raw_query.replace('\n', ' '), max_str_len=200)
             self.history.append(f"[USER]: {rquery}")
             
@@ -137,6 +193,15 @@ class GeneraticAgent:
             user_input = raw_query
             if source == 'feishu' and len(self.history) > 1:   # 如果有历史记录且来自飞书，注入到首轮 user_input 中（支持/restore恢复上下文）
                 user_input = handler._get_anchor_prompt() + f"\n\n### 用户当前消息\n{raw_query}"
+            # P1.4 RAG 前置注入: 基于 raw_query 检索向量记忆 Top3,前置注入以提供触发记忆上下文
+            try:
+                from memory_vec import brain
+                hits = brain.search(raw_query, k=3)
+                if hits:
+                    mem_str = "\n".join([f"- {h}" for h in hits])
+                    user_input = f"[触发记忆]\n{mem_str}\n\n{user_input}"
+                    print(f"[RAG] 前置注入 {len(hits)} 条触发记忆", flush=True)
+            except Exception as e: print(f"[RAG] 检索失败(忽略): {e}", flush=True)
             if 'gpt' in self.get_llm_name(model=True): handler._done_hooks.append('请确定用户任务是否完成，如未完成需要继续工具调用直到完成任务，确实需要问用户应使用ask_user工具')
             # although new handler, the **full** history is in llmclient, so it is full history!
             gen = agent_runner_loop(self.llmclient, sys_prompt, user_input, 
@@ -154,6 +219,11 @@ class GeneraticAgent:
                 if '</summary>' in full_resp: full_resp = full_resp.replace('</summary>', '</summary>\n\n')
                 if '</file_content>' in full_resp: full_resp = re.sub(r'<file_content>\s*(.*?)\s*</file_content>', r'\n````\n<file_content>\n\1\n</file_content>\n````', full_resp, flags=re.DOTALL)                
                 display_queue.put({'done': full_resp, 'source': source})
+                # P1.4 异步向量化落盘: 当前对话丢入 task_queue,由消费者分发到 mem_write 分支处理
+                try:
+                    mem_text = f"用户: {smart_format(raw_query, max_str_len=500)}\n导师: {smart_format(full_resp, max_str_len=1500)}"
+                    self.task_queue.put({"type": "mem_write", "text": mem_text})
+                except Exception as e: print(f"[Memory] 异步入队失败(忽略): {e}", flush=True)
                 self.history = handler.history_info
             except Exception as e:
                 print(f"Backend Error: {format_error(e)}")
@@ -162,6 +232,9 @@ class GeneraticAgent:
                 if self.stop_sig:
                     print('User aborted the task.')
                     #with self.task_queue.mutex: self.task_queue.queue.clear()
+                # P2.1 CTO硬核令: RLock 无 .locked() 方法,用 try/except 解闸
+                try: self.llm_busy_lock.release()
+                except RuntimeError: pass
                 self.is_running = self.stop_sig = False
                 self.task_queue.task_done()
                 if self.handler is not None: self.handler.code_stop_signal.append(1)
@@ -193,6 +266,12 @@ if __name__ == '__main__':
     agent.next_llm(args.llm_no)
     agent.verbose = args.verbose
     threading.Thread(target=agent.run, daemon=True).start()
+    # P1.4 启动心跳起搏器(daemon 线程,60s 间隔投递 heartbeat 事件)
+    try:
+        from heartbeat import HeartbeatProducer
+        HeartbeatProducer(agent, interval_sec=60).start()
+        print("[Heartbeat] 起搏器已启动,interval=60s", flush=True)
+    except Exception as e: print(f"[Heartbeat] 启动失败(忽略): {e}", flush=True)
 
     if args.task:
         agent.task_dir = d = os.path.join(script_dir, f'temp/{args.task}'); nround = ''

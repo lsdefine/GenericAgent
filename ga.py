@@ -554,4 +554,6 @@ def get_global_memory():
         prompt += structure + '\n../memory/global_mem_insight.txt:\n'
         prompt += insight + "\n"
     except FileNotFoundError: pass
+    # P1.4: L0 Persona 已由 agentmain.get_system_prompt() 在 system 字段头部以 [!!! SYSTEM OVERRIDE !!!] 形式前置注入,
+    # 此处不重复,以保持 100% 注意力纯度(避免同 system 内双份稀释)
     return prompt

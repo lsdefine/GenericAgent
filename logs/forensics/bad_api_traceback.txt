@@ -1,0 +1,16 @@
+=== STDOUT ===
+BAD: 384
+
+=== STDERR ===
+Loading weights:   0%|          | 0/103 [00:00<?, ?it/s]Loading weights: 100%|██████████| 103/103 [00:00<00:00, 6753.48it/s]
+[1mBertModel LOAD REPORT[0m from: sentence-transformers/paraphrase-MiniLM-L6-v2
+Key                     | Status     |  | 
+------------------------+------------+--+-
+embeddings.position_ids | UNEXPECTED |  | 
+
+Notes:
+- UNEXPECTED:	can be ignored when loading from different task/architecture; not ok if you expect identical arch.
+
+=== META ===
+bad_exit=0
+model=paraphrase-MiniLM-L6-v2

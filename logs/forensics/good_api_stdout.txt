@@ -1,0 +1,17 @@
+=== STDOUT ===
+GOOD: 384
+
+=== STDERR ===
+Loading weights:   0%|          | 0/103 [00:00<?, ?it/s]Loading weights: 100%|██████████| 103/103 [00:00<00:00, 6253.27it/s]
+[1mBertModel LOAD REPORT[0m from: sentence-transformers/paraphrase-MiniLM-L6-v2
+Key                     | Status     |  | 
+------------------------+------------+--+-
+embeddings.position_ids | UNEXPECTED |  | 
+
+Notes:
+- UNEXPECTED:	can be ignored when loading from different task/architecture; not ok if you expect identical arch.
+<string>:1: FutureWarning: The `get_sentence_embedding_dimension` method has been renamed to `get_embedding_dimension`.
+
+=== META ===
+good_exit=0
+model=paraphrase-MiniLM-L6-v2

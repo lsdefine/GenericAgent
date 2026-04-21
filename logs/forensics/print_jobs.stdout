@@ -1,0 +1,2 @@
+Jobstore default:
+    noop (trigger: cron[hour='8', minute='0'], next run at: 2026-04-22 08:00:00 CST)

@@ -1,0 +1,13 @@
+diff --git a/memory_vec.py b/memory_vec.py
+index cfa8913..020e309 100644
+--- a/memory_vec.py
++++ b/memory_vec.py
+@@ -46,7 +46,7 @@ class VectorBrain:
+             os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+             from sentence_transformers import SentenceTransformer
+             self._model = SentenceTransformer("paraphrase-MiniLM-L6-v2")
+-            self._dim = self._model.get_sentence_embedding_dimension()
++            self._dim = self._model.get_embedding_dimension()
+             # R8: vec 表维度 === 模型 dim,绝不猜测
+             self.conn.execute(
+                 f"CREATE VIRTUAL TABLE IF NOT EXISTS mem_vec USING vec0("

@@ -1,23 +1,37 @@
 """
 本地 OCR 工具
-- OCR引擎: rapidocr-onnxruntime (~1s/次, 中英文准确率高, 带bbox)
+- OCR引擎: rapidocr-openvino (优先, ~0.25s/次) 或 rapidocr-onnxruntime (备选)
 - 坑(rapid): result[i][2] conf 是 str 不是 float
 - 坑(rapid): 无文字时 result 返回 None 而非空列表
 - 坑: enhance 放大+高对比度处理，对清晰文字有害，默认关闭
 - 坑(远程桌面): ImageGrab/mss 在 RDP 断开后截图全黑，用 ocr_window(hwnd) 代替
+- 2026-04-17: 切换默认引擎为openvino,绕过onnxruntime DLL冲突
 """
 import re
 from PIL import ImageGrab, Image, ImageEnhance
 
 _LANG = 'zh-Hans-CN'
-_rapid_engine = None
+_engine = None
 
-def _get_rapid():
-    global _rapid_engine
-    if _rapid_engine is None:
+def _get_engine():
+    global _engine
+    if _engine is not None:
+        return _engine
+    # 优先使用 openvino 后端 (避免 onnxruntime DLL 冲突)
+    try:
+        from rapidocr_openvino import RapidOCR
+        _engine = ('openvino', RapidOCR())
+        return _engine
+    except ImportError:
+        pass
+    # 备选: onnxruntime
+    try:
         from rapidocr_onnxruntime import RapidOCR
-        _rapid_engine = RapidOCR()
-    return _rapid_engine
+        _engine = ('onnxruntime', RapidOCR())
+        return _engine
+    except ImportError:
+        pass
+    raise RuntimeError("无可用的OCR引擎: rapidocr-openvino 和 rapidocr-onnxruntime 均不可用")
 
 def _preprocess(img, scale=3, contrast=3.0):
     img = ImageEnhance.Contrast(img).enhance(contrast)
@@ -29,7 +43,7 @@ def _strip_cjk_spaces(t):
 
 def _ocr_rapid(img):
     import numpy as np
-    engine = _get_rapid()
+    backend_name, engine = _get_engine()
     arr = np.array(img)
     result, elapse = engine(arr)
     if not result:

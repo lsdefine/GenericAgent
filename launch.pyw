@@ -1,9 +1,15 @@
-import webview, threading, subprocess, sys, time, os, ctypes, atexit, socket, random
+import webview, threading, subprocess, sys, time, os, ctypes, atexit, socket, random, webbrowser
+from urllib.request import urlopen
+from urllib.error import URLError
 
-WINDOW_WIDTH, WINDOW_HEIGHT, RIGHT_PADDING, TOP_PADDING = 600, 900, 0, 100
+APP_TITLE = 'GenericAgent'
+WINDOW_WIDTH, WINDOW_HEIGHT = 600, 900
+READY_TIMEOUT = 30
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 frontends_dir = os.path.join(script_dir, "frontends")
+app_url = ''
+window = None
 
 def find_free_port(lo=18501, hi=18599):
     ports = list(range(lo, hi+1)); random.shuffle(ports)
@@ -12,9 +18,52 @@ def find_free_port(lo=18501, hi=18599):
         except OSError: continue
     raise RuntimeError(f'No free port in {lo}-{hi}')
 
-def get_screen_width():
-    try: return ctypes.windll.user32.GetSystemMetrics(0)
-    except: return 1920
+def get_screen_size():
+    try:
+        user32 = ctypes.windll.user32
+        return user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
+    except:
+        return 1920, 1080
+
+def get_window_position():
+    screen_width, screen_height = get_screen_size()
+    x_pos = max(0, (screen_width - WINDOW_WIDTH) // 2)
+    y_pos = max(0, (screen_height - WINDOW_HEIGHT) // 2)
+    return x_pos, y_pos
+
+def wait_for_streamlit(port, timeout=READY_TIMEOUT):
+    deadline = time.time() + timeout
+    url = f'http://localhost:{port}'
+    while time.time() < deadline:
+        try:
+            with urlopen(url, timeout=2) as resp:
+                if resp.status == 200: return True
+        except (URLError, OSError):
+            time.sleep(0.5)
+    return False
+
+def focus_native_window(title, timeout=15):
+    if os.name != 'nt': return False
+    user32 = ctypes.windll.user32
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        hwnd = user32.FindWindowW(None, title)
+        if hwnd:
+            user32.ShowWindow(hwnd, 9)
+            user32.SetForegroundWindow(hwnd)
+            return True
+        time.sleep(0.5)
+    return False
+
+def post_start_tasks():
+    if window is not None:
+        try: window.restore()
+        except: pass
+        try: window.show()
+        except: pass
+    if not focus_native_window(APP_TITLE):
+        print('[Launch] WebView window was not brought to foreground, opening browser fallback')
+        webbrowser.open(app_url)
 
 def start_streamlit(port):
     global proc
@@ -116,13 +165,14 @@ if __name__ == '__main__':
 
     monitor_thread = threading.Thread(target=idle_monitor, daemon=True)
     monitor_thread.start()
-    if os.name == 'nt':
-        screen_width = get_screen_width()
-        x_pos = screen_width - WINDOW_WIDTH - RIGHT_PADDING
-    else: x_pos = 100
-    time.sleep(2) 
+    app_url = f'http://localhost:{port}'
+    if not wait_for_streamlit(port):
+        print(f'[Launch] Streamlit not ready after {READY_TIMEOUT}s, opening browser fallback: {app_url}')
+        webbrowser.open(app_url)
+        sys.exit(0)
+    x_pos, y_pos = get_window_position()
     window = webview.create_window(
-        title='GenericAgent', url=f'http://localhost:{port}',
-        width=WINDOW_WIDTH, height=WINDOW_HEIGHT, x=x_pos, y=TOP_PADDING,
+        title=APP_TITLE, url=app_url,
+        width=WINDOW_WIDTH, height=WINDOW_HEIGHT, x=x_pos, y=y_pos,
         resizable=True, text_select=True)
-    webview.start()
+    webview.start(post_start_tasks)

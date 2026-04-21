@@ -10,7 +10,7 @@ repeat可选：daily | weekday | weekly | monthly | once | every_Nh（每N小时
 max_delay_hours（可选，默认6）：超过schedule多少小时后不再触发，防止开机太晚执行过时任务
 
 ## 触发流程
-1. scheduler.py（reflect/）每60秒轮询 sche_tasks/*.json
+1. scheduler.py（reflect/）当前每120秒轮询 sche_tasks/*.json
 2. 条件全满足才触发：enabled=true + 当前时间≥schedule + 冷却时间已过（基于done/最新报告时间戳）
 3. 触发时拼prompt，含报告路径 `../sche_tasks/done/YYYY-MM-DD_任务名.md`
 4. **收到任务后第一件事**：用 update_working_checkpoint 记录报告目标文件路径，防止长任务执行中遗忘
@@ -25,3 +25,5 @@ max_delay_hours（可选，默认6）：超过schedule多少小时后不再触�
 - once类型：执行一次后冷却100年（实际效果为永久跳过）
 - 任务文件只管"干什么"，报告路径由scheduler自动生成注入prompt
 - sche_tasks目录在../，即code root下
+- `reflect/scheduler.py` 顶层有端口锁；导入级测试若真实scheduler已运行，可能在import时因bind冲突失败，验证时需受控规避真实socket绑定
+- L4 cron 调用 `compress_session.batch_process` 时必须显式传 `RAW_DIR`，不要省略 `src`

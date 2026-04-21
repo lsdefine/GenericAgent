@@ -319,7 +319,8 @@ def _stamp_oai_cache_markers(messages, model):
 
 def _openai_stream(api_base, api_key, messages, model, api_mode='chat_completions', *,
                    system=None, temperature=0.5, max_tokens=None, tools=None, reasoning_effort=None,
-                   max_retries=0, connect_timeout=10, read_timeout=300, proxies=None, stream=True):
+                   max_retries=0, connect_timeout=10, read_timeout=300, proxies=None,
+                   stream=True, verify=True):
     """Shared OpenAI-compatible streaming request with retry. Yields text chunks, returns list[content_block]."""
     ml = model.lower()
     if 'kimi' in ml or 'moonshot' in ml: temperature = 1
@@ -349,7 +350,7 @@ def _openai_stream(api_base, api_key, messages, model, api_mode='chat_completion
         streamed = False
         try:
             with requests.post(url, headers=headers, json=payload, stream=stream,
-                               timeout=(connect_timeout, read_timeout), proxies=proxies) as r:
+                               timeout=(connect_timeout, read_timeout), proxies=proxies, verify=verify) as r:
                 if r.status_code >= 400:
                     if r.status_code in RETRYABLE and attempt < max_retries:
                         d = _delay(r, attempt)
@@ -479,6 +480,8 @@ class BaseSession:
         self.name = cfg.get('name', self.model)
         proxy = cfg.get('proxy')
         self.proxies = {"http": proxy, "https": proxy} if proxy else None
+        verify_ssl = cfg.get('verify_ssl', cfg.get('verify', True))
+        self.verify_ssl = verify_ssl if isinstance(verify_ssl, bool) else str(verify_ssl).strip().lower() not in ('0', 'false', 'no', 'off')
         self.max_retries = max(0, int(cfg.get('max_retries', 1)))
         self.stream = cfg.get('stream', True)
         default_ct, default_rt = (5, 30) if self.stream else (10, 240)
@@ -533,7 +536,8 @@ class ClaudeSession(BaseSession):
         self._apply_claude_thinking(payload)
         if self.system: payload["system"] = [{"type": "text", "text": self.system, "cache_control": {"type": "persistent"}}]
         try:
-            with requests.post(auto_make_url(self.api_base, "messages"), headers=headers, json=payload, stream=True, timeout=(self.connect_timeout, self.read_timeout)) as r:
+            with requests.post(auto_make_url(self.api_base, "messages"), headers=headers, json=payload, stream=True,
+                               timeout=(self.connect_timeout, self.read_timeout), verify=self.verify_ssl) as r:
                 if r.status_code != 200: raise Exception(f"HTTP {r.status_code} {r.content.decode('utf-8', errors='replace')[:500]}")
                 return (yield from _parse_claude_sse(r.iter_lines())) or []
         except Exception as e:
@@ -551,7 +555,8 @@ class LLMSession(BaseSession):
         return (yield from _openai_stream(self.api_base, self.api_key, messages, self.model, self.api_mode,
                                   temperature=self.temperature, reasoning_effort=self.reasoning_effort,
                                   max_tokens=self.max_tokens, max_retries=self.max_retries, stream=self.stream,
-                                  connect_timeout=self.connect_timeout, read_timeout=self.read_timeout, proxies=self.proxies))
+                                  connect_timeout=self.connect_timeout, read_timeout=self.read_timeout,
+                                  proxies=self.proxies, verify=self.verify_ssl))
     def make_messages(self, raw_list): return _msgs_claude2oai(raw_list)
 
 def _fix_messages(messages):
@@ -610,7 +615,9 @@ class NativeClaudeSession(BaseSession):
             messages[idx] = {**messages[idx], "content": list(messages[idx]["content"])}
             messages[idx]["content"][-1] = dict(messages[idx]["content"][-1], cache_control={"type": "ephemeral"})
         try:
-            with requests.post(auto_make_url(self.api_base, "messages")+'?beta=true', headers=headers, json=payload, stream=self.stream, timeout=(self.connect_timeout, self.read_timeout)) as resp:
+            with requests.post(auto_make_url(self.api_base, "messages")+'?beta=true', headers=headers, json=payload,
+                               stream=self.stream, timeout=(self.connect_timeout, self.read_timeout),
+                               verify=self.verify_ssl) as resp:
                 if resp.status_code != 200: raise Exception(f"HTTP {resp.status_code} {resp.content.decode('utf-8', errors='replace')[:500]}")
                 if self.stream: return (yield from _parse_claude_sse(resp.iter_lines())) or []
                 else:
@@ -658,7 +665,8 @@ class NativeOAISession(NativeClaudeSession):
                                           system=self.system, temperature=self.temperature, max_tokens=self.max_tokens,
                                           tools=self.tools, reasoning_effort=self.reasoning_effort,
                                           max_retries=self.max_retries, connect_timeout=self.connect_timeout,
-                                          read_timeout=self.read_timeout, proxies=self.proxies, stream=self.stream))
+                                          read_timeout=self.read_timeout, proxies=self.proxies,
+                                          stream=self.stream, verify=self.verify_ssl))
 
 def openai_tools_to_claude(tools):
     """[{type:'function', function:{name,description,parameters}}] → [{name,description,input_schema}]."""

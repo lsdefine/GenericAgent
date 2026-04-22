@@ -236,6 +236,8 @@ PUBLIC_ACCESS = not ALLOWED_USERS or "*" in ALLOWED_USERS
 AGENT_TIMEOUT_SEC = 900
 
 agent = GeneraticAgent()
+agent.next_llm(2)
+print(f"[Init] Default LLM switched to: {agent.get_llm_name()}")
 threading.Thread(target=agent.run, daemon=True).start()
 client, user_tasks = None, {}
 

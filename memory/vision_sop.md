@@ -1,6 +1,6 @@
 # Vision SOP
 
-> ⚠️ **状态说明 (2026-04-17)**：`vision_api.py` 文件不存在，ask_vision 功能不可用。阻塞项：需安装 `anthropic` SDK + 用户批准重建源码文件。当前可用视觉能力：ocr_utils.py(本地OCR) + ui_detect.py(YOLO UI检测)。
+> ⚠️ **状态说明 (2026-04-22)**：`vision_api.py` 已从template创建并适配。可用后端: openai(gpt-5.4 via native_oai_config, 已验证vision✅)。Claude后端暂不可用(缺config)。当前可用视觉能力：vision_api.py(云端VLM) + ocr_utils.py(本地OCR) + ui_detect.py(YOLO UI检测)。
 
 ## ⚠️ 前置规则（必须遵守）
 
@@ -34,8 +34,11 @@ result = ask_vision(image, prompt="描述图片内容", backend="claude", timeou
 ## 关键风险与坑点 (L3 Caveats)
 - **无重试机制**: `vision_api.py` 内部未实现 API 错误重试（如 503、超时）。在自动化流程中使用时，**必须在上层代码手动实现重试逻辑**（建议指数退避），否则偶发网络波动会导致任务直接崩溃中断。
 - **API Config**: 当前使用 `claude_config141`(ncode.vkm2.com, 已验证)。备选可用: `native_claude_config2/84/5535`。失效时直接改 `vision_api.py` 中的 `cfg = mk.claude_configXXX`。
+- **OpenAI-compatible 空响应排查**: 先看原始 `choices[0].message.content`。`content` 为数组不等于空；当前解析链对数组 content 兼容性一般，可能返回结构化块而非纯字符串。真正空结果更接近 `content=[]` 或 `None`。
+- **空 prompt 边界**: OpenAI-compatible vision 下，空 `prompt` 会直接得到 `HTTP 400`，这属于非法请求，不应误判为模型“空响应”。
 
 ---
+更新: 2026-04-23 | 补充OpenAI-compatible vision空响应排查边界
 更新: 2025-07-18 | 修复oai_config导入+返回值统一str
 更新: 2026-02-18 | 默认后端改为Claude原生API | SOP精简(删废话/水段/合并示例)
 更新: 2026-07 | 修复config(原claude_config8不存在)→改为claude_config141

@@ -7,6 +7,7 @@
 
 ## 启动（第一步）
 - update_working_checkpoint: `自主行动｜收尾时重读SOP | from autonomous_operation_sop.helper import *; set_todo()/complete_task(tasktitle, historyline, report_path)`
+- 实际任务接口文件在 `memory/autonomous_operation_sop/helper.py`；不要另找不存在的 `autonomous_task.py`
 
 第二步：
 ```python
@@ -35,6 +36,7 @@ print(get_todo())       # 查看待办
 1. 在cwd写报告（文件名任意），若有记忆更新建议，附在报告末尾
 2. `from/import helper; complete_task(tasktitle, historyline, report_path)` → 自动编号+移报告到 autonomous_reports/+prepend history（historyline 格式：`类型 | 主题 | 结论`，严格单行）
 3. `set_todo()` 获取TODO路径 → 将已完成条目标记为 `[x]`
+4. `complete_task` 后必须回读 TODO 确认；若因 tasktitle/historyline 与待执行项文本不一致而未自动匹配，需手工 patch 原待执行项为 `[x]`
 
 ## 权限边界
 - 无需批准：只读探测、cwd内写操作/脚本实验

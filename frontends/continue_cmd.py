@@ -214,6 +214,57 @@ def handle(agent, query, display_queue):
     return query
 
 
+def _user_text(prompt_body):
+    """User-typed text from a prompt JSON; '' if this is an agent auto-continuation."""
+    try: msg = json.loads(prompt_body)
+    except Exception: return ''
+    if not isinstance(msg, dict): return ''
+    for blk in msg.get('content', []) or []:
+        if isinstance(blk, dict) and blk.get('type') == 'text':
+            t = (blk.get('text') or '').strip()
+            if t and not t.startswith('### [WORKING MEMORY]'): return t
+    return ''
+
+
+def _assistant_text(response_body):
+    """Joined text from a response blocks repr; '' on parse failure."""
+    try: blocks = ast.literal_eval(response_body)
+    except Exception: return ''
+    if not isinstance(blocks, list): return ''
+    return '\n'.join(b['text'] for b in blocks
+                     if isinstance(b, dict) and b.get('type') == 'text'
+                     and isinstance(b.get('text'), str) and b['text'].strip())
+
+
+_TURN_MARK = '**LLM Running (Turn {}) ...**\n\n'
+
+
+def extract_ui_messages(path):
+    """Parse a model_responses log into [{role, content}, ...] for UI replay.
+
+    Auto-continuation turns are folded into one assistant bubble with Turn markers,
+    matching live chat rendering via fold_turns().
+    """
+    try:
+        with open(path, encoding='utf-8', errors='replace') as f: content = f.read()
+    except Exception: return []
+
+    rounds = []  # [(user_text, [turn_text, ...]), ...]
+    for prompt, response in _pairs(content):
+        user = _user_text(prompt)
+        if user or not rounds: rounds.append((user, []))
+        rounds[-1][1].append(_assistant_text(response))
+
+    out = []
+    for user, turns in rounds:
+        if not user or not any(turns): continue
+        body = '\n\n'.join(t if i == 0 else _TURN_MARK.format(i + 1) + t
+                           for i, t in enumerate(turns))
+        out += [{'role': 'user', 'content': user},
+                {'role': 'assistant', 'content': body}]
+    return out
+
+
 def handle_frontend_command(agent, query, exclude_pid=None):
     """Frontend-friendly /continue entry that returns text directly."""
     s = (query or '').strip()

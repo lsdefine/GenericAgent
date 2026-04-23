@@ -15,7 +15,7 @@ import streamlit as st
 import time, json, re, threading, queue
 from agentmain import GeneraticAgent
 import chatapp_common  # activate /continue command (monkey patches GeneraticAgent)
-from continue_cmd import handle_frontend_command, reset_conversation
+from continue_cmd import handle_frontend_command, reset_conversation, list_sessions, extract_ui_messages
 
 st.set_page_config(page_title="Cowork", layout="wide")
 
@@ -190,10 +190,19 @@ if prompt := st.chat_input("any task?"):
         st.session_state.messages = [{"role": "assistant", "content": reset_conversation(agent), "time": ts}]
         _reset_and_rerun()
     if cmd.startswith("/continue"):
-        st.session_state.messages = list(st.session_state.messages) + [
-            {"role": "user", "content": cmd, "time": ts},
-            {"role": "assistant", "content": handle_frontend_command(agent, cmd), "time": ts},
-        ]
+        m = re.match(r'/continue\s+(\d+)\s*$', cmd.strip())
+        sessions = list_sessions(exclude_pid=os.getpid()) if m else []
+        idx = int(m.group(1)) - 1 if m else -1
+        # Resolve target path BEFORE handle (which snapshots current log, shifting indices).
+        target = sessions[idx][0] if 0 <= idx < len(sessions) else None
+        result = handle_frontend_command(agent, cmd)
+        history = extract_ui_messages(target) if target and result.startswith('✅') else None
+        tail = [{"role": "assistant", "content": result, "time": ts}]
+        if history:
+            st.session_state.messages = history + tail
+        else:
+            st.session_state.messages = list(st.session_state.messages) + \
+                [{"role": "user", "content": cmd, "time": ts}] + tail
         _reset_and_rerun()
     st.session_state.messages.append({"role": "user", "content": prompt})
     if hasattr(agent, '_pet_req') and not prompt.startswith('/'): agent._pet_req('state=walk')

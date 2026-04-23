@@ -1,0 +1,14 @@
+[高频场景]
+系统健康审计 → health_check_sop.md → 用 health 工具或 python3 memory/agent_health_check.py
+GitHub 操作 → github_contribution_sop.md → PR/commit 流程
+Plan 模式 → plan_sop.md → 探索→规划→执行→验证
+子任务委托 → subagent.md → 并行/Map/验证模式
+记忆管理 → memory_management_sop.md → L0-L4 分层规则
+浏览器控制 → tmwebdriver_sop.md → TMWebDriver 驱动
+视觉识别 → vision_sop.md → Vision API 使用
+定时任务 → scheduled_task_sop.md → cron 式调度
+
+[RULES]
+- 未知先 file_read，不猜测
+- 修改文件前先 read 确认最新状态
+- 失败不超过 3 次，必须切换策略或 ask_user

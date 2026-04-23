@@ -400,6 +400,32 @@ streamlit run frontends/stapp2.py        # 另一种 Streamlit 风格 UI
 - `/continue` - 列出可恢复会话快照
 - `/continue N` - 恢复第 `N` 个可恢复会话
 
+### 内置工具
+
+GenericAgent 提供以下内置工具：
+
+| 工具 | 功能 |
+|------|------|
+| `code_run` | 执行 Python/PowerShell 代码 |
+| `file_read/write/patch` | 文件读写和精确替换 |
+| `web_scan / web_execute_js` | 浏览器控制和 JS 执行 |
+| `ask_user` | 中断任务询问用户 |
+| `update_working_checkpoint` | 短期工作笔记（每轮自动注入） |
+| `start_long_term_update` | 触发长期记忆沉淀 |
+| `health` | **审计系统健康** — 检查提示词冲突、记忆污染、工具纪律、上下文重复、隐藏 Agent 层等 |
+
+#### 使用 health 工具
+
+当 Agent 表现异常时，可以说：
+```
+请运行 health 工具检查系统状态
+```
+
+或手动运行：
+```bash
+python3 memory/agent_health_check.py
+```
+
 ### macOS Desktop App (Optional)
 
 将 GenericAgent 安装为 macOS 原生桌面应用，支持通过 Spotlight、Launchpad 或应用程序文件夹一键启动：

@@ -69,5 +69,12 @@
     "name": "start_long_term_update",
     "description": "Start distilling long-term memory. Call when discovering info worth remembering (env facts/user prefs/lessons learned). Skip if memory already updated or in autonomous flow. Must call when a task that took 15+ turns is completed",
     "parameters": {"type": "object", "properties": {}}}
-  }
+  }},
+  {"type": "function", "function": {
+    "name": "health",
+    "description": "Audit GenericAgent system health. Checks system prompt conflicts, memory pollution, tool discipline, context duplication, hidden agent layers, and rendering issues. Use when agent behavior degrades or periodically for maintenance.",
+    "parameters": {"type": "object", "properties": {
+      "mode": {"type": "string", "enum": ["full", "wrapper", "memory", "tools", "rendering"], "description": "Audit scope. Default: full", "default": "full"},
+      "json_output": {"type": "boolean", "description": "Return raw JSON report for programmatic analysis", "default": false}}}
+  }}
 ]

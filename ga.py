@@ -555,3 +555,37 @@ def get_global_memory():
         prompt += insight + "\n"
     except FileNotFoundError: pass
     return prompt
+
+# Monkey-patch: add do_health to GenericAgentHandler
+_original_init = GenericAgentHandler.__init__
+def _patched_init(self, *args, **kwargs):
+    _original_init(self, *args, **kwargs)
+
+def _do_health(self, args, response):
+    """Run GenericAgent system health audit."""
+    mode = args.get("mode", "full")
+    json_out = args.get("json_output", False)
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    check_script = os.path.join(script_dir, "memory", "agent_health_check.py")
+
+    if not os.path.exists(check_script):
+        return StepOutcome("[Error] health check script not found at memory/agent_health_check.py", next_prompt="\n")
+
+    cmd = [sys.executable, "-u", check_script, "--target-dir", script_dir, "--mode", mode]
+    if json_out: cmd.append("--json")
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, cwd=script_dir)
+        output = result.stdout.strip()
+        if result.returncode != 0:
+            output += f"\n[stderr] {result.stderr.strip()}"
+    except subprocess.TimeoutExpired:
+        output = "[Error] Health check timed out (>30s)"
+    except Exception as e:
+        output = f"[Error] Health check failed: {e}"
+
+    yield f"{output}\n"
+    return StepOutcome(output, next_prompt="\n")
+
+GenericAgentHandler.__init__ = _patched_init
+GenericAgentHandler.do_health = _do_health

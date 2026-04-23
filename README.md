@@ -71,15 +71,20 @@ After a few weeks, your agent instance will have a skill tree no one else in the
 
 ## 🚀 Quick Start
 
-#### Method 1: Standard Installation
+#### Method 1: Standard Installation (uv recommended)
 
 ```bash
 # 1. Clone the repo
 git clone https://github.com/lsdefine/GenericAgent.git
 cd GenericAgent
 
-# 2. Install minimal dependencies
-pip install requests streamlit pywebview
+# 2. Install dependencies
+# Minimal (core + default web UI):
+uv pip install -e .
+# Or with extras (browser automation, telegram, etc.):
+uv pip install -e ".[browser,tg]"
+# Or everything at once:
+uv pip install -e ".[all]"
 
 # 3. Configure API Key
 cp mykey_template.py mykey.py
@@ -88,6 +93,26 @@ cp mykey_template.py mykey.py
 # 4. Launch
 python launch.pyw
 ```
+
+<details>
+<summary>Available optional dependency groups</summary>
+
+| Group | Includes |
+|-------|----------|
+| `qt` | PySide6 desktop UI |
+| `browser` | Browser automation (TMWebDriver) |
+| `tg` | Telegram Bot |
+| `qq` | QQ Bot |
+| `wechat` | WeChat Bot |
+| `feishu` | Feishu/Lark Bot |
+| `wecom` | WeCom Bot |
+| `dingtalk` | DingTalk Bot |
+| `ocr` | OCR capability |
+| `vision` | UI detection (YOLO) |
+| `langfuse` | Langfuse tracing |
+| `all` | All of the above |
+
+</details>
 
 Full guide: [GETTING_STARTED.md](GETTING_STARTED.md)
 
@@ -275,15 +300,20 @@ MIT License — see [LICENSE](LICENSE)
 
 ## 🚀 快速开始
 
-#### 方法一：标准安装
+#### 方法一：标准安装（推荐 uv）
 
 ```bash
 # 1. 克隆仓库
 git clone https://github.com/lsdefine/GenericAgent.git
 cd GenericAgent
 
-# 2. 安装最小依赖
-pip install requests streamlit pywebview
+# 2. 安装依赖
+# 最小安装（核心 + 默认 Web UI）：
+uv pip install -e .
+# 按需选装（浏览器自动化、Telegram 等）：
+uv pip install -e ".[browser,tg]"
+# 一键全装：
+uv pip install -e ".[all]"
 
 # 3. 配置 API Key
 cp mykey_template.py mykey.py
@@ -292,6 +322,26 @@ cp mykey_template.py mykey.py
 # 4. 启动
 python launch.pyw
 ```
+
+<details>
+<summary>可选依赖组</summary>
+
+| 分组 | 包含内容 |
+|------|---------|
+| `qt` | PySide6 桌面 UI |
+| `browser` | 浏览器自动化 (TMWebDriver) |
+| `tg` | Telegram Bot |
+| `qq` | QQ Bot |
+| `wechat` | 微信 Bot |
+| `feishu` | 飞书 Bot |
+| `wecom` | 企业微信 Bot |
+| `dingtalk` | 钉钉 Bot |
+| `ocr` | OCR 能力 |
+| `vision` | UI 检测 (YOLO) |
+| `langfuse` | Langfuse 追踪 |
+| `all` | 以上全部 |
+
+</details>
 
 完整引导流程见 [GETTING_STARTED.md](GETTING_STARTED.md)。
 
@@ -308,7 +358,7 @@ python launch.pyw
 无需额外配置，扫码登录即可：
 
 ```bash
-pip install pycryptodome qrcode requests
+uv pip install -e ".[wechat]"
 python frontends/wechatapp.py
 ```
 
@@ -319,7 +369,7 @@ python frontends/wechatapp.py
 使用 `qq-botpy` WebSocket 长连接，**无需公网 webhook**：
 
 ```bash
-pip install qq-botpy
+uv pip install -e ".[qq]"
 ```
 
 在 `mykey.py` 中补充：
@@ -339,7 +389,7 @@ python frontends/qqapp.py
 ### 飞书（Lark）
 
 ```bash
-pip install lark-oapi
+uv pip install -e ".[feishu]"
 python frontends/fsapp.py
 ```
 
@@ -359,7 +409,7 @@ fs_allowed_users = ["ou_xxx"]  # 或 ['*']
 ### 企业微信（WeCom）
 
 ```bash
-pip install wecom_aibot_sdk
+uv pip install -e ".[wecom]"
 python frontends/wecomapp.py
 ```
 
@@ -373,7 +423,7 @@ wecom_welcome_message = "你好，我在线上。"
 ### 钉钉（DingTalk）
 
 ```bash
-pip install dingtalk-stream
+uv pip install -e ".[dingtalk]"
 python frontends/dingtalkapp.py
 ```
 

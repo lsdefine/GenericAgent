@@ -99,7 +99,7 @@ Full guide: [GETTING_STARTED.md](GETTING_STARTED.md)
 ```python
 # mykey.py
 tg_bot_token = 'YOUR_BOT_TOKEN'
-tg_allowed_users = [YOUR_USER_ID]
+tg_allowed_users = ["YOUR_USER_ID"]
 ```
 
 ```bash
@@ -461,7 +461,7 @@ MIT License — 详见 [LICENSE](LICENSE)
 
 ## 📈 Star History
 
-<a href="https://star-history.com/#lsdefine/GenericAgent&Date">
+<a href="https://star-history.com/#lsdefine/GenericAgent&type=Date&theme=dark">
  <picture>
    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=lsdefine/GenericAgent&type=Date&theme=dark" />
    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=lsdefine/GenericAgent&type=Date" />

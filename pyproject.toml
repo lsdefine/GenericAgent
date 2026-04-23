@@ -1,4 +1,4 @@
-[project]
+﻿[project]
 name = "genericagent"
 version = "0.1.0"
 description = "A physical-level general agent with system-level control capabilities"
@@ -38,7 +38,3 @@ dependencies = [
     "wecom-aibot-sdk>=1.0.6",
     "yara-python>=4.5.4",
 ]
-
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"

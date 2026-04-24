@@ -102,6 +102,39 @@ class GeneraticAgent:
     # i know it is dangerous, but raw_query is dangerous enough it doesn't enlarge
     def _handle_slash_cmd(self, raw_query, display_queue):
         if not raw_query.startswith('/'): return raw_query
+        
+        # /llms - 列出所有模型
+        if raw_query.strip() == '/llms':
+            items = []
+            for i, b in enumerate(self.llmclients):
+                name = (b.backend.name.lower() + ' (mixin)') if isinstance(b.backend, MixinSession) else self.get_llm_name(b, model=True)
+                marker = ' ← 当前' if i == self.llm_no else ''
+                items.append(f"  [{i}] {name}{marker}")
+            display_queue.put({'done': '📋 可用模型：\n' + '\n'.join(items), 'source': 'system'})
+            return None
+        
+        # /llm <index|next> - 切换模型
+        if _sm := re.match(r'/llm\s*(\S*)', raw_query.strip(), re.IGNORECASE):
+            arg = _sm.group(1).lower() if _sm.group(1) else ''
+            try:
+                if arg == 'next':
+                    self.next_llm()
+                elif arg:
+                    idx = int(arg)
+                    if 0 <= idx < len(self.llmclients):
+                        self.next_llm(idx)
+                    else:
+                        display_queue.put({'done': f'❌ 模型索引越界: {idx}，可用范围: 0-{len(self.llmclients)-1}', 'source': 'system'})
+                        return None
+                else:
+                    self.next_llm()
+                name = self.get_llm_name(model=True)
+                display_queue.put({'done': f'✅ 已切换到: [{self.llm_no}] {name}', 'source': 'system'})
+                return None
+            except ValueError:
+                display_queue.put({'done': f'❌ 无效索引: {arg}，应为数字或"next"', 'source': 'system'})
+                return None
+        
         if _sm := re.match(r'/session\.(\w+)=(.*)', raw_query.strip()):
             k, v = _sm.group(1), _sm.group(2)
             vfile = os.path.join(script_dir, 'temp', v)

@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QScrollArea, QFrame, QTextEdit, QStackedWidget,
     QListWidget, QListWidgetItem, QSizePolicy, QFileDialog,
     QSplitter, QTextBrowser, QApplication, QMessageBox,
+    QMenu, QLineEdit,
 )
 from PySide6.QtCore import (
     Qt, QTimer, QPoint, QPointF, QByteArray, QSize,
@@ -251,7 +252,6 @@ class FloatingButton(QWidget):
 
     # ── Toggle panel ──────────────────────────────────────
     def _toggle(self):
-        from PySide6.QtCore import QDateTime
         now = QDateTime.currentMSecsSinceEpoch()
         if now - self._last_toggle_ms < 500:   # 500 ms debounce
             return
@@ -319,9 +319,11 @@ _SVG_COPY = '<svg viewBox="0 0 24 24" fill="none" stroke="{c}" stroke-width="2" 
 _SVG_REGEN = '<svg viewBox="0 0 24 24" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>'
 _SVG_CHAT = '<svg viewBox="0 0 24 24" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>'
 _SVG_CLOCK = '<svg viewBox="0 0 24 24" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>'
+_SVG_SEARCH = '<svg viewBox="0 0 24 24" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>'
 _SVG_BOOK = '<svg viewBox="0 0 24 24" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>'
 _SVG_GEAR = '<svg viewBox="0 0 24 24" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>'
-_SVG_CLIP = '<svg viewBox="0 0 24 24" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.446 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>'
+_SVG_PLUS = '<svg viewBox="0 0 24 24" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>'
+_SVG_CLIP = _SVG_PLUS
 _SVG_STOP = '<svg viewBox="0 0 24 24" fill="{c}" stroke="none"><rect width="10" height="10" x="7" y="7" rx="1.5" ry="1.5"/></svg>'
 _SVG_RESET = _SVG_REGEN
 _SVG_SAVE = '<svg viewBox="0 0 24 24" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>'
@@ -332,7 +334,6 @@ _SVG_FILE = '<svg viewBox="0 0 24 24" fill="none" stroke="{c}" stroke-width="2" 
 _SVG_USER = '<svg viewBox="0 0 24 24" fill="none" stroke="{c}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>'
 _SVG_BOT = '<svg viewBox="0 0 24 24" fill="none" stroke="{c}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/><path d="M5 3v4"/><path d="M7 5H3"/></svg>'
 _SVG_SEND = '<svg viewBox="0 0 24 24" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="m22 2-7 20-4-9-9-4Z"/></svg>'
-_SVG_PLUS = '<svg viewBox="0 0 24 24" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" x2="12" y1="5" y2="19"/><line x1="5" x2="19" y1="12" y2="12"/></svg>'
 
 _MD_CSS = """
 body { color: #e4e4e7; font-family: "Arial", "Microsoft YaHei", sans-serif; font-size: 13px; line-height: 1.6; font-weight: 400; }
@@ -702,6 +703,48 @@ class _MsgRow(QWidget):
             self._label.setHtml(_md_to_html(text))
             self._adjust_browser_height()
 
+    def highlight(self, keyword: str):
+        """Apply highlight and return keyword's y position in document, or None."""
+        if not keyword or not self._text:
+            return None
+        kw_lower = keyword.lower()
+        text_lower = self._text.lower()
+        if kw_lower not in text_lower:
+            return None
+        if self._role == "user":
+            escaped = self._text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            kw_esc = keyword.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            highlighted = escaped.replace(kw_esc, f'<span style="background: rgba(251,191,36,0.35); color: #fbbf24;">{kw_esc}</span>')
+            self._label.setText(highlighted)
+            self._label.adjustSize()
+            return 0  # plain text, keyword at top
+        else:
+            from PySide6.QtGui import QTextDocument, QTextCursor, QTextCharFormat
+            doc = self._label.document()
+            cursor = QTextCursor(doc)
+            flags = QTextDocument.FindFlags(0)
+            fmt = QTextCharFormat()
+            fmt.setBackground(QColor(251, 191, 36, 90))
+            fmt.setForeground(QColor(251, 191, 36))
+            keyword_y = None
+            while True:
+                cursor = doc.find(keyword, cursor, flags)
+                if cursor.isNull():
+                    break
+                cursor.mergeCharFormat(fmt)
+                if keyword_y is None:
+                    keyword_y = self._label.cursorRect(cursor).y()
+            self._adjust_browser_height()
+            return keyword_y
+
+    def clear_highlight(self):
+        if self._role == "user":
+            self._label.setText(self._text)
+            self._label.adjustSize()
+        else:
+            self._label.setHtml(_md_to_html(self._text))
+            self._adjust_browser_height()
+
 
 class _TabButton(QPushButton):
     _STYLE = """
@@ -787,8 +830,7 @@ class ChatPanel(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         path = QPainterPath()
-        path.addRoundedRect(0.5, 0.5, self.width() - 1.0, self.height() - 1.0,
-                            20.0, 20.0)
+        path.addRect(0.5, 0.5, self.width() - 1.0, self.height() - 1.0)
         grad = QLinearGradient(0, 0, 0, self.height())
         grad.setColorAt(0.0, QColor(20, 20, 28, 228))
         grad.setColorAt(1.0, QColor(10, 10, 14, 242))
@@ -798,8 +840,7 @@ class ChatPanel(QWidget):
 
     def resizeEvent(self, event):
         path = QPainterPath()
-        path.addRoundedRect(0, 0, float(self.width()), float(self.height()),
-                            20.0, 20.0)
+        path.addRect(0, 0, float(self.width()), float(self.height()))
         self.setMask(QRegion(path.toFillPolygon().toPolygon()))
         super().resizeEvent(event)
 
@@ -821,6 +862,7 @@ class ChatPanel(QWidget):
         self._stack.addWidget(self._build_sop_page())     # 2
         self._stack.addWidget(self._build_settings_page())# 3
         root.addWidget(self._stack)
+        root.addWidget(self._build_statusbar())
 
         # Now that _stack exists, activate the first tab
         self._switch_tab(0)
@@ -836,35 +878,94 @@ class ChatPanel(QWidget):
         ly.setContentsMargins(16, 0, 10, 0)
         ly.setSpacing(8)
 
-        # Status dot
-        dot = QLabel("●")
-        dot.setStyleSheet(f"color: {C['green']}; font-size: 9px;")
-        dot.setFixedWidth(12)
-        ly.addWidget(dot)
+        # Search button
+        search_btn = QPushButton()
+        search_btn.setIcon(_svg_icon("search", _SVG_SEARCH, "#a1a1aa"))
+        search_btn.setIconSize(QSize(16, 16))
+        search_btn.setFixedSize(26, 26)
+        search_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        search_btn.setStyleSheet("""
+            QPushButton { background: transparent; border: none; border-radius: 13px; }
+            QPushButton:hover { background: rgba(63,63,70,0.6); }
+        """)
+        search_btn.clicked.connect(self._toggle_search)
+        self._search_btn = search_btn
+        ly.addWidget(search_btn)
 
-        # Title
-        t = QLabel("GenericAgent")
-        t.setStyleSheet("color: #f4f4f5; font-weight: 700; font-size: 14px;")
-        ly.addWidget(t)
+        # Search widget (hidden by default)
+        self._search_widget = QWidget()
+        self._search_widget.hide()
+        sw_ly = QHBoxLayout(self._search_widget)
+        sw_ly.setContentsMargins(0, 0, 0, 0)
+        sw_ly.setSpacing(6)
 
-        # Model badge
-        self._model_badge = _Badge(self._model_name())
-        ly.addWidget(self._model_badge)
+        self._search_input = QLineEdit()
+        self._search_input.setPlaceholderText("搜索当前对话和历史...")
+        self._search_input.setFixedHeight(26)
+        self._search_input.setStyleSheet(f"""
+            QLineEdit {{
+                background: rgba(32,32,38,0.9);
+                border: 1px solid {C['border'].name()};
+                border-radius: 13px;
+                color: {C['text']};
+                font-size: 13px;
+                padding: 0 10px;
+            }}
+            QLineEdit::placeholder {{ color: {C['muted']}; }}
+        """)
+        self._search_input.setFixedWidth(200)
+        self._search_input.textChanged.connect(self._on_search_changed)
+        self._search_input.installEventFilter(self)
+        sw_ly.addWidget(self._search_input)
 
-        self._streaming_badge = _StreamingBadge()
-        ly.addWidget(self._streaming_badge)
+        close_search = QPushButton("×")
+        close_search.setFixedSize(26, 26)
+        close_search.setCursor(QCursor(Qt.PointingHandCursor))
+        close_search.setStyleSheet("""
+            QPushButton { background: transparent; color: #71717a; border: none; font-size: 16px; }
+            QPushButton:hover { color: #a1a1aa; }
+        """)
+        close_search.clicked.connect(self._hide_search)
+        sw_ly.addWidget(close_search)
+        ly.addWidget(self._search_widget)
 
         ly.addStretch()
 
+        # Minimize button
+        mini = QPushButton("\uE949")
+        mini.setFixedSize(26, 26)
+        mini.setCursor(QCursor(Qt.PointingHandCursor))
+        mini.setStyleSheet("""
+            QPushButton { background: rgba(63,63,70,0.6); color: #a1a1aa;
+                border: none; border-radius: 13px; font-family: "Segoe MDL2 Assets"; font-size: 9px; }
+            QPushButton:hover { background: rgba(63,63,70,0.9); color: white; }
+        """)
+        mini.clicked.connect(self.hide)
+        ly.addWidget(mini)
+
+        # Maximize button
+        maxi = QPushButton("\uE739")
+        maxi.setFixedSize(26, 26)
+        maxi.setCursor(QCursor(Qt.PointingHandCursor))
+        maxi.setStyleSheet("""
+            QPushButton { background: rgba(63,63,70,0.6); color: #a1a1aa;
+                border: none; border-radius: 13px; font-family: "Segoe MDL2 Assets"; font-size: 9px; }
+            QPushButton:hover { background: rgba(63,63,70,0.9); color: white; }
+        """)
+        maxi.clicked.connect(self._toggle_maximize)
+        self._maxi_btn = maxi
+        ly.addWidget(maxi)
+
         # Close button
-        close = QPushButton("×")
+        close = QPushButton("\uE8BB")
         close.setFixedSize(26, 26)
+        close.setCursor(QCursor(Qt.PointingHandCursor))
         close.setStyleSheet("""
             QPushButton { background: rgba(63,63,70,0.6); color: #a1a1aa;
-                border: none; border-radius: 13px; font-size: 15px; font-weight: bold; }
+                border: none; border-radius: 13px; font-family: "Segoe MDL2 Assets"; font-size: 9px; }
             QPushButton:hover { background: rgba(220,38,38,0.85); color: white; }
         """)
-        close.clicked.connect(self.hide)
+        close.clicked.connect(lambda: (self.close(), QApplication.instance().quit()))
         ly.addWidget(close)
 
         # Drag
@@ -872,6 +973,111 @@ class ChatPanel(QWidget):
         bar.mouseMoveEvent    = self._tb_move
         bar.mouseReleaseEvent = self._tb_release
         return bar
+
+    def _toggle_search(self):
+        if hasattr(self, "_search_visible") and self._search_visible:
+            self._hide_search()
+        else:
+            self._show_search()
+
+    def _show_search(self):
+        self._search_visible = True
+        self._search_btn.setFixedSize(0, 0)
+        self._search_widget.show()
+        self._search_input.setFocus()
+        self._search_input.selectAll()
+
+    def _hide_search(self):
+        self._search_visible = False
+        self._search_btn.setFixedSize(26, 26)
+        self._search_widget.hide()
+        self._search_input.clear()
+        self._clear_all_highlights()
+        if self._stack.currentIndex() == 1:
+            self._reset_history_items_style()
+
+    def _hide_search_if_no_focus(self):
+        if not self._search_input.hasFocus():
+            self._hide_search()
+
+    def _on_search_changed(self, text):
+        if not text.strip():
+            self._clear_all_highlights()
+            return
+        keyword = text.strip()
+        current_tab = self._stack.currentIndex()
+
+        if current_tab == 0:
+            self._search_current_chat(keyword)
+        elif current_tab == 1:
+            self._search_history(keyword)
+
+    def _clear_all_highlights(self):
+        for i in range(self._msg_layout.count() - 1):
+            w = self._msg_layout.itemAt(i).widget()
+            if isinstance(w, _MsgRow):
+                w.clear_highlight()
+
+    def _search_current_chat(self, keyword: str):
+        first_found = None
+        first_keyword_y = None
+        for i in range(self._msg_layout.count() - 1):
+            w = self._msg_layout.itemAt(i).widget()
+            if isinstance(w, _MsgRow):
+                if keyword.lower() in w._text.lower():
+                    kw_y = w.highlight(keyword)
+                    if first_found is None:
+                        first_found = w
+                        first_keyword_y = kw_y
+                else:
+                    w.clear_highlight()
+        # 滚动到第一个匹配项（使用关键词在文档内的实际位置）
+        if first_found:
+            self._scroll_to_widget(first_found, first_keyword_y or 0)
+
+    def _scroll_to_widget(self, w, keyword_y=0):
+        self._user_scrolled_up = True
+        self._msg_container.layout().activate()
+        QApplication.processEvents()
+
+        sb = self._scroll.verticalScrollBar()
+        vp_h = self._scroll.viewport().height()
+        keyword_screen_y = w.y() + keyword_y
+        target = keyword_screen_y - vp_h // 3
+        target = max(0, min(target, sb.maximum()))
+        sb.setValue(target)
+        QApplication.processEvents()
+        self._scroll.viewport().repaint()
+
+    def _search_history(self, keyword: str):
+        kw_lower = keyword.lower()
+        for i in range(self._hist_list.count()):
+            item = self._hist_list.item(i)
+            session = item.data(Qt.UserRole)
+            messages = session.get("messages", []) if session else []
+            content_text = " ".join([m.get("content", "") for m in messages if isinstance(m.get("content"), str)])
+            match = kw_lower in content_text.lower()
+            item.setHidden(not match)
+            if match:
+                item.setBackground(QColor(251, 191, 36, 50))
+                item.setForeground(QColor(251, 191, 36))
+            else:
+                item.setBackground(QColor(0, 0, 0, 0))
+                item.setForeground(QColor(255, 255, 255))
+
+    def _reset_history_items_style(self):
+        for i in range(self._hist_list.count()):
+            item = self._hist_list.item(i)
+            item.setHidden(False)
+            item.setBackground(QColor(0, 0, 0, 0))
+            item.setForeground(QColor(255, 255, 255))
+            w = self._hist_list.itemWidget(item)
+            if w:
+                w.setStyleSheet(
+                    f"background: rgba(35,35,42,0.6); color: {C['text']};"
+                    " border: 1px solid #3f3f46; border-radius: 8px;"
+                    " padding: 8px 12px; margin: 2px 0;"
+                )
 
     def _tb_press(self, e):
         if e.button() == Qt.LeftButton:
@@ -883,6 +1089,68 @@ class ChatPanel(QWidget):
 
     def _tb_release(self, _e):
         self._drag_pos = None
+
+    def _toggle_maximize(self):
+        if self.isMaximized():
+            self.showNormal()
+            self._maxi_btn.setText("☐")
+        else:
+            self.showMaximized()
+            self._maxi_btn.setText("❐")
+
+    # ── status bar ─────────────────────────────────────────────────────────────
+    def _build_statusbar(self) -> QWidget:
+        bar = QWidget()
+        bar.setFixedHeight(24)
+        bar.setStyleSheet("background: transparent;")
+        ly = QHBoxLayout(bar)
+        ly.setContentsMargins(16, 0, 10, 0)
+        ly.setSpacing(8)
+
+        # Status dot
+        dot = QLabel("●")
+        dot.setStyleSheet(f"color: {C['green']}; font-size: 9px;")
+        dot.setFixedWidth(12)
+        ly.addWidget(dot)
+
+        # Model name (clickable to show model list)
+        self._model_badge = QLabel(self._model_name())
+        self._model_badge.setStyleSheet("color: #a1a1aa; font-size: 11px;")
+        self._model_badge.setCursor(QCursor(Qt.PointingHandCursor))
+        self._model_badge.mousePressEvent = lambda e: self._show_model_menu(e)
+        ly.addWidget(self._model_badge)
+
+        self._streaming_badge = _StreamingBadge()
+        ly.addWidget(self._streaming_badge)
+
+        ly.addStretch()
+        return bar
+
+    def _show_model_menu(self, _e):
+        menu = QMenu(self._model_badge)
+        menu.setStyleSheet(f"""
+            QMenu {{
+                background: {C['panel'].name()};
+                border: 1px solid {C['border'].name()};
+                padding: 4px 0;
+            }}
+            QMenu::item {{
+                color: {C['text']};
+                padding: 6px 20px 6px 12px;
+                font-size: 12px;
+            }}
+            QMenu::item:selected {{
+                background: rgba(63,63,70,0.6);
+            }}
+        """)
+        for i, client in enumerate(self.agent.llmclients):
+            try:
+                name = client.name or "未知"
+            except Exception:
+                name = "未知"
+            act = menu.addAction(f"{name}  #{i + 1}")
+            act.triggered.connect(lambda _, idx=i: self._do_switch_to(idx))
+        menu.exec(QCursor.pos())
 
     # ── tab bar ───────────────────────────────────────────────────────────────
     def _build_tabbar(self) -> QWidget:
@@ -931,6 +1199,9 @@ class ChatPanel(QWidget):
         self._stack.setCurrentIndex(idx)
         for i, btn in enumerate(self._tabs):
             btn.setChecked(i == idx)
+        # 切换标签时关闭搜索框
+        if hasattr(self, '_search_visible') and self._search_visible:
+            self._hide_search()
         if idx == 1:
             self._refresh_history()
         if idx == 2:
@@ -977,7 +1248,7 @@ class ChatPanel(QWidget):
         wrap = QWidget()
         wrap.setStyleSheet("background: transparent;")
         ly = QVBoxLayout(wrap)
-        ly.setContentsMargins(20, 6, 20, 14)
+        ly.setContentsMargins(20, 6, 20, 0)
         ly.setSpacing(0)
 
         self._chips_row = QWidget()
@@ -1006,7 +1277,7 @@ class ChatPanel(QWidget):
 
         self._input = QTextEdit()
         self._input.setFixedHeight(64)
-        self._input.setPlaceholderText("给助手发送消息...")
+        self._input.setPlaceholderText("给助手发送消息... Enter发送，Shift+Enter换行")
         self._input.setStyleSheet(f"""
             QTextEdit {{
                 background: transparent; color: {C['text']};
@@ -1294,6 +1565,9 @@ class ChatPanel(QWidget):
         ok = False
         try:
             reply = backend.ask("你好", stream=False)
+            # 兼容生成器函数（NativeClaudeSession.ask是生成器）
+            if hasattr(reply, '__iter__') and not isinstance(reply, str):
+                reply = ''.join(str(b) for b in reply if isinstance(b, str))
             text = str(reply).strip() if reply else ""
             ok = len(text) > 0 and not text.startswith("Error") and not text.startswith("[")
             print(f"[HealthCheck] Backend #{idx} {type(backend).__name__}/{backend.model}: {'OK' if ok else 'FAIL'} -> {text[:60]}")
@@ -1304,14 +1578,20 @@ class ChatPanel(QWidget):
             backend.raw_msgs = [m for m in backend.raw_msgs if m.get("prompt") != "你好"]
         self._health_results[idx] = ok
 
-    # ── event filter (Enter key in text edit) ─────────────────────────────────
+    # ── event filter (Enter key in text edit, Escape to close search) ──────────
     def eventFilter(self, obj, event):
-        from PySide6.QtCore import QEvent
-        if obj is self._input and event.type() == QEvent.KeyPress:
-            if event.key() in (Qt.Key_Return, Qt.Key_Enter):
+        if event.type() == QEvent.KeyPress:
+            if obj is self._search_input and event.key() == Qt.Key_Escape:
+                self._hide_search()
+                return True
+            if obj is self._input and event.key() in (Qt.Key_Return, Qt.Key_Enter):
                 if not (event.modifiers() & Qt.ShiftModifier):
                     self._handle_send()
                     return True
+        # 搜索框失焦时关闭搜索
+        if event.type() == QEvent.FocusOut and obj is self._search_input:
+            # 延迟关闭，等待点击事件处理完毕
+            QTimer.singleShot(50, self._hide_search_if_no_focus)
         return super().eventFilter(obj, event)
 
     def _on_text_changed(self):
@@ -1480,10 +1760,8 @@ class ChatPanel(QWidget):
     def _scroll_bottom(self):
         if self._user_scrolled_up:
             return
-        QTimer.singleShot(60, lambda: (
-            self._scroll.verticalScrollBar().setValue(
-                self._scroll.verticalScrollBar().maximum()
-            )
+        QTimer.singleShot(60, lambda: self._scroll.verticalScrollBar().setValue(
+            self._scroll.verticalScrollBar().maximum()
         ))
 
     # ── inject (autonomous mode) ───────────────────────────────────────────────
@@ -1513,6 +1791,9 @@ class ChatPanel(QWidget):
             self._rebuild_messages()
             self._switch_tab(0)
             self._update_token_usage()
+            search_text = self._search_input.text().strip()
+            if search_text:
+                QTimer.singleShot(50, lambda: self._search_current_chat(search_text))
 
     def _delete_selected(self):
         item = self._hist_list.currentItem()
@@ -1551,7 +1832,7 @@ class ChatPanel(QWidget):
     def _refresh_sop(self):
         self._sop_list.clear()
         file_icon = _svg_icon("sop_file_item", _SVG_FILE, C["muted"])
-        for path in sorted(glob.glob("memory/*.md")):
+        for path in sorted(glob.glob(os.path.join(os.path.dirname(os.path.dirname(__file__)), "memory", "*.md"))):
             name = os.path.basename(path)
             size = os.path.getsize(path)
             it = QListWidgetItem(name)
@@ -1588,10 +1869,6 @@ class ChatPanel(QWidget):
         )
         self._msg_layout.insertWidget(self._msg_layout.count() - 1, lbl)
         self._scroll_bottom()
-
-    def _do_switch_model(self):
-        nxt = (self.agent.llm_no + 1) % len(self.agent.llmclients)
-        self._do_switch_to(nxt)
 
     def _do_stop(self):
         self.agent.abort()
@@ -1722,7 +1999,6 @@ def main():
     _last_trigger = [0.0]
 
     def idle_check():
-        import time
         if not panel.autonomous_enabled:
             return
         now = time.time()

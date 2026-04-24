@@ -441,7 +441,8 @@ class GenericAgentHandler(BaseHandler):
         当模型在一轮中未显式调用任何工具时，由引擎自动触发。
         二次确认仅在回复几乎只包含<thinking>/<summary>和一段大代码块时触发。'''
         content = getattr(response, 'content', '') or ""
-        if not response or not content.strip():
+        thinking = getattr(response, 'thinking', '') or ""
+        if not response or (not content.strip() and not thinking.strip()):
             yield "[Warn] LLM returned an empty response. Retrying...\n"
             return StepOutcome({}, next_prompt="[System] Blank response, regenerate and tooluse")
         if len(content) > 100 and ('未收到完整响应 !!!]' in content[-100:] or '!!!Error: [SSL:' in content[-100:]):

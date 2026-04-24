@@ -1,0 +1,40 @@
+# AI install hint: choose deps by OS/env + needed ui/bot. do NOT install all.
+# minimal core first; missing packages can be installed on demand.
+
+[project]
+name = "genericagent"
+version = "0.1.0"
+description = "Minimalist self-evolving autonomous agent framework"
+readme = "README.md"
+requires-python = ">=3.10,<3.14"
+license = { text = "MIT" }
+dependencies = [
+    "requests>=2.28",
+    "beautifulsoup4>=4.12",
+    "bottle>=0.12",
+    "simple-websocket-server>=0.4",
+]
+
+[project.optional-dependencies]
+# select extras, not all. match current task/env.
+# examples: .[ui] for GUI, bot deps only if bot needed.
+ui = [
+    "streamlit>=1.28",
+    "pywebview>=4.0",
+]
+all-frontends = [
+    "python-telegram-bot>=20.0",
+    "qq-botpy>=1.0",
+    "pycryptodome>=3.19",
+    "qrcode>=7.4",
+    "lark-oapi>=1.0",
+    "wecom-aibot-sdk>=1.0",
+    "dingtalk-stream>=1.0",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = []

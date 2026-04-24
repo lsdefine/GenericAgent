@@ -37,9 +37,8 @@ def MouseClick(staytime=0.05):
 	MouseUp(); time.sleep(0.05)
 
 def MouseDClick(staytime=0.05):
-	MouseDown(); MouseUp() 
-	MouseDown(); MouseUp() 
-	time.sleep(0.05)
+	MouseDown(); time.sleep(staytime); MouseUp(); time.sleep(0.05)
+	MouseDown(); time.sleep(staytime); MouseUp(); time.sleep(0.05)
 
 def SetCursorPos(z):
 	z = tuple(map(lambda v:int(v*dpi_scale), z))

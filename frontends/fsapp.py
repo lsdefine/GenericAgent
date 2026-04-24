@@ -598,7 +598,7 @@ def handle_command(open_id, cmd, chat_id=None):
     elif op == "/new":
         _send_cmd_response(reset_conversation(agent))
     elif op == "/help":
-        _send_cmd_response("命令列表:\n/stop - 停止当前任务\n/status - 查看状态\n/llm - 查看当前模型列表\n/llm [n] - 切换到第 n 个模型\n/restore - 恢复上次对话历史\n/continue - 列出可恢复会话\n/continue [n] - 恢复第 n 个会话\n/new - 开启新对话并清空当前上下文\n/help - 显示帮助")
+        _send_cmd_response("命令列表:\n/stop - 停止当前任务\n/status - 查看状态\n/llm - 查看当前模型列表\n/llm [n] - 切换到第 n 个模型\n/llm next - 切换到下一个模型\n/llms - 列出所有可用模型\n/restore - 恢复上次对话历史\n/continue - 列出可恢复会话\n/continue [n] - 恢复第 n 个会话\n/new - 开启新对话并清空当前上下文\n/help - 显示帮助")
     elif op == "/status":
         llm = agent.get_llm_name() if agent.llmclient else "未配置"
         _send_cmd_response(f"状态: {'🔴 运行中' if agent.is_running else '🟢 空闲'}\nLLM: [{agent.llm_no}] {llm}")
@@ -606,13 +606,33 @@ def handle_command(open_id, cmd, chat_id=None):
         if not agent.llmclient:
             return _send_cmd_response("❌ 当前没有可用的 LLM 配置")
         if len(parts) > 1:
-            try:
-                agent.next_llm(int(parts[1]))
+            arg = parts[1].lower()
+            if arg == 'next':
+                agent.next_llm()
                 return _send_cmd_response(f"✅ 已切换到 [{agent.llm_no}] {agent.get_llm_name()}")
-            except Exception:
-                return _send_cmd_response(f"用法: /llm <0-{len(agent.list_llms()) - 1}>")
+            try:
+                idx = int(parts[1])
+                if 0 <= idx < len(agent.llmclients):
+                    agent.next_llm(idx)
+                    return _send_cmd_response(f"✅ 已切换到 [{agent.llm_no}] {agent.get_llm_name()}")
+                else:
+                    return _send_cmd_response(f"❌ 模型索引越界: {idx}，可用范围: 0-{len(agent.llmclients)-1}")
+            except ValueError:
+                return _send_cmd_response(f"❌ 无效参数: {parts[1]}，应为数字或 'next'")
         lines = [f"{'→' if cur else '  '} [{i}] {name}" for i, name, cur in agent.list_llms()]
         _send_cmd_response("LLMs:\n" + "\n".join(lines))
+    elif op == "/llms":
+        # 列出所有可用模型（详细格式）
+        try:
+            llm_list = agent.list_llms()
+            lines = ["📋 可用模型列表："]
+            for idx, name, is_current in llm_list:
+                marker = " ← 当前" if is_current else ""
+                lines.append(f"  [{idx}] {name}{marker}")
+            lines.append(f"\n使用 `/llm <索引>` 或 `/llm next` 切换模型")
+            _send_cmd_response("\n".join(lines))
+        except Exception as e:
+            _send_cmd_response(f"❌ 获取模型列表失败: {e}")
     elif op == "/restore":
         try:
             restored_info, err = format_restore()
@@ -627,7 +647,17 @@ def handle_command(open_id, cmd, chat_id=None):
     elif op == "/continue" or cmd.startswith("/continue"):
         _send_cmd_response(handle_continue_frontend(agent, cmd))
     else:
-        _send_cmd_response(f"未知命令: {cmd}")
+        # 未知 / 命令：透传给 agentmain._handle_slash_cmd 处理（如 /llms, /llm 等）
+        def run_slash_cmd():
+            _send_cmd_response(f"⏳ 处理中...")
+            dq = agent.put_task(cmd, source="feishu", images=[])
+            try:
+                msg = dq.get(timeout=60)
+                content = msg.get('done', '') if isinstance(msg, dict) else str(msg)
+                _send_cmd_response(content)
+            except Exception as e:
+                _send_cmd_response(f"❌ 命令执行失败: {e}")
+        threading.Thread(target=run_slash_cmd, daemon=True).start()
 
 
 def main():

@@ -138,6 +138,22 @@ The default Streamlit desktop UI started by `python launch.pyw`, plus the QQ / T
 - `/continue` - list recoverable conversation snapshots
 - `/continue N` - restore the `N`th recoverable conversation
 
+### Standalone Health Check Script
+
+If you want to audit a GenericAgent checkout without modifying runtime behavior, use the standalone helper:
+
+```bash
+python scripts/agent_health_check.py --target-dir /path/to/GenericAgent
+python scripts/agent_health_check.py --mode tools --json
+```
+
+This script is intentionally standalone:
+
+- no monkey-patching
+- no tool registration
+- no direct memory file writes
+- read-only checks against prompts, config, memory layout, tools, loop guards, and hidden layers
+
 
 ## 📊 Comparison with Similar Tools
 
@@ -426,6 +442,22 @@ streamlit run frontends/stapp2.py        # 另一种 Streamlit 风格 UI
 - `/new` - 开启新对话并清空当前上下文
 - `/continue` - 列出可恢复会话快照
 - `/continue N` - 恢复第 `N` 个可恢复会话
+
+### 独立健康检查脚本
+
+如果你想在**不修改运行时行为**的前提下审计一个 GenericAgent 仓库，可以直接运行这个独立脚本：
+
+```bash
+python scripts/agent_health_check.py --target-dir /path/to/GenericAgent
+python scripts/agent_health_check.py --mode tools --json
+```
+
+这个脚本是纯独立的：
+
+- 不 monkey-patch 运行时
+- 不注册新工具
+- 不直接写入 memory 文件
+- 只做只读检查，覆盖提示词、配置、记忆布局、工具层、agent loop 保护和隐藏层
 
 
 ## 📊 与同类产品对比

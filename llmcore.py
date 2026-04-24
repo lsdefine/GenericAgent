@@ -858,7 +858,8 @@ def tryparse(json_str):
     try: return json.loads(json_str[:-1])
     except: pass
     if '}' in json_str: json_str = json_str[:json_str.rfind('}') + 1]
-    return json.loads(json_str)
+    try: return json.loads(json_str)
+    except: return {"_raw": json_str}
 
 class MixinSession:
     """Multi-session fallback with spring-back to primary."""

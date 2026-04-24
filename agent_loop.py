@@ -106,8 +106,8 @@ def _clean_content(text):
         preview = '\n'.join(body[:5])
         return f'```{lang}\n{preview}\n  ... ({len(body)} lines)\n```'
     text = re.sub(r'```[\s\S]*?```', _shrink_code, text)
-    for p in [r'<file_content>[\s\S]*?</file_content>', r'<tool_(?:use|call)>[\s\S]*?</tool_(?:use|call)>', r'(\r?\n){3,}']:
-        text = re.sub(p, '\n\n' if '\\n' in p else '', text)
+    for p, repl in [(r'<file_content>[\s\S]*?</file_content>', ''), (r'<tool_(?:use|call)>[\s\S]*?</tool_(?:use|call)>', ''), (r'(\r?\n){3,}', '\n\n')]:
+        text = re.sub(p, repl, text)
     return text.strip()
 
 def _compact_tool_args(name, args):

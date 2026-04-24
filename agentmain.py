@@ -111,8 +111,17 @@ class GeneraticAgent:
             setattr(self.llmclient.backend, k, v)
             display_queue.put({'done': smart_format(f"✅ session.{k} = {repr(v)}", max_str_len=500), 'source': 'system'})
             return None
-        if raw_query.strip() == '/resume':
-            return r'用re.findall(r"<history>\\n\[(?:USER\|Agent)\].*?</history>", content, re.DOTALL) 扫temp/model_responses/下时间最近的10个文件(除本PID)，取每文件最后一个匹配(注意JSON里换行是字面\\n)作为该会话内容，按mtime倒序，每个用一句话总结聊了什么让我选择；选定后再简单读该文件末尾作为聊天基础'
+        if raw_query.strip() == '/new':
+            from frontends.continue_cmd import reset_conversation
+            msg = reset_conversation(self)
+            display_queue.put({'done': msg, 'source': 'system'})
+            return None
+        if raw_query.strip() in ('/resume', '/continue') or re.match(r'/continue\s+\d+', raw_query.strip()):
+            if raw_query.strip() == '/resume':
+                return r'用re.findall(r"<history>\\n\[(?:USER\|Agent)\].*?</history>", content, re.DOTALL) 扫temp/model_responses/下时间最近的10个文件(除本PID)，取每文件最后一个匹配(注意JSON里换行是字面\\n)作为该会话内容，按mtime倒序，每个用一句话总结聊了什么让我选择；选定后再简单读该文件末尾作为聊天基础'
+            from frontends.continue_cmd import handle as continue_handle
+            result = continue_handle(self, raw_query, display_queue)
+            return result
         return raw_query
 
     def run(self):

@@ -13,6 +13,9 @@ def _run(*a, **k):
     if enc: t = 1
     if t and isinstance(k.get('input'), str):
         k['input'] = k['input'].encode()
+    # Windows: suppress console window flash
+    if os.name == 'nt' and 'creationflags' not in k:
+        k['creationflags'] = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
     r = _r(*a, **k)
     if t:
         if r.stdout is not None: r.stdout = _d(r.stdout)

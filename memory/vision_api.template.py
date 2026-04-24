@@ -1,4 +1,5 @@
-import base64, requests, sys, os
+import base64, requests, sys, os, urllib3
+urllib3.disable_warnings()
 from io import BytesIO
 from pathlib import Path
 
@@ -88,7 +89,7 @@ def _call_claude(b64, prompt, timeout, max_tokens=1024):
             ]
         }]},
         headers={'x-api-key': cfg['apikey'], 'anthropic-version': '2023-06-01', 'content-type': 'application/json'},
-        timeout=timeout
+        proxies=cfg.get('proxy') and {'https': cfg['proxy'], 'http': cfg['proxy']} or None, timeout=timeout, verify=False
     )
     resp.raise_for_status()
     return resp.json()['content'][0]['text']
@@ -105,9 +106,17 @@ def _call_openai_compat(b64, prompt, timeout, *, apibase, apikey, model, proxy=N
             ]
         }]},
         headers={'Authorization': f"Bearer {apikey}", 'Content-Type': 'application/json'},
-        proxies=proxies, timeout=timeout
+        proxies=proxies, timeout=timeout, verify=False
     )
     resp.raise_for_status()
     return resp.json()['choices'][0]['message']['content']
 
 if __name__ == '__main__':
+    import sys
+    if len(sys.argv) < 2:
+        print("用法: python vision_api.py <图片路径> [prompt] [backend]")
+        sys.exit(1)
+    img = sys.argv[1]
+    prompt = sys.argv[2] if len(sys.argv) > 2 else "详细描述这张图片的内容"
+    backend = sys.argv[3] if len(sys.argv) > 3 else DEFAULT_BACKEND
+    print(ask_vision(img, prompt, backend=backend))

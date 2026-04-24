@@ -37,7 +37,27 @@ result = ask_vision(image, prompt="描述图片内容", backend="claude", timeou
 - **OpenAI-compatible 空响应排查**: 先看原始 `choices[0].message.content`。`content` 为数组不等于空；当前解析链对数组 content 兼容性一般，可能返回结构化块而非纯字符串。真正空结果更接近 `content=[]` 或 `None`。
 - **空 prompt 边界**: OpenAI-compatible vision 下，空 `prompt` 会直接得到 `HTTP 400`，这属于非法请求，不应误判为模型“空响应”。
 
+## ljqCtrl + dynamic_locator 组合验证范式 (R209/R211 验证通过 2026-04-23)
+
+> 端到端6/6步全通过: 启动应用→激活窗口→OCR扫描→键鼠输入→OCR验证→定位菜单+关闭
+
+**标准6步流程**:
+1. `subprocess.Popen` 启动目标应用
+2. `win32gui.SetForegroundWindow` + Alt trick 激活窗口(⚠️ pygetwindow.activate()不可靠)
+3. `dynamic_locator.scan_window()` OCR扫描获取文本块
+4. `ljqCtrl` 键鼠输入(pyperclip+Ctrl+V, 非逐字符输入)
+5. OCR二次扫描验证输入结果(关键词匹配)
+6. `dynamic_locator.find_text()` 定位菜单/按钮 + 点击操作
+
+**已知坑点**:
+- **窗口激活**: 必须用win32gui+Alt trick, pygetwindow.activate()不可靠
+- **GBK编码**: print含emoji会crash, 需`PYTHONIOENCODING=utf-8`或替换emoji
+- **DPI缩放**: 物理分辨率/逻辑分辨率可能不同(如2560x1440 vs 2048x1152=0.8x), ljqCtrl自动处理
+
+**参考脚本**: `temp/combo_verify_demo.py`
+
 ---
+更新: 2026-04-24 | 新增ljqCtrl+dynamic_locator组合验证范式(R209/R211回流)
 更新: 2026-04-23 | 补充OpenAI-compatible vision空响应排查边界
 更新: 2025-07-18 | 修复oai_config导入+返回值统一str
 更新: 2026-02-18 | 默认后端改为Claude原生API | SOP精简(删废话/水段/合并示例)

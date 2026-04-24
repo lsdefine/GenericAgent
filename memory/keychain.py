@@ -2,7 +2,11 @@
 import json, os, hashlib, pathlib
 
 _PATH = pathlib.Path.home() / "ga_keychain.enc"
-_MASK = hashlib.sha256(f"{os.getlogin()}@ga_keychain".encode()).digest()
+try:
+    _user = os.getlogin()
+except OSError:
+    _user = os.environ.get('USER', os.environ.get('USERNAME', 'default'))
+_MASK = hashlib.sha256(f"{_user}@ga_keychain".encode()).digest()
 
 def _xor(data: bytes) -> bytes:
     return bytes(b ^ _MASK[i % len(_MASK)] for i, b in enumerate(data))

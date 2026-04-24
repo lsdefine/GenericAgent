@@ -29,7 +29,7 @@ all-frontends = [
     "qrcode>=7.4",
     "lark-oapi>=1.0",
     "wecom-aibot-sdk>=1.0",
-    "dingtalk-stream>=1.0",
+    "dingtalk-stream>=0.20",
 ]
 
 [build-system]

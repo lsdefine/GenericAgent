@@ -371,7 +371,7 @@ if __name__ == '__main__':
     sys.stdout = sys.stderr = _logf
     print('[NEW] New process starting, the above are history infos ...')
     threading.Thread(target=agent.run, daemon=True).start()
-    proxy = mykeys.get('proxy', 'http://127.0.0.1:2082')
+    proxy = mykeys.get('proxy', None)  # set 'proxy' in mykey.py if needed, e.g. 'http://127.0.0.1:2082'
     print('proxy:', proxy)
 
     async def _error_handler(update, context: ContextTypes.DEFAULT_TYPE):

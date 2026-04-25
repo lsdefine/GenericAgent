@@ -1,0 +1,25 @@
+# [Global Memory Insight]
+浏览器特殊操作: tmwebdriver_sop(文件上传/图搜/PDF blob/物理坐标/HttpOnly Cookie/autofill突破/跨域iframe/CDP/跨tab)
+键鼠: ljqCtrl_sop(禁pyautogui/先activate) 截图/视觉: ocr/vision_sop | 禁全屏截图，优先窗口
+定时:scheduled_task_sop | 自主:autonomous_operation_sop | watchdog/反射:agentmain --reflect
+Nowledge Mem: nmem_integration_sop(跨工具长期记忆/working memory/search/add; 禁保存密钥)
+本地边界: local_boundary_sop(默认不改GA core; slash/local code放local_ga或外部wrapper; .omx仅Codex/OmniCodex; 升级时先对比本地需求是否已被上游覆盖)
+手机:adb_ui.py
+
+需要时read L2 或 ls ../memory/ 查L3
+L0(META-SOP): memory_management_sop
+L2: global_mem.txt
+L3: local_boundary_sop | nmem_integration_sop | memory_cleanup_sop(记忆整理) | skill_search | ui_detect.py | ocr_utils.py | subagent | web_setup_sop | plan_sop
+| procmem_scanner | keychain | ljqCtrl_sop+.py | tmwebdriver_sop | autonomous_operation_sop | scheduled_task_sop | vision_sop | adb_ui.py
+L4: L4_raw_sessions/
+
+[RULES]
+1. 涉及历史、偏好、既有部署、反复问题时，先用 nmem working_memory/search；不要只凭当前上下文猜。
+2. 得到已验证且长期有效的事实/决策/过程时，可用 nmem add 保存；禁止保存 API key、token、cookie、secret。
+3. 默认不修改GA core source；slash commands和本地能力优先沉淀到 memory/SOP、env config、local_ga 或外部 wrapper。.omx 只属于 Codex/OmniCodex 工作层，不作为 GA 运行时能力来源。
+4. 搜文件名严禁不用es(禁PS递归/禁dir遍历), 优先看cwd，禁猜路径。
+5. 编码安全: 改前必读; memory模块直接import(已在PATH,禁加虚假前缀)。
+6. 闭环: 物理模拟后确认; 3次失败请求干预; Git完整闭环。
+7. 窗口: GUI状态优先win32gui枚举标题。
+8. web JS: 输入用原生setter+事件链, 点击前检disabled, 注意引号转义; scan空/不全先稍等再scan, 禁首扫定论。
+9. SOP: 读SOP禁凭印象,有utils必用 | 复杂超长程任务/用户明确提及规划模式→读plan_sop。

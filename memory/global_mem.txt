@@ -1,0 +1,5 @@
+# [Global Memory - L2]
+
+- This GenericAgent instance is connected to the local `nmem` CLI via the `nmem` tool in `ga.py`.
+- nmem is the preferred long-term memory backend for cross-tool user preferences, prior decisions, deployment facts, and reusable procedures.
+- Do not save secrets into nmem or local memory files.

@@ -317,18 +317,29 @@ def _stamp_oai_cache_markers(messages, model):
             c = list(c); c[-1] = dict(c[-1], cache_control={'type': 'ephemeral'})
             messages[idx] = {**messages[idx], 'content': c}
 
+def _oai_max_tokens_key(model, api_mode="chat_completions"):
+    if api_mode == "responses": return "max_output_tokens"
+    ml = str(model or "").lower()
+    if ml.startswith("gpt-5") or (len(ml) > 1 and ml[0] == 'o' and ml[1].isdigit()):
+        return "max_completion_tokens"
+    return "max_tokens"
+
 def _openai_stream(api_base, api_key, messages, model, api_mode='chat_completions', *,
                    system=None, temperature=0.5, max_tokens=None, tools=None, reasoning_effort=None,
                    max_retries=0, connect_timeout=10, read_timeout=300, proxies=None, stream=True):
     """Shared OpenAI-compatible streaming request with retry. Yields text chunks, returns list[content_block]."""
     ml = model.lower()
-    if 'kimi' in ml or 'moonshot' in ml: temperature = 1
-    elif 'minimax' in ml: temperature = max(0.01, min(temperature, 1.0))  # MiniMax requires temp in (0, 1]
+    force_temperature = False
+    if 'kimi' in ml or 'moonshot' in ml:
+        temperature = 1; force_temperature = True
+    elif 'minimax' in ml:
+        temperature = max(0.01, min(temperature, 1.0)); force_temperature = True  # MiniMax requires temp in (0, 1]
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "Accept": "text/event-stream"}
     if api_mode == "responses":
         url = auto_make_url(api_base, "responses")
         payload = {"model": model, "input": _to_responses_input(messages), "stream": stream, 
                    "prompt_cache_key": _RESP_CACHE_KEY, "instructions": system or "You are an Omnipotent Executor."}
+        if max_tokens: payload[_oai_max_tokens_key(model, api_mode)] = max_tokens
         if reasoning_effort: payload["reasoning"] = {"effort": reasoning_effort}
     else:
         url = auto_make_url(api_base, "chat/completions")
@@ -336,8 +347,8 @@ def _openai_stream(api_base, api_key, messages, model, api_mode='chat_completion
         _stamp_oai_cache_markers(messages, model)
         payload = {"model": model, "messages": messages, "stream": stream}
         if stream: payload["stream_options"] = {"include_usage": True}
-        if temperature != 1: payload["temperature"] = temperature
-        if max_tokens: payload["max_tokens"] = max_tokens
+        if temperature != 1 or force_temperature: payload["temperature"] = temperature
+        if max_tokens: payload[_oai_max_tokens_key(model, api_mode)] = max_tokens
         if reasoning_effort: payload["reasoning_effort"] = reasoning_effort
     if tools: payload["tools"] = _prepare_oai_tools(tools, api_mode)
     RETRYABLE = {408, 409, 425, 429, 500, 502, 503, 504, 529}

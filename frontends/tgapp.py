@@ -371,8 +371,11 @@ if __name__ == '__main__':
     sys.stdout = sys.stderr = _logf
     print('[NEW] New process starting, the above are history infos ...')
     threading.Thread(target=agent.run, daemon=True).start()
-    proxy = mykeys.get('proxy', 'http://127.0.0.1:2082')
-    print('proxy:', proxy)
+    proxy = mykeys.get('proxy')
+    if proxy:
+        print('proxy:', proxy)
+    else:
+        print('proxy: <disabled>')
 
     async def _error_handler(update, context: ContextTypes.DEFAULT_TYPE):
         print(f"[{time.strftime('%m-%d %H:%M')}] TG error: {context.error}", flush=True)
@@ -381,7 +384,10 @@ if __name__ == '__main__':
         try:
             print(f"TG bot starting... {time.strftime('%m-%d %H:%M')}")
             # Recreate request and app objects on each restart to avoid stale connections
-            request = HTTPXRequest(proxy=proxy, read_timeout=30, write_timeout=30, connect_timeout=30, pool_timeout=30)
+            request_kwargs = dict(read_timeout=30, write_timeout=30, connect_timeout=30, pool_timeout=30)
+            if proxy:
+                request_kwargs['proxy'] = proxy
+            request = HTTPXRequest(**request_kwargs)
             app = (ApplicationBuilder().token(mykeys['tg_bot_token'])
                    .request(request).get_updates_request(request).post_init(_sync_commands).build())
             app.add_handler(MessageHandler(filters.COMMAND, handle_command))

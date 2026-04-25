@@ -318,6 +318,22 @@ native_oai_config = {
 #     'read_timeout': 120,                           # int 秒 默认 30
 # }
 
+# ── DeepSeek V4 (OpenAI 兼容协议) ────────────────────────────────────────────
+#  DeepSeek V4 模型支持 OpenAI 兼容接口，使用 NativeOAISession。
+#  官方文档: https://platform.deepseek.com/api-docs/zh-cn/
+# native_oai_config_deepseek = {
+#     'name': 'deepseek-v4',                         # /llms 显示名 & mixin 引用名
+#     'apikey': 'sk-<your-deepseek-key>',            # Bearer 鉴权，从 DeepSeek 控制台获取
+#     'apibase': 'https://api.deepseek.com/v1',      # DeepSeek OpenAI 兼容端点
+#     'model': 'deepseek-chat',                      # DeepSeek V4 模型
+#     'max_retries': 3,                              # int 默认 1
+#     'connect_timeout': 10,                         # int 秒 默认 5（最小 1）
+#     'read_timeout': 120,                           # int 秒 默认 30（最小 5）
+#     # 'temperature': 1.0,                          # float 默认 1.0
+#     # 'max_tokens': 8192,                          # int 默认 8192
+#     # 'context_win': 65536,                        # int 默认 24000；DeepSeek V4 支持 64K 上下文
+# }
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  3. LLMSession / ClaudeSession — 非 Native 文本协议工具（deprecated）

@@ -128,7 +128,9 @@ class GeneraticAgent:
             
             sys_prompt = get_system_prompt() + getattr(self.llmclient.backend, 'extra_sys_prompt', '')
             script_dir = os.path.dirname(os.path.abspath(__file__))
-            handler = GenericAgentHandler(self, self.history, os.path.join(script_dir, 'temp'))
+            print(f"[DEBUG] 创建 GenericAgentHandler，工作目录设置为: {script_dir}")
+            handler = GenericAgentHandler(self, self.history, script_dir)
+            print(f"[DEBUG] Handler 创建成功，cwd = {handler.cwd}")
             if self.handler and 'key_info' in self.handler.working: 
                 ki = re.sub(r'\n\[SYSTEM\] 此为.*?工作记忆[。\n]*', '', self.handler.working['key_info'])  # 去旧
                 handler.working['key_info'] = ki

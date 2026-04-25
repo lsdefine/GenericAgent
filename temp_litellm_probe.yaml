@@ -1,0 +1,37 @@
+model_list:
+  - model_name: gpt-4
+    litellm_params:
+      model: github_copilot/gpt-4
+      api_key: os.environ/GITHUB_COPILOT_TOKEN
+      extra_headers:
+        Editor-Version: "vscode/1.85.1"
+        Editor-Plugin-Version: "copilot/1.155.0"
+        Copilot-Integration-Id: "vscode-chat"
+        User-Agent: "GitHubCopilotChat/0.35.0"
+  - model_name: gpt-5
+    litellm_params:
+      model: github_copilot/gpt-5
+      api_key: os.environ/GITHUB_COPILOT_TOKEN
+      extra_headers:
+        Editor-Version: "vscode/1.85.1"
+        Editor-Plugin-Version: "copilot/1.155.0"
+        Copilot-Integration-Id: "vscode-chat"
+        User-Agent: "GitHubCopilotChat/0.35.0"
+  - model_name: claude-sonnet-4.5
+    litellm_params:
+      model: github_copilot/claude-sonnet-4.5
+      api_key: os.environ/GITHUB_COPILOT_TOKEN
+      extra_headers:
+        Editor-Version: "vscode/1.85.1"
+        Editor-Plugin-Version: "copilot/1.155.0"
+        Copilot-Integration-Id: "vscode-chat"
+        User-Agent: "GitHubCopilotChat/0.35.0"
+  - model_name: gemini-2.5-pro
+    litellm_params:
+      model: github_copilot/gemini-2.5-pro
+      api_key: os.environ/GITHUB_COPILOT_TOKEN
+      extra_headers:
+        Editor-Version: "vscode/1.85.1"
+        Editor-Plugin-Version: "copilot/1.155.0"
+        Copilot-Integration-Id: "vscode-chat"
+        User-Agent: "GitHubCopilotChat/0.35.0"

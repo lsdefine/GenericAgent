@@ -8,8 +8,10 @@ except: pass
 try: sys.stderr.reconfigure(errors='replace')
 except: pass
 script_dir = os.path.dirname(__file__)
-sys.path.append(os.path.abspath(os.path.join(script_dir, '..')))
+project_dir = os.path.abspath(os.path.join(script_dir, '..'))
+sys.path.append(project_dir)
 sys.path.append(os.path.abspath(script_dir))
+os.chdir(project_dir)
 
 import streamlit as st
 import time, json, re, threading, queue

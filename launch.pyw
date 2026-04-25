@@ -19,7 +19,7 @@ def get_screen_width():
 def start_streamlit(port):
     global proc
     cmd = [sys.executable, "-m", "streamlit", "run", os.path.join(frontends_dir, "stapp.py"), "--server.port", str(port), "--server.address", "localhost", "--server.headless", "true"]
-    proc = subprocess.Popen(cmd)
+    proc = subprocess.Popen(cmd, cwd=script_dir)
     atexit.register(proc.kill)
 
 def inject(text):
@@ -62,7 +62,14 @@ def idle_monitor():
         except Exception as e:
             print(f'[Idle Monitor] Error: {e}')
 
+def debug_cwd():
+    """调试工作目录"""
+    print(f"[DEBUG] Launch.pyw 启动")
+    print(f"[DEBUG] 当前工作目录: {os.getcwd()}")
+    print(f"[DEBUG] 脚本目录: {script_dir}")
+
 if __name__ == '__main__':
+    debug_cwd()
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('port', nargs='?', default='0'); 

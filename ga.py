@@ -1,7 +1,7 @@
 import sys, os, re, json, time, threading, importlib
 from datetime import datetime
 from pathlib import Path
-import tempfile, traceback, subprocess, itertools, collections, difflib
+import tempfile, traceback, subprocess, itertools, collections, difflib, shutil
 if sys.stdout is None: sys.stdout = open(os.devnull, "w")
 if sys.stderr is None: sys.stderr = open(os.devnull, "w")
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -93,6 +93,227 @@ def ask_user(question, candidates=None):
     """question: 向用户提出的问题。candidates: 可选的候选项列表"""
     return {"status": "INTERRUPT", "intent": "HUMAN_INTERVENTION",
         "data": {"question": question, "candidates": candidates or []}}
+
+CLI_DELEGATE_PROFILES = {
+    "gemini": {
+        "binary": "gemini",
+        "base_args": ["--skip-trust", "-p", "{prompt}", "--output-format", "text"],
+        "modes": {
+            "read_only": ["--approval-mode", "plan"],
+            "auto_edit": ["--approval-mode", "auto_edit"],
+            "yolo": ["--yolo"],
+        },
+    },
+    "qwen": {
+        "binary": "qwen",
+        "base_args": ["--bare", "--prompt", "{prompt}", "--output-format", "text"],
+        "modes": {
+            "read_only": ["--approval-mode", "plan"],
+            "auto_edit": ["--approval-mode", "auto-edit"],
+            "yolo": ["--yolo"],
+        },
+    },
+    "claude": {
+        "binary": "claude",
+        "base_args": ["-p", "{prompt}", "--output-format", "text"],
+        "modes": {
+            "read_only": ["--permission-mode", "plan"],
+            "auto_edit": ["--permission-mode", "acceptEdits"],
+            "yolo": ["--dangerously-skip-permissions"],
+        },
+    },
+    "codex": {
+        "binary": "codex",
+        "base_args": ["exec", "{prompt}"],
+        "modes": {
+            "read_only": ["--sandbox", "read-only", "--ask-for-approval", "never"],
+            "auto_edit": ["--full-auto"],
+            "yolo": ["--dangerously-bypass-approvals-and-sandbox"],
+        },
+    },
+}
+
+CLI_DELEGATE_SYSTEM_PROMPT = """You are a delegated CLI agent called by GenericAgent.
+Answer in Chinese unless the task explicitly asks otherwise.
+Work on the requested task only. Preserve user work. Do not expose secrets.
+Before destructive actions, credential/account changes, publishing, or third-party submissions, stop and say what approval is needed.
+Return a concise report with: result, evidence, files changed, verification, and blockers."""
+
+def _build_cli_delegate_command(target, prompt, mode="default", extra_args=None):
+    target = (target or "").strip().lower()
+    if target not in CLI_DELEGATE_PROFILES:
+        return None, f"Unsupported target: {target}. Available: {', '.join(sorted(CLI_DELEGATE_PROFILES))}"
+    profile = CLI_DELEGATE_PROFILES[target]
+    exe = shutil.which(profile["binary"])
+    if not exe:
+        return None, f"CLI not found in PATH: {profile['binary']}"
+    cmd = [exe]
+    mode_args = profile.get("modes", {}).get((mode or "default").strip().lower(), [])
+    for item in profile["base_args"] + mode_args + list(extra_args or []):
+        cmd.append(prompt if item == "{prompt}" else str(item))
+    return cmd, None
+
+def _strip_ansi(text):
+    return re.sub(r"\x1B\[[0-?]*[ -/]*[@-~]", "", text or "")
+
+def _shell_quote(value):
+    return "'" + str(value).replace("'", "'\"'\"'") + "'"
+
+def _run_cli_delegate_in_terminal(run_cmd, cwd, timeout, prompt_value=None, wait=True):
+    prompt_file = out_file = marker_file = None
+    try:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as f:
+            prompt_file = f.name
+            f.write(prompt_value or "")
+        out_fd, out_file = tempfile.mkstemp(prefix="ga-cli-delegate-", suffix=".out")
+        marker_fd, marker_file = tempfile.mkstemp(prefix="ga-cli-delegate-", suffix=".status")
+        os.close(out_fd); os.close(marker_fd)
+        try: os.unlink(marker_file)
+        except OSError: pass
+
+        parts = []
+        for item in run_cmd:
+            if prompt_value is not None and item == prompt_value:
+                parts.append('"$(cat ' + _shell_quote(prompt_file) + ')"')
+            else:
+                parts.append(_shell_quote(item))
+        shell_cmd = (
+            "cd " + _shell_quote(cwd)
+            + " && " + " ".join(parts)
+            + " 2>&1 | tee " + _shell_quote(out_file)
+            + "; printf '%s' \"$?\" > " + _shell_quote(marker_file)
+        )
+        osa = 'tell application "Terminal" to do script ' + repr(shell_cmd)
+        subprocess.run(["osascript", "-e", osa], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        if not wait:
+            return 0, json.dumps({
+                "launched": True,
+                "output_file": out_file,
+                "status_file": marker_file,
+                "prompt_file": prompt_file,
+                "note": "CLI task launched in Terminal. Read output_file/status_file later; temporary files are intentionally kept for async mode.",
+            }, ensure_ascii=False), ""
+        start = time.time()
+        while True:
+            if os.path.exists(marker_file):
+                try:
+                    exit_code = int((open(marker_file, encoding="utf-8").read() or "1").strip())
+                except ValueError:
+                    exit_code = 1
+                output = open(out_file, encoding="utf-8", errors="replace").read() if os.path.exists(out_file) else ""
+                return exit_code, _strip_ansi(output).strip(), ""
+            if time.time() - start > int(timeout or 600):
+                output = open(out_file, encoding="utf-8", errors="replace").read() if os.path.exists(out_file) else ""
+                return None, _strip_ansi(output).strip(), f"CLI delegate timed out after {timeout}s"
+            time.sleep(0.5)
+    finally:
+        if wait:
+            for path in (prompt_file, out_file, marker_file):
+                if path:
+                    try: os.unlink(path)
+                    except OSError: pass
+
+def _run_cli_delegate_process(run_cmd, cwd, env, timeout, prompt_value=None, wait=True):
+    if sys.platform == "darwin":
+        return _run_cli_delegate_in_terminal(run_cmd, cwd, timeout, prompt_value=prompt_value, wait=wait)
+    proc = subprocess.run(
+        run_cmd,
+        cwd=cwd,
+        env=env,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=int(timeout or 600),
+    )
+    return proc.returncode, proc.stdout or "", proc.stderr or ""
+
+def delegate_cli_task(target, prompt, cwd, timeout=600, mode="default", extra_args=None, dry_run=False, wait=True):
+    """Run a task through another local LLM CLI and return structured output."""
+    prompt = (prompt or "").strip()
+    if not prompt:
+        return {"status": "error", "msg": "prompt is required"}
+    cwd = os.path.abspath(cwd or os.getcwd())
+    if not os.path.isdir(cwd):
+        return {"status": "error", "msg": f"cwd does not exist: {cwd}"}
+    full_prompt = CLI_DELEGATE_SYSTEM_PROMPT + "\n\n### Task\n" + prompt
+    cmd, err = _build_cli_delegate_command(target, full_prompt, mode=mode, extra_args=extra_args)
+    if err:
+        return {"status": "error", "msg": err}
+    safe_cmd = [cmd[0], *("<prompt>" if arg == full_prompt else arg for arg in cmd[1:])]
+    if dry_run:
+        return {"status": "success", "dry_run": True, "target": target, "cwd": cwd, "command": safe_cmd}
+    env = os.environ.copy()
+    env.setdefault("TERM", "xterm-256color")
+    try:
+        exit_code, stdout_part, stderr_part = _run_cli_delegate_process(
+            cmd, cwd, env, timeout, prompt_value=full_prompt, wait=wait
+        )
+    except subprocess.TimeoutExpired as e:
+        out = (e.stdout or "") + (e.stderr or "")
+        return {
+            "status": "error",
+            "target": target,
+            "cwd": cwd,
+            "exit_code": None,
+            "msg": f"CLI delegate timed out after {timeout}s",
+            "stdout": smart_format(out, max_str_len=12000, omit_str="\n\n[omitted long output]\n\n"),
+        }
+    except Exception as e:
+        return {"status": "error", "target": target, "cwd": cwd, "msg": str(e)}
+    stdout = (stdout_part or "") + (("\n[stderr]\n" + stderr_part) if stderr_part else "")
+    return {
+        "status": "success" if exit_code == 0 else "error",
+        "target": target,
+        "cwd": cwd,
+        "exit_code": exit_code,
+        "stdout": smart_format(stdout, max_str_len=20000, omit_str="\n\n[omitted long output]\n\n"),
+    }
+
+def check_cli_task(output_file, status_file=None, prompt_file=None, cleanup=False, max_chars=20000):
+    """Read an async CLI delegate result created by delegate_cli_task(wait=False)."""
+    output_file = os.path.abspath(output_file or "")
+    status_file = os.path.abspath(status_file or "") if status_file else ""
+    prompt_file = os.path.abspath(prompt_file or "") if prompt_file else ""
+    if not output_file:
+        return {"status": "error", "msg": "output_file is required"}
+    output = ""
+    if os.path.exists(output_file):
+        try:
+            output = open(output_file, encoding="utf-8", errors="replace").read()
+        except Exception as e:
+            return {"status": "error", "msg": f"failed to read output_file: {e}"}
+    status_exists = bool(status_file and os.path.exists(status_file))
+    if not status_exists:
+        return {
+            "status": "running",
+            "exit_code": None,
+            "output_file": output_file,
+            "status_file": status_file,
+            "stdout": smart_format(_strip_ansi(output), max_str_len=max_chars, omit_str="\n\n[omitted long output]\n\n"),
+        }
+    try:
+        raw_status = open(status_file, encoding="utf-8", errors="replace").read().strip()
+        exit_code = int(raw_status or "1")
+    except Exception:
+        exit_code = 1
+    result = {
+        "status": "success" if exit_code == 0 else "error",
+        "exit_code": exit_code,
+        "output_file": output_file,
+        "status_file": status_file,
+        "stdout": smart_format(_strip_ansi(output), max_str_len=max_chars, omit_str="\n\n[omitted long output]\n\n"),
+    }
+    if cleanup:
+        removed = []
+        for path in (output_file, status_file, prompt_file):
+            if path and os.path.exists(path):
+                try:
+                    os.unlink(path)
+                    removed.append(path)
+                except OSError:
+                    pass
+        result["removed"] = removed
+    return result
 
 import simphtml
 driver = None
@@ -305,6 +526,56 @@ class GenericAgentHandler(BaseHandler):
         result = ask_user(question, candidates)
         yield f"Waiting for your answer ...\n"
         return StepOutcome(result, next_prompt="", should_exit=True)
+
+    def do_delegate_cli_task(self, args, response):
+        '''把一个独立任务委托给本机其它 LLM CLI（gemini/qwen/claude/codex）执行。'''
+        target = args.get("target", "gemini")
+        prompt = args.get("prompt", "")
+        mode = args.get("mode", "default")
+        timeout = args.get("timeout", 600)
+        dry_run = bool(args.get("dry_run", False))
+        wait = bool(args.get("wait", False))
+        extra_args = args.get("extra_args", []) or []
+        cwd = self._get_abs_path(args.get("cwd", "./"))
+        yield f"[Action] Delegating task to {target} CLI in {cwd}\n"
+        result = delegate_cli_task(
+            target=target,
+            prompt=prompt,
+            cwd=cwd,
+            timeout=timeout,
+            mode=mode,
+            extra_args=extra_args,
+            dry_run=dry_run,
+            wait=wait,
+        )
+        icon = "✅" if result.get("status") == "success" else "❌"
+        stdout = result.get("stdout") or result.get("msg") or ""
+        yield f"[Status] {icon} delegate_cli_task target={target} mode={mode}\n{smart_format(str(stdout), max_str_len=1200)}\n"
+        next_prompt = self._get_anchor_prompt(skip=args.get('_index', 0) > 0)
+        if result.get("status") != "success":
+            next_prompt += "\n[SYSTEM TIPS] CLI委托失败。请换目标CLI、降低权限模式、缩小任务，或回退到本Agent自身工具完成。"
+        return StepOutcome(result, next_prompt=next_prompt)
+
+    def do_check_cli_task(self, args, response):
+        '''读取 delegate_cli_task(wait=false) 返回的异步 CLI 任务结果。'''
+        output_file = args.get("output_file", "")
+        status_file = args.get("status_file", "")
+        prompt_file = args.get("prompt_file", "")
+        cleanup = bool(args.get("cleanup", False))
+        max_chars = int(args.get("max_chars", 20000) or 20000)
+        yield f"[Action] Checking delegated CLI task: {output_file}\n"
+        result = check_cli_task(
+            output_file=output_file,
+            status_file=status_file,
+            prompt_file=prompt_file,
+            cleanup=cleanup,
+            max_chars=max_chars,
+        )
+        icon = {"success": "✅", "running": "⏳"}.get(result.get("status"), "❌")
+        stdout = result.get("stdout") or result.get("msg") or ""
+        yield f"[Status] {icon} check_cli_task status={result.get('status')}\n{smart_format(str(stdout), max_str_len=1200)}\n"
+        next_prompt = self._get_anchor_prompt(skip=args.get('_index', 0) > 0)
+        return StepOutcome(result, next_prompt=next_prompt)
     
     def do_web_scan(self, args, response):
         '''获取当前页面内容和标签页列表。也可用于切换标签页。

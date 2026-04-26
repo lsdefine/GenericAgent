@@ -66,6 +66,31 @@
       "candidates": {"type": "array", "items": {"type": "string"}, "description": "Optional quick-select choices for the user"}}}
   }},
   {"type": "function", "function": {
+    "name": "delegate_cli_task",
+    "description": "Delegate an independent task to another local LLM CLI (gemini/qwen/claude/codex). Use for second opinions, parallel investigation, or backup execution. Defaults to async launch so GA is not blocked. Set wait=true only when the current turn must collect the CLI output",
+    "parameters": {"type": "object", "properties": {
+      "target": {"type": "string", "enum": ["gemini", "qwen", "claude", "codex"], "description": "Local CLI to run", "default": "gemini"},
+      "prompt": {"type": "string", "description": "Self-contained task prompt for the delegated CLI"},
+      "cwd": {"type": "string", "description": "Working directory for delegated CLI. Defaults to current GA temp cwd"},
+      "timeout": {"type": "integer", "description": "Timeout in seconds", "default": 600},
+      "mode": {"type": "string", "enum": ["default", "read_only", "auto_edit", "yolo"], "description": "Permission mode passed to the target CLI", "default": "default"},
+      "extra_args": {"type": "array", "items": {"type": "string"}, "description": "Optional extra CLI arguments appended after built-in args"},
+      "dry_run": {"type": "boolean", "description": "Return the command without executing it", "default": false},
+      "wait": {"type": "boolean", "description": "Wait for final CLI output. Default false launches in Terminal and returns output/status file paths immediately", "default": false}},
+      "required": ["prompt"]}
+  }},
+  {"type": "function", "function": {
+    "name": "check_cli_task",
+    "description": "Check an async delegate_cli_task result. Pass output_file/status_file returned by delegate_cli_task(wait=false). Returns running/success/error and current stdout. Use cleanup=true after consuming a completed result",
+    "parameters": {"type": "object", "properties": {
+      "output_file": {"type": "string", "description": "Output file returned by delegate_cli_task"},
+      "status_file": {"type": "string", "description": "Status file returned by delegate_cli_task"},
+      "prompt_file": {"type": "string", "description": "Optional prompt file returned by delegate_cli_task; used only for cleanup"},
+      "cleanup": {"type": "boolean", "description": "Delete output/status/prompt files after reading a completed result", "default": false},
+      "max_chars": {"type": "integer", "description": "Maximum stdout chars to return", "default": 20000}},
+      "required": ["output_file"]}
+  }},
+  {"type": "function", "function": {
     "name": "start_long_term_update",
     "description": "Start distilling long-term memory. Call when discovering info worth remembering (env facts/user prefs/lessons learned). Skip if memory already updated or in autonomous flow. Must call when a task that took 15+ turns is completed",
     "parameters": {"type": "object", "properties": {}}}

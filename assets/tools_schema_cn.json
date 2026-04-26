@@ -66,6 +66,31 @@
       "candidates": {"type": "array", "items": {"type": "string"}, "description": "提供给用户的可选快捷选项列表"}}}
   }},
   {"type": "function", "function": {
+    "name": "delegate_cli_task",
+    "description": "把独立子任务委托给本机其它 LLM CLI（gemini/qwen/claude/codex）。适合二次意见、并行调查、替补执行。默认异步投递，不阻塞 GA；只有当前回合必须收集 CLI 输出时才设置 wait=true",
+    "parameters": {"type": "object", "properties": {
+      "target": {"type": "string", "enum": ["gemini", "qwen", "claude", "codex"], "description": "要调用的本地 CLI", "default": "gemini"},
+      "prompt": {"type": "string", "description": "交给目标 CLI 的自包含任务说明"},
+      "cwd": {"type": "string", "description": "目标 CLI 的工作目录。默认使用当前 GA temp cwd"},
+      "timeout": {"type": "integer", "description": "超时时间（秒）", "default": 600},
+      "mode": {"type": "string", "enum": ["default", "read_only", "auto_edit", "yolo"], "description": "传给目标 CLI 的权限模式", "default": "default"},
+      "extra_args": {"type": "array", "items": {"type": "string"}, "description": "追加到内置参数后的可选 CLI 参数"},
+      "dry_run": {"type": "boolean", "description": "只返回命令，不真正执行", "default": false},
+      "wait": {"type": "boolean", "description": "等待最终 CLI 输出。默认 false 会在 Terminal 中启动并立即返回输出文件/status 文件路径", "default": false}},
+      "required": ["prompt"]}
+  }},
+  {"type": "function", "function": {
+    "name": "check_cli_task",
+    "description": "检查异步 delegate_cli_task 结果。传入 delegate_cli_task(wait=false) 返回的 output_file/status_file，返回 running/success/error 和当前 stdout。读完已完成结果后可用 cleanup=true 清理临时文件",
+    "parameters": {"type": "object", "properties": {
+      "output_file": {"type": "string", "description": "delegate_cli_task 返回的输出文件路径"},
+      "status_file": {"type": "string", "description": "delegate_cli_task 返回的状态文件路径"},
+      "prompt_file": {"type": "string", "description": "delegate_cli_task 返回的可选 prompt 文件路径，仅用于 cleanup"},
+      "cleanup": {"type": "boolean", "description": "读取已完成结果后删除 output/status/prompt 文件", "default": false},
+      "max_chars": {"type": "integer", "description": "最多返回多少字符 stdout", "default": 20000}},
+      "required": ["output_file"]}
+  }},
+  {"type": "function", "function": {
     "name": "start_long_term_update",
     "description": "准备开始提炼记忆。发现值得长期记忆的信息（环境事实/用户偏好/避坑经验）时调用此工具。已记忆更新或在自主流程内时无需调用。超15轮完成的任务必须调用以沉淀经验",
     "parameters": {"type": "object", "properties": {}}}

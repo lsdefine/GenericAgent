@@ -179,6 +179,7 @@ def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
     content_block: {type:'text', text:str} | {type:'tool_use', id:str, name:str, input:dict}
     """
     content_text = ""
+    reasoning_text = ""
     if api_mode == "responses":
         seen_delta = False; fc_buf = {}; current_fc_idx = None
         for line in resp_lines:
@@ -239,6 +240,8 @@ def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
             except: continue
             ch = (evt.get("choices") or [{}])[0]
             delta = ch.get("delta") or {}
+            if delta.get("reasoning_content"):
+                text = delta["reasoning_content"]; reasoning_text += text; yield text
             if delta.get("content"):
                 text = delta["content"]; content_text += text; yield text
             for tc in (delta.get("tool_calls") or []):
@@ -253,6 +256,7 @@ def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
             usage = evt.get("usage")
             if usage: _record_usage(usage, api_mode)
         blocks = []
+        if reasoning_text: blocks.append({"type": "thinking", "thinking": reasoning_text})
         if content_text: blocks.append({"type": "text", "text": content_text})
         for idx in sorted(tc_buf):
             tc = tc_buf[idx]
@@ -294,6 +298,9 @@ def _parse_openai_json(data, api_mode="chat_completions"):
     else:
         _record_usage(data.get("usage") or {}, api_mode)
         msg = (data.get("choices") or [{}])[0].get("message", {})
+        reasoning = msg.get("reasoning_content", "")
+        if reasoning:
+            blocks.append({"type": "thinking", "thinking": reasoning}); yield reasoning
         content = msg.get("content", "")
         if content:
             blocks.append({"type": "text", "text": content}); yield content

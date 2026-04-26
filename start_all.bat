@@ -1,4 +1,13 @@
 @echo off
+:: ====== 自动提权（UAC）逻辑 ======
+:: 检查是否为管理员，如果不是则自我提权
+whoami /groups | find "S-1-5-32-544" >nul 2>nul
+if not errorlevel 1 goto :gotAdmin
+:: 不是管理员，尝试自我提权
+echo [INFO] 当前未以管理员权限运行，尝试自动提权...
+powershell -Command "Start-Process '%~f0' -Verb RunAs" >nul 2>nul
+exit /b
+:gotAdmin
 cd /d "%~dp0"
 setlocal
 
@@ -9,6 +18,7 @@ set "LITELLM_READY=0"
 if "%GA_PROXY_MODE%"=="" set "GA_PROXY_MODE=auto"
 if "%GA_PROXY_URL%"=="" set "GA_PROXY_URL=http://127.0.0.1:6789"
 echo [INFO] Proxy settings for LiteLLM: GA_PROXY_MODE=%GA_PROXY_MODE%, GA_PROXY_URL=%GA_PROXY_URL%
+echo [INFO] 当前已以管理员权限运行
 
 if not exist ".venv\Scripts\python.exe" (
   echo [ERROR] .venv not found. Please create virtual environment first.

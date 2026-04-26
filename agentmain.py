@@ -1,4 +1,4 @@
-import os, sys, threading, queue, time, json, re, random, locale
+import os, sys, threading, queue, time, json, re, random, locale, base64, mimetypes
 os.environ.setdefault('GA_LANG', 'zh' if any(k in (locale.getlocale()[0] or '').lower() for k in ('zh', 'chinese')) else 'en')
 if sys.stdout is None: sys.stdout = open(os.devnull, "w")
 elif hasattr(sys.stdout, 'reconfigure'): sys.stdout.reconfigure(errors='replace')
@@ -38,6 +38,25 @@ def get_system_prompt():
     prompt += f"\nToday: {time.strftime('%Y-%m-%d %a')}\n"
     prompt += get_global_memory()
     return prompt
+
+def build_multimodal_user_content(text, images):
+    content = [{"type": "text", "text": text}]
+    for path in images or []:
+        if not path or not os.path.isfile(path):
+            continue
+        mime = mimetypes.guess_type(path)[0] or 'application/octet-stream'
+        if not mime.startswith('image/'):
+            continue
+        try:
+            with open(path, 'rb') as f:
+                data = base64.b64encode(f.read()).decode('ascii')
+        except OSError:
+            continue
+        content.append({
+            "type": "image",
+            "source": {"type": "base64", "media_type": mime, "data": data}
+        })
+    return content
 
 class GeneraticAgent:
     def __init__(self):
@@ -119,33 +138,39 @@ class GeneraticAgent:
         while True:
             task = self.task_queue.get()
             raw_query, source, images, display_queue = task["query"], task["source"], task.get("images") or [], task["output"]
-            raw_query = self._handle_slash_cmd(raw_query, display_queue)
-            if raw_query is None:
-                self.task_queue.task_done(); continue
             self.is_running = True
-            rquery = smart_format(raw_query.replace('\n', ' '), max_str_len=200)
-            self.history.append(f"[USER]: {rquery}")
-            
-            sys_prompt = get_system_prompt() + getattr(self.llmclient.backend, 'extra_sys_prompt', '')
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            print(f"[DEBUG] 创建 GenericAgentHandler，工作目录设置为: {script_dir}")
-            handler = GenericAgentHandler(self, self.history, script_dir)
-            print(f"[DEBUG] Handler 创建成功，cwd = {handler.cwd}")
-            if self.handler and 'key_info' in self.handler.working: 
-                ki = re.sub(r'\n\[SYSTEM\] 此为.*?工作记忆[。\n]*', '', self.handler.working['key_info'])  # 去旧
-                handler.working['key_info'] = ki
-                handler.working['passed_sessions'] = ps = self.handler.working.get('passed_sessions', 0) + 1
-                if ps > 0: handler.working['key_info'] += f'\n[SYSTEM] 此为 {ps} 个对话前设置的key_info，若已在新任务，先更新或清除工作记忆。\n'
-            self.handler = handler
-            user_input = raw_query
-            if source == 'feishu' and len(self.history) > 1:   # 如果有历史记录且来自飞书，注入到首轮 user_input 中（支持/restore恢复上下文）
-                user_input = handler._get_anchor_prompt() + f"\n\n### 用户当前消息\n{raw_query}"
-            #if 'gpt' in self.get_llm_name(model=True): handler._done_hooks.append('请确定任务是否完成，如果完成请给出信息完整的简报回答，如未完成需要继续工具调用直到完成任务，确实需要问用户应使用ask_user工具')
-            # although new handler, the **full** history is in llmclient, so it is full history!
-            gen = agent_runner_loop(self.llmclient, sys_prompt, user_input, 
-                                handler, TOOLS_SCHEMA, max_turns=70, verbose=self.verbose)
+            full_resp = ""
             try:
-                full_resp = ""; last_pos = 0
+                raw_query = self._handle_slash_cmd(raw_query, display_queue)
+                if raw_query is None:
+                    continue
+
+                rquery = smart_format(raw_query.replace('\n', ' '), max_str_len=200)
+                self.history.append(f"[USER]: {rquery}")
+
+                sys_prompt = get_system_prompt() + getattr(self.llmclient.backend, 'extra_sys_prompt', '')
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                print(f"[DEBUG] 创建 GenericAgentHandler，工作目录设置为: {script_dir}")
+                handler = GenericAgentHandler(self, self.history, script_dir)
+                print(f"[DEBUG] Handler 创建成功，cwd = {handler.cwd}")
+                if self.handler and 'key_info' in self.handler.working:
+                    ki = re.sub(r'\n\[SYSTEM\] 此为.*?工作记忆[。\n]*', '', self.handler.working['key_info'])  # 去旧
+                    handler.working['key_info'] = ki
+                    handler.working['passed_sessions'] = ps = self.handler.working.get('passed_sessions', 0) + 1
+                    if ps > 0: handler.working['key_info'] += f'\n[SYSTEM] 此为 {ps} 个对话前设置的key_info，若已在新任务，先更新或清除工作记忆。\n'
+                self.handler = handler
+                user_input = raw_query
+                if source == 'feishu' and len(self.history) > 1:   # 如果有历史记录且来自飞书，注入到首轮 user_input 中（支持/restore恢复上下文）
+                    user_input = handler._get_anchor_prompt() + f"\n\n### 用户当前消息\n{raw_query}"
+                initial_user_content = None
+                if images and isinstance(self.llmclient, NativeToolClient):
+                    initial_user_content = build_multimodal_user_content(user_input, images)
+                #if 'gpt' in self.get_llm_name(model=True): handler._done_hooks.append('请确定任务是否完成，如果完成请给出信息完整的简报回答，如未完成需要继续工具调用直到完成任务，确实需要问用户应使用ask_user工具')
+                # although new handler, the **full** history is in llmclient, so it is full history!
+                gen = agent_runner_loop(self.llmclient, sys_prompt, user_input,
+                                    handler, TOOLS_SCHEMA, max_turns=70, verbose=self.verbose,
+                                    initial_user_content=initial_user_content)
+                last_pos = 0
                 for chunk in gen:
                     if consume_file(self.task_dir, '_stop'): self.abort() 
                     if self.stop_sig: break

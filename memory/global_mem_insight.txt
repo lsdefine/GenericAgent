@@ -1,0 +1,27 @@
+# [Global Memory Insight]
+搜索：WEB-SEARCH(L2→**Baidu/Tavily/Brave/Serper/Exa 已验证** | Jina✅免费端点 +API Key(10M tokens,402 时自动回退))
+浏览器特殊操作: tmwebdriver_sop(文件上传/图搜/PDF blob/物理坐标/HttpOnly Cookie/autofill突破/跨域iframe/CDP/跨tab)
+键鼠: ljqCtrl_sop(禁pyautogui/先activate) 截图/视觉: ocr/vision_sop | 禁全屏截图，优先窗口
+定时:scheduled_task_sop | 自主:autonomous_operation_sop | watchdog/反射:agentmain --reflect
+手机:adb_ui.py
+
+需要时read L2 或 ls ../memory/ 查L3
+L0(META-SOP): memory_management_sop
+L2: 飞书:lark-cli | (按section扩展)
+L3: verify_sop(事实验证闭环) | memory_cleanup_sop(记忆整理) | skill_search | web_search_sop(国内搜索方案) | deep_research_sop(多源深度研究) | ui_detect.py | ocr_utils.py | subagent | web_setup_sop | plan_sop 
+| procmem_scanner | keychain | ljqCtrl_sop+.py | tmwebdriver_sop | autonomous_operation_sop | scheduled_task_sop | vision_sop | adb_ui.py
+L4: L4_raw_sessions/
+
+[RULES]
+1. [效率型] 搜索先行: 搜文件名严禁不用es(禁PS递归/禁dir遍历), 优先看cwd，禁猜路径
+1a. [隐蔽型] Web搜索: 国内Google不可用，需配置国内后端(Brave/Bing/百度); deep-research是编排框架非搜索引擎
+2. [致命型] 交叉验证: 禁信摘要, 数值进详情页核实
+3. [隐蔽型] 编码安全: 禁PS cat/type用file_read; 改前必读; memory模块直接import(已在PATH,禁加虚假前缀)
+4. [致命型] 闭环: 物理模拟后确认; 3次失败请求干预; Git完整闭环
+5. [致命型] 进程: 禁无条件杀python(杀自己), 精确PID, 禁os.kill判活
+6. [效率型] 窗口: GUI状态优先win32gui枚举标题
+7. [隐蔽型] web JS: 输入用原生setter+事件链, 点击前检disabled, 注意引号转义; scan空/不全先稍等再scan, 禁首扫定论
+8. [致命型] SOP: 读SOP禁凭印象,有utils必用 | 复杂超长程任务/用户明确提及规划模式→读plan_sop
+9. [隐蔽型] 飞书CLI: code_run需shell=True(.cmd); API 404=开放平台权限未开通(非CLI问题)
+10. [隐蔽型] Everything: es.exe搜索需服务RUNNING(net start Everything); 服务STOPPED时搜索会超时挂死
+11. [致命型] 验证闭环: 每次报告结论前MUST执行验证动作(运行/截图/核对), 调用 scripts/verify_claims.py 或 verify_sop; 报告MUST包含 verify_claims 的 markdown 验证表, 否则该报告视为无效; 无工具证据的结论=无效结论

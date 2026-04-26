@@ -12,6 +12,10 @@
     *   **示例**：当前时间戳、临时 Session ID、正在运行的 PID、某个具体绝对路径、连接的设备信息
 4.  **最小充分指针 (Minimum Sufficient Pointer)**
     *   上层只留能定位下层的最短标识，多一词即冗余。
+5.  **写入前验证门控 (Pre-Write Verification Gate)**
+    *   **定义**：在所有记忆写入（L1/L2/L3 的创建或修改）之前，必须运行验证命令核查要写入的事项是否真实成立。
+    *   **操作**：使用 `scripts/verify_claims.py` 验证（优先），或手动 `file_read` 确认事实（`code_run` 仅限 verify_claims.py 不可用时）。写入后立即 `file_read` 确认修改生效。每次使用 verify_claims.py 前，先以 `from scripts.verify_claims import VerificationResult` 作为最小导入自检——导入失败则回退手动路径。
+    *   **红线**：未经验证的结论禁止写入记忆。违反此条的记忆修改视为无效且需回滚。
 ---
 ## 记忆层级架构
 ```

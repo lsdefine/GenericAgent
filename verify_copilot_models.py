@@ -146,7 +146,20 @@ def render_litellm_config(models):
 
 
 def render_mykey(models):
-    config_blocks = []
+    config_blocks = [
+        "\n".join([
+            "# GLM-5 - DashScope 兼容模式 API（直连，不走代理）",
+            "native_oai_config_dashscope_glm_5 = {",
+            "    'name': 'dashscope-glm-5',",
+            "    'apikey': os.environ.get('DASHSCOPE_API_KEY', ''),",
+            "    'apibase': 'https://dashscope.aliyuncs.com/compatible-mode/v1',",
+            "    'model': 'glm-5',",
+            "    'api_mode': 'chat_completions',",
+            "    'proxy': None,",
+            "    'stream': True,",
+            "}",
+        ])
+    ]
     for model in models:
         spec = MODEL_SPECS[model]
         config_blocks.append(
@@ -163,7 +176,7 @@ def render_mykey(models):
             ])
         )
 
-    llm_nos = []
+    llm_nos = ["dashscope-glm-5"]
     if "gpt-4" in models:
         llm_nos.append("copilot-gpt4")
     if "claude-sonnet-4.5" in models:
@@ -172,6 +185,8 @@ def render_mykey(models):
         llm_nos.append("copilot-gemini")
 
     lines = [
+        "import os",
+        "",
         "# ── GitHub Copilot Pro (多模型配置) ─────────────────────────────────────",
         "# 启动方式：先启动 litellm 代理（使用 .venv），然后在 UI 中选择模型",
         "# .venv\\Scripts\\litellm.exe --config litellm_config.yaml --port 8000",

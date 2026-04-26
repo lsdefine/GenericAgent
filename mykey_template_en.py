@@ -47,30 +47,48 @@ native_oai_config = {
     'name': 'gpt',                            # display name & mixin reference
     'apikey': 'sk-<your-openai-key>',
     'apibase': 'https://api.openai.com/v1',
-    'model': 'gpt-5.4',                       # or 'o4', 'gpt-5.3-codex', etc.
+    'model': 'gpt-5.5',                       # or gpt-5.4, 'gpt-o4', 'gpt-5.3-codex', etc.
     'api_mode': 'chat_completions',           # or 'responses' for /v1/responses
     # 'reasoning_effort': 'high',             # none|minimal|low|medium|high|xhigh
     # 'max_retries': 3,
     # 'read_timeout': 120,
 }
 
+# ── 3. OpenRouter (OAI type) ────────────────────────────────────────────────
+#  OpenRouter: https://openrouter.ai/api/v1
+#  Model format: provider/model (for example, anthropic/claude-opus-4-7)
+# oai_config_openrouter = {
+#     'name': 'openrouter',                         # display name & mixin reference
+#     'apikey': 'sk-or-v1-<your-openrouter-key>',   # OpenRouter key; Bearer token
+#     'apibase': 'https://openrouter.ai/api/v1',
+#     'model': 'anthropic/claude-opus-4-7',         # provider/model format
+#     'max_retries': 3,
+#     'connect_timeout': 10,
+#     'read_timeout': 120,
+# }
 
-# ── 3. Mixin failover (optional) ─────────────────────────────────────────────
+
+# ── 4. Mixin failover (optional) ─────────────────────────────────────────────
 #  List sessions by 'name'; if one fails, the next is tried automatically.
 #  Constraint: all referenced sessions must be Native (mixing Native Claude
 #  and Native OAI is fine; mixing Native with non-Native is not).
 # mixin_config = {
-#     'llm_nos': ['claude', 'gpt'],
+#     'llm_nos': ['claude', 'gpt', 'openrouter'],
 #     'max_retries': 5,
 #     'base_delay': 0.5,
 # }
 
 
-# ── 4. Global HTTP proxy (optional) ──────────────────────────────────────────
+# ── 5. Global HTTP proxy (optional) ──────────────────────────────────────────
 #  Applies to every session that doesn't set its own 'proxy' field.
 # proxy = 'http://127.0.0.1:7890'
 
 
-# ── 5. Chat platform integrations (optional) ─────────────────────────────────
-# tg_bot_token = '...'
-# tg_allowed_users = [123456789]
+# ── 6. Chat platform integrations (optional) ─────────────────────────────────
+# Telegram connection
+# tg_bot_token = '1234567890:ABCD......'
+# tg_allowed_users = [1234567890]
+#
+# WeChat connection
+# WeChat bot integration is not supported for users in North America, so users
+# in that region should use Telegram or another supported channel instead.

@@ -66,6 +66,37 @@ def _last_summary(pairs):
 def _preview_text(pairs):
     return _last_summary(pairs) or _first_user(pairs)
 
+def _tool_result_text(block):
+    content = block.get('content', '')
+    if isinstance(content, list):
+        return '\n'.join(x.get('text', '') for x in content if isinstance(x, dict) and x.get('type') == 'text')
+    return content if isinstance(content, str) else str(content)
+
+
+def _sanitize_native_history(history):
+    seen, out = set(), []
+    for msg in history:
+        msg = dict(msg)
+        if msg.get('role') == 'user' and isinstance(msg.get('content'), list):
+            blocks, orphans = [], []
+            for block in msg['content']:
+                if isinstance(block, dict) and block.get('type') == 'tool_result':
+                    tid = block.get('tool_use_id') or ''
+                    if tid in seen:
+                        blocks.append(block)
+                    else:
+                        text = _tool_result_text(block).strip()
+                        if text: orphans.append(f"[orphan tool_result {tid or 'unknown'}]\n{text}")
+                else:
+                    blocks.append(block)
+            if orphans: blocks.insert(0, {'type': 'text', 'text': '\n\n'.join(orphans)})
+            msg['content'] = blocks
+        out.append(msg)
+        if msg.get('role') == 'assistant' and isinstance(msg.get('content'), list):
+            seen.update(b.get('id') for b in msg['content'] if isinstance(b, dict) and b.get('type') == 'tool_use' and b.get('id'))
+    return out
+
+
 def _parse_native_history(pairs):
     history = []
     for p, r in pairs:
@@ -77,7 +108,7 @@ def _parse_native_history(pairs):
         if not isinstance(blocks, list): return None
         history.append(user_msg)
         history.append({'role': 'assistant', 'content': blocks})
-    return history
+    return _sanitize_native_history(history)
 
 def list_sessions(exclude_pid=None):
     """Newest-first list of (path, mtime, first_user_text, n_rounds)."""

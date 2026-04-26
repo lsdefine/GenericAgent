@@ -34,10 +34,13 @@ MEDIA_DIR = os.path.join(TEMP_DIR, "feishu_media")
 os.makedirs(MEDIA_DIR, exist_ok=True)
 
 
+_TRUNC_TAIL = 300  # 截断兜底时保留原文尾部字符数
+
+
 def _clean(text):
     for pat in _TAG_PATS:
-        text = re.sub(pat, "", text, flags=re.DOTALL)
-    return re.sub(r"\n{3,}", "\n\n", text).strip() or "..."
+        text = re.sub(pat, "", text or "", flags=re.DOTALL)
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
 def _extract_files(text):
@@ -49,7 +52,11 @@ def _strip_files(text):
 
 
 def _display_text(text):
-    return _strip_files(_clean(text)) or "..."
+    cleaned = _strip_files(_clean(text))
+    if cleaned:
+        return cleaned
+    tail = (text or "").strip()[-_TRUNC_TAIL:]
+    return "⚠️ 模型输出被截断或为空" + (f"\n…{tail}" if tail else "")
 
 
 def _to_allowed_set(value):

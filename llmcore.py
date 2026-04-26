@@ -344,7 +344,8 @@ def _stamp_oai_cache_markers(messages, model):
 
 def _openai_stream(api_base, api_key, messages, model, api_mode='chat_completions', *,
                    system=None, temperature=0.5, max_tokens=None, tools=None, reasoning_effort=None,
-                   max_retries=0, connect_timeout=10, read_timeout=300, proxies=None, stream=True):
+                   max_retries=0, connect_timeout=10, read_timeout=300, proxies=None,
+                   stream=True, verify=True):
     """Shared OpenAI-compatible streaming request with retry. Yields text chunks, returns list[content_block]."""
     ml = model.lower()
     if 'kimi' in ml or 'moonshot' in ml: temperature = 1
@@ -375,7 +376,7 @@ def _openai_stream(api_base, api_key, messages, model, api_mode='chat_completion
         streamed = False
         try:
             with requests.post(url, headers=headers, json=payload, stream=stream,
-                               timeout=(connect_timeout, read_timeout), proxies=proxies) as r:
+                               timeout=(connect_timeout, read_timeout), proxies=proxies, verify=verify) as r:
                 if r.status_code >= 400:
                     if r.status_code in RETRYABLE and attempt < max_retries:
                         d = _delay(r, attempt)
@@ -512,6 +513,7 @@ class BaseSession:
         default_ct, default_rt = (5, 30) if self.stream else (10, 240)
         self.connect_timeout = max(1, int(cfg.get('timeout', default_ct)))
         self.read_timeout = max(5, int(cfg.get('read_timeout', default_rt)))
+        self.verify_ssl = cfg.get('verify_ssl', True)
         def _enum(key, valid):
             v = cfg.get(key); v = None if v is None else str(v).strip().lower()
             return v if not v or v in valid else print(f"[WARN] Invalid {key} {v!r}, ignored.")
@@ -587,7 +589,8 @@ class LLMSession(BaseSession):
         return (yield from _openai_stream(self.api_base, self.api_key, messages, self.model, self.api_mode,
                                   temperature=self.temperature, reasoning_effort=self.reasoning_effort,
                                   max_tokens=self.max_tokens, max_retries=self.max_retries, stream=self.stream,
-                                  connect_timeout=self.connect_timeout, read_timeout=self.read_timeout, proxies=self.proxies))
+                                  connect_timeout=self.connect_timeout, read_timeout=self.read_timeout,
+                                  proxies=self.proxies, verify=self.verify_ssl))
     def make_messages(self, raw_list): return _msgs_claude2oai(raw_list)
 
 def _fix_messages(messages):
@@ -694,7 +697,8 @@ class NativeOAISession(NativeClaudeSession):
                                           system=self.system, temperature=self.temperature, max_tokens=self.max_tokens,
                                           tools=self.tools, reasoning_effort=self.reasoning_effort,
                                           max_retries=self.max_retries, connect_timeout=self.connect_timeout,
-                                          read_timeout=self.read_timeout, proxies=self.proxies, stream=self.stream))
+                                          read_timeout=self.read_timeout, proxies=self.proxies,
+                                          stream=self.stream, verify=self.verify_ssl))
 
 def openai_tools_to_claude(tools):
     """[{type:'function', function:{name,description,parameters}}] → [{name,description,input_schema}]."""

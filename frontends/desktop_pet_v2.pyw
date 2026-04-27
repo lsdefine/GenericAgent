@@ -609,201 +609,455 @@ if sys.platform == 'darwin':
             self.frame_idx = 0
 
 # ============================================================================
-# Windows Implementation - tkinter with transparentcolor
+# Windows/Linux Implementations
 # ============================================================================
 else:
-    import tkinter as tk
-    from PIL import ImageTk
+    if sys.platform.startswith('win'):
+        import tkinter as tk
+        from PIL import ImageTk
 
-    class WinPet(PetBase):
-        def __init__(self, skin_name=None):
-            self.root = tk.Tk()
-            self.root.wm_attributes('-topmost', True)
+        class WinPet(PetBase):
+            def __init__(self, skin_name=None):
+                self.root = tk.Tk()
+                self.root.wm_attributes('-topmost', True)
+                self.is_windows = sys.platform.startswith('win')
+                self.platform_name = 'Windows' if self.is_windows else 'Linux'
+                self.pet_bg_color = '#F0F0F0' if self.is_windows else 'black'
+                self.toast_bg_color = '#00ff01' if self.is_windows else 'black'
 
-            # Load skin
-            self.load_skin(skin_name)
+                # Load skin
+                self.load_skin(skin_name)
 
-            # Setup window
-            screen_width = self.root.winfo_screenwidth()
-            screen_height = self.root.winfo_screenheight()
+                # Setup window
+                screen_width = self.root.winfo_screenwidth()
+                screen_height = self.root.winfo_screenheight()
 
-            x_pos = screen_width - 200
-            y_pos = screen_height - 300
+                x_pos = screen_width - 200
+                y_pos = screen_height - 300
 
-            self.root.geometry(f'{self.display_width}x{self.display_height}+{x_pos}+{y_pos}')
-            self.root.overrideredirect(True)
-            self.root.wm_attributes('-topmost', True)
+                self.root.geometry(f'{self.display_width}x{self.display_height}+{x_pos}+{y_pos}')
+                self.root.overrideredirect(True)
+                self.root.wm_attributes('-topmost', True)
 
-            # Transparent background
-            self.root.wm_attributes('-transparentcolor', '#F0F0F0')
-            self.root.config(bg='#F0F0F0')
+                # Transparent background
+                if self.is_windows:
+                    self.root.wm_attributes('-transparentcolor', self.pet_bg_color)
+                self.root.config(bg=self.pet_bg_color)
 
-            # Create label
-            self.label = tk.Label(self.root, bg='#F0F0F0', bd=0)
-            self.label.pack()
+                # Create label
+                self.label = tk.Label(self.root, bg=self.pet_bg_color, bd=0)
+                self.label.pack()
 
-            # Bind events
-            self.label.bind('<Button-1>', lambda e: setattr(self, '_d', (e.x, e.y)))
-            self.label.bind('<B1-Motion>', self._drag)
-            self.label.bind('<Double-1>', lambda e: (self.root.destroy(), os._exit(0)))
-            self.label.bind('<Button-3>', self._on_right_click)
+                # Bind events
+                self.label.bind('<Button-1>', lambda e: setattr(self, '_d', (e.x, e.y)))
+                self.label.bind('<B1-Motion>', self._drag)
+                self.label.bind('<Double-1>', lambda e: (self.root.destroy(), os._exit(0)))
+                self.label.bind('<Button-3>', self._on_right_click)
 
-            # Animation state
-            self.current_state = 'idle'
-            self.frame_idx = 0
-
-            # Toast state
-            self.toast_window = None
-            self.toast_photo = None
-
-            # Start animation
-            self._animate()
-            self._start_server()
-
-            print(f"✓ Windows Pet started at ({x_pos}, {y_pos})")
-            print(f"  Animations: {', '.join(self.animations.keys())}")
-
-            self.root.mainloop()
-
-        def load_skin(self, skin_name=None):
-            """Load skin configuration and animations"""
-            available_skins = SkinLoader.list_skins()
-            if not available_skins:
-                raise FileNotFoundError(f"No skins found in {SKINS_DIR}")
-
-            if skin_name is None or skin_name not in available_skins:
-                skin_name = available_skins[0]
-
-            skin_path = os.path.join(SKINS_DIR, skin_name)
-            self.skin_config = SkinLoader.load_skin(skin_path)
-
-            # Get display size
-            display_size = self.skin_config.get('size', {})
-            self.display_width = display_size.get('width', 128)
-            self.display_height = display_size.get('height', 128)
-
-            # Load animations
-            self.animations = {}
-            for anim_name, anim_config in self.skin_config['animations'].items():
-                pil_frames = AnimationLoader.load_sprite_frames(skin_path, anim_config)
-
-                # Scale and convert frames
-                tk_frames = []
-                for frame in pil_frames:
-                    if frame.mode != 'RGBA':
-                        frame = frame.convert('RGBA')
-                    scaled = frame.resize((self.display_width, self.display_height), Image.NEAREST)
-                    tk_frames.append(ImageTk.PhotoImage(scaled))
-
-                self.animations[anim_name] = {
-                    'frames': tk_frames,
-                    'fps': anim_config.get('sprite', {}).get('fps', 6)
-                }
-
-        def set_state(self, state):
-            """Change animation state"""
-            if state in self.animations and state != self.current_state:
-                self.current_state = state
+                # Animation state
+                self.current_state = 'idle'
                 self.frame_idx = 0
-                print(f"→ State: {state}")
 
-        def _drag(self, e):
-            x = self.root.winfo_x() + e.x - self._d[0]
-            y = self.root.winfo_y() + e.y - self._d[1]
-            self.root.geometry(f'+{x}+{y}')
+                # Toast state
+                self.toast_window = None
+                self.toast_photo = None
 
-        def _animate(self):
-            """Animate current state"""
-            if self.current_state not in self.animations:
-                self.root.after(100, self._animate)
-                return
+                # Start animation
+                self._animate()
+                self._start_server()
 
-            anim = self.animations[self.current_state]
-            frames = anim['frames']
+                print(f"✓ {self.platform_name} Pet started at ({x_pos}, {y_pos})")
+                print(f"  Animations: {', '.join(self.animations.keys())}")
 
-            if frames:
-                self.label.config(image=frames[self.frame_idx])
+                self.root.mainloop()
+
+            def load_skin(self, skin_name=None):
+                """Load skin configuration and animations"""
+                available_skins = SkinLoader.list_skins()
+                if not available_skins:
+                    raise FileNotFoundError(f"No skins found in {SKINS_DIR}")
+
+                if skin_name is None or skin_name not in available_skins:
+                    skin_name = available_skins[0]
+
+                skin_path = os.path.join(SKINS_DIR, skin_name)
+                self.skin_config = SkinLoader.load_skin(skin_path)
+
+                # Get display size
+                display_size = self.skin_config.get('size', {})
+                self.display_width = display_size.get('width', 128)
+                self.display_height = display_size.get('height', 128)
+
+                # Load animations
+                self.animations = {}
+                for anim_name, anim_config in self.skin_config['animations'].items():
+                    pil_frames = AnimationLoader.load_sprite_frames(skin_path, anim_config)
+
+                    # Scale and convert frames
+                    tk_frames = []
+                    for frame in pil_frames:
+                        if frame.mode != 'RGBA':
+                            frame = frame.convert('RGBA')
+                        scaled = frame.resize((self.display_width, self.display_height), Image.NEAREST)
+                        tk_frames.append(ImageTk.PhotoImage(scaled))
+
+                    self.animations[anim_name] = {
+                        'frames': tk_frames,
+                        'fps': anim_config.get('sprite', {}).get('fps', 6)
+                    }
+
+            def set_state(self, state):
+                """Change animation state"""
+                if state in self.animations and state != self.current_state:
+                    self.current_state = state
+                    self.frame_idx = 0
+                    print(f"→ State: {state}")
+
+            def _drag(self, e):
+                x = self.root.winfo_x() + e.x - self._d[0]
+                y = self.root.winfo_y() + e.y - self._d[1]
+                self.root.geometry(f'+{x}+{y}')
+
+            def _animate(self):
+                """Animate current state"""
+                if self.current_state not in self.animations:
+                    self.root.after(100, self._animate)
+                    return
+
+                anim = self.animations[self.current_state]
+                frames = anim['frames']
+
+                if frames:
+                    self.label.config(image=frames[self.frame_idx])
+                    self.frame_idx = (self.frame_idx + 1) % len(frames)
+
+                delay = int(1000 / anim['fps'])
+                self.root.after(delay, self._animate)
+
+            def show_toast(self, message):
+                """Show toast message above pet"""
+                if self.toast_window:
+                    try:
+                        self.toast_window.destroy()
+                    except:
+                        pass
+                    self.toast_window = None
+
+                bubble_info = build_bubble_image(message, max_width=max(180, min(260, self.display_width * 2)))
+                bubble_pil = bubble_info['image']
+                bubble_width, bubble_height = bubble_info['size']
+                tail_x, tail_y = bubble_info['tail_tip']
+
+                self.toast_photo = ImageTk.PhotoImage(bubble_pil)
+
+                self.toast_window = tk.Toplevel(self.root)
+                self.toast_window.overrideredirect(True)
+                self.toast_window.wm_attributes('-topmost', True)
+                if self.is_windows:
+                    self.toast_window.wm_attributes('-transparentcolor', self.toast_bg_color)
+                self.toast_window.config(bg=self.toast_bg_color)
+
+                toast_label = tk.Label(
+                    self.toast_window,
+                    image=self.toast_photo,
+                    bg=self.toast_bg_color,
+                    bd=0,
+                    highlightthickness=0
+                )
+                toast_label.pack()
+
+                pet_x = self.root.winfo_x()
+                pet_y = self.root.winfo_y()
+                anchor_x = pet_x + int(self.display_width * 0.75)
+                anchor_y = pet_y
+                toast_x = anchor_x - tail_x
+                toast_y = anchor_y - bubble_height
+
+                self.toast_window.geometry(f'{bubble_width}x{bubble_height}+{toast_x}+{toast_y}')
+
+                self.root.after(3000, self._hide_toast)
+                print(f"Toast: {message}")
+
+            def _hide_toast(self):
+                """Hide toast message"""
+                if self.toast_window:
+                    try:
+                        self.toast_window.destroy()
+                        self.toast_window = None
+                    except:
+                        pass
+
+            def _schedule_main(self, fn):
+                self.root.after(0, fn)
+
+            def run(self):
+                """Run the application (already in mainloop)"""
+                pass
+            
+            def _on_right_click(self, event):
+                # Build a dynamic menu of all available skins
+                menu = tk.Menu(self.root, tearoff=0)
+                for skin_name in SkinLoader.list_skins():
+                    menu.add_command(
+                        label=skin_name,
+                        command=lambda name=skin_name: self._change_skin(name)
+                    )
+                menu.add_separator()
+                menu.add_command(label="Quit", command=lambda: (self.root.destroy(), os._exit(0)))
+                menu.tk_popup(event.x_root, event.y_root)
+
+            def _change_skin(self, skin_name):
+                print(f"Changing skin to: {skin_name}")
+                self.load_skin(skin_name)
+                self.current_state = 'idle'
+                self.frame_idx = 0
+    else:
+        from PySide6.QtCore import Qt, QTimer, QPoint
+        from PySide6.QtGui import QAction, QCursor, QImage, QPixmap
+        from PySide6.QtWidgets import QApplication, QLabel, QMenu, QWidget
+
+        class _LinuxPetLabel(QLabel):
+            def __init__(self, pet):
+                super().__init__()
+                self.pet = pet
+                self.drag_offset = None
+
+            def mousePressEvent(self, event):
+                if event.button() == Qt.LeftButton:
+                    self.drag_offset = event.globalPosition().toPoint() - self.pet.window.frameGeometry().topLeft()
+                    event.accept()
+                    return
+                if event.button() == Qt.RightButton:
+                    self.pet._show_context_menu(event.globalPosition().toPoint())
+                    event.accept()
+                    return
+                super().mousePressEvent(event)
+
+            def mouseMoveEvent(self, event):
+                if self.drag_offset is not None and (event.buttons() & Qt.LeftButton):
+                    self.pet.window.move(event.globalPosition().toPoint() - self.drag_offset)
+                    self.pet._reposition_toast()
+                    event.accept()
+                    return
+                super().mouseMoveEvent(event)
+
+            def mouseReleaseEvent(self, event):
+                if event.button() == Qt.LeftButton:
+                    self.drag_offset = None
+                super().mouseReleaseEvent(event)
+
+            def mouseDoubleClickEvent(self, event):
+                if event.button() == Qt.LeftButton:
+                    QApplication.instance().quit()
+                    event.accept()
+                    return
+                super().mouseDoubleClickEvent(event)
+
+
+        class LinuxPet(PetBase):
+            def __init__(self, skin_name=None):
+                self.app = QApplication.instance() or QApplication(sys.argv)
+                self.available_skins = SkinLoader.list_skins()
+                self.load_skin(skin_name)
+
+                screen = self.app.primaryScreen()
+                screen_geo = screen.availableGeometry() if screen else None
+                if screen_geo:
+                    x_pos = screen_geo.right() - self.display_width - 72
+                    y_pos = screen_geo.bottom() - self.display_height - 120
+                else:
+                    x_pos, y_pos = 1200, 700
+
+                self.window = QWidget()
+                self.window.setWindowFlags(
+                    Qt.FramelessWindowHint |
+                    Qt.WindowStaysOnTopHint |
+                    Qt.Tool
+                )
+                self.window.setAttribute(Qt.WA_TranslucentBackground, True)
+                self.window.setAttribute(Qt.WA_ShowWithoutActivating, True)
+                self.window.resize(self.display_width, self.display_height)
+                self.window.move(x_pos, y_pos)
+
+                self.label = _LinuxPetLabel(self)
+                self.label.setParent(self.window)
+                self.label.setGeometry(0, 0, self.display_width, self.display_height)
+                self.label.setAttribute(Qt.WA_TranslucentBackground, True)
+                self.label.setStyleSheet('background: transparent;')
+                self.label.setScaledContents(True)
+
+                self.current_state = 'idle'
+                self.frame_idx = 0
+                self.toast_window = None
+                self.toast_label = None
+                self.toast_pixmap = None
+
+                self.anim_timer = QTimer()
+                self.anim_timer.timeout.connect(self._animate)
+                self._restart_animation_timer()
+
+                self.window.show()
+                self._start_server()
+
+                print(f"✓ Linux PySide6 Pet started at ({x_pos}, {y_pos})")
+                print(f"  Animations: {', '.join(self.animations.keys())}")
+
+            def _pil_to_qpixmap(self, pil_img):
+                buffer = io.BytesIO()
+                pil_img.save(buffer, format='PNG')
+                qimage = QImage.fromData(buffer.getvalue(), 'PNG')
+                return QPixmap.fromImage(qimage)
+
+            def load_skin(self, skin_name=None):
+                available_skins = SkinLoader.list_skins()
+                if not available_skins:
+                    raise FileNotFoundError(f"No skins found in {SKINS_DIR}")
+
+                if skin_name is None or skin_name not in available_skins:
+                    skin_name = available_skins[0]
+
+                skin_path = os.path.join(SKINS_DIR, skin_name)
+                self.skin_config = SkinLoader.load_skin(skin_path)
+
+                display_size = self.skin_config.get('size', {})
+                self.display_width = display_size.get('width', 128)
+                self.display_height = display_size.get('height', 128)
+
+                self.animations = {}
+                for anim_name, anim_config in self.skin_config['animations'].items():
+                    pil_frames = AnimationLoader.load_sprite_frames(skin_path, anim_config)
+                    qt_frames = []
+                    for frame in pil_frames:
+                        if frame.mode != 'RGBA':
+                            frame = frame.convert('RGBA')
+                        scaled = frame.resize((self.display_width, self.display_height), Image.NEAREST)
+                        qt_frames.append(self._pil_to_qpixmap(scaled))
+
+                    self.animations[anim_name] = {
+                        'frames': qt_frames,
+                        'fps': anim_config.get('sprite', {}).get('fps', 6)
+                    }
+
+                if hasattr(self, 'window'):
+                    self.window.resize(self.display_width, self.display_height)
+                    self.label.setGeometry(0, 0, self.display_width, self.display_height)
+                    self._animate(force=True)
+                    self._reposition_toast()
+
+            def _restart_animation_timer(self):
+                anim = self.animations.get(self.current_state) or next(iter(self.animations.values()))
+                fps = max(1, anim.get('fps', 6))
+                self.anim_timer.start(int(1000 / fps))
+
+            def _animate(self, force=False):
+                if self.current_state not in self.animations:
+                    return
+                anim = self.animations[self.current_state]
+                frames = anim['frames']
+                if not frames:
+                    return
+                if force:
+                    self.frame_idx = 0
+                self.label.setPixmap(frames[self.frame_idx])
                 self.frame_idx = (self.frame_idx + 1) % len(frames)
 
-            delay = int(1000 / anim['fps'])
-            self.root.after(delay, self._animate)
+            def set_state(self, state):
+                if state in self.animations and state != self.current_state:
+                    self.current_state = state
+                    self.frame_idx = 0
+                    self._restart_animation_timer()
+                    print(f"→ State: {state}")
 
-        def show_toast(self, message):
-            """Show toast message above pet"""
-            if self.toast_window:
-                try:
-                    self.toast_window.destroy()
-                except:
-                    pass
-                self.toast_window = None
+            def _show_context_menu(self, global_pos):
+                menu = QMenu(self.window)
+                for skin_name in SkinLoader.list_skins():
+                    action = QAction(skin_name, menu)
+                    action.triggered.connect(lambda checked=False, name=skin_name: self._change_skin(name))
+                    menu.addAction(action)
+                menu.addSeparator()
+                quit_action = QAction('Quit', menu)
+                quit_action.triggered.connect(QApplication.instance().quit)
+                menu.addAction(quit_action)
+                menu.popup(global_pos)
 
-            bubble_info = build_bubble_image(message, max_width=max(180, min(260, self.display_width * 2)))
-            bubble_pil = bubble_info['image']
-            bubble_width, bubble_height = bubble_info['size']
-            tail_x, tail_y = bubble_info['tail_tip']
+            def _compute_toast_geometry(self, bubble_width, bubble_height, tail_x, tail_y):
+                pet_pos = self.window.frameGeometry().topLeft()
+                anchor_x = pet_pos.x() + int(self.display_width * 0.75)
+                anchor_y = pet_pos.y() + int(self.display_height * 0.15)
+                return anchor_x - tail_x, anchor_y - tail_y - bubble_height // 2
 
-            self.toast_photo = ImageTk.PhotoImage(bubble_pil)
-
-            self.toast_window = tk.Toplevel(self.root)
-            self.toast_window.overrideredirect(True)
-            self.toast_window.wm_attributes('-topmost', True)
-            self.toast_window.wm_attributes('-transparentcolor', '#00ff01')
-            self.toast_window.config(bg='#00ff01')
-
-            toast_label = tk.Label(
-                self.toast_window,
-                image=self.toast_photo,
-                bg='#00ff01',
-                bd=0,
-                highlightthickness=0
-            )
-            toast_label.pack()
-
-            pet_x = self.root.winfo_x()
-            pet_y = self.root.winfo_y()
-            anchor_x = pet_x + int(self.display_width * 0.75)
-            anchor_y = pet_y
-            toast_x = anchor_x - tail_x
-            toast_y = anchor_y - bubble_height
-
-            self.toast_window.geometry(f'{bubble_width}x{bubble_height}+{toast_x}+{toast_y}')
-
-            self.root.after(3000, self._hide_toast)
-            print(f"Toast: {message}")
-
-        def _hide_toast(self):
-            """Hide toast message"""
-            if self.toast_window:
-                try:
-                    self.toast_window.destroy()
+            def show_toast(self, message):
+                if self.toast_window:
+                    self.toast_window.close()
                     self.toast_window = None
-                except:
-                    pass
+                    self.toast_label = None
+                    self.toast_pixmap = None
 
-        def _schedule_main(self, fn):
-            self.root.after(0, fn)
+                bubble_info = build_bubble_image(message, max_width=max(180, min(260, self.display_width * 2)))
+                bubble_pil = bubble_info['image']
+                bubble_width, bubble_height = bubble_info['size']
+                tail_x, tail_y = bubble_info['tail_tip']
+                self.toast_pixmap = self._pil_to_qpixmap(bubble_pil)
 
-        def run(self):
-            """Run the application (already in mainloop)"""
-            pass
-        
-        def _on_right_click(self, event):
-            # Build a dynamic menu of all available skins
-            menu = tk.Menu(self.root, tearoff=0)
-            for skin_name in SkinLoader.list_skins():
-                menu.add_command(
-                    label=skin_name,
-                    command=lambda name=skin_name: self._change_skin(name)
+                self.toast_window = QWidget()
+                self.toast_window.setWindowFlags(
+                    Qt.FramelessWindowHint |
+                    Qt.WindowStaysOnTopHint |
+                    Qt.Tool |
+                    Qt.WindowTransparentForInput
                 )
-            menu.add_separator()
-            menu.add_command(label="Quit", command=lambda: (self.root.destroy(), os._exit(0)))
-            menu.tk_popup(event.x_root, event.y_root)
+                self.toast_window.setAttribute(Qt.WA_TranslucentBackground, True)
+                self.toast_window.setAttribute(Qt.WA_ShowWithoutActivating, True)
+                self.toast_window.resize(bubble_width, bubble_height)
 
-        def _change_skin(self, skin_name):
-            print(f"Changing skin to: {skin_name}")
-            self.load_skin(skin_name)
-            self.current_state = 'idle'
-            self.frame_idx = 0
+                self.toast_label = QLabel(self.toast_window)
+                self.toast_label.setGeometry(0, 0, bubble_width, bubble_height)
+                self.toast_label.setPixmap(self.toast_pixmap)
+                self.toast_label.setAttribute(Qt.WA_TranslucentBackground, True)
+                self.toast_label.setStyleSheet('background: transparent;')
+
+                toast_x, toast_y = self._compute_toast_geometry(bubble_width, bubble_height, tail_x, tail_y)
+                self.toast_window.move(toast_x, toast_y)
+                self.toast_window.show()
+
+                QTimer.singleShot(3000, self._hide_toast)
+                print(f"Toast: {message}")
+
+            def _reposition_toast(self):
+                if not self.toast_window:
+                    return
+                label_pixmap = self.toast_label.pixmap() if self.toast_label else None
+                if label_pixmap is None:
+                    return
+                bubble_width = label_pixmap.width()
+                bubble_height = label_pixmap.height()
+                toast_x, toast_y = self._compute_toast_geometry(
+                    bubble_width,
+                    bubble_height,
+                    bubble_width // 2,
+                    bubble_height
+                )
+                self.toast_window.move(toast_x, toast_y)
+
+            def _hide_toast(self):
+                if self.toast_window:
+                    self.toast_window.close()
+                    self.toast_window = None
+                    self.toast_label = None
+                    self.toast_pixmap = None
+
+            def _schedule_main(self, fn):
+                QTimer.singleShot(0, fn)
+
+            def _change_skin(self, skin_name):
+                print(f"Changing skin to: {skin_name}")
+                self.load_skin(skin_name)
+                self.current_state = 'idle'
+                self.frame_idx = 0
+                self._restart_animation_timer()
+
+            def run(self):
+                self.app.exec()
 
 if __name__ == '__main__':
     # Singleton: if port already in use, another instance is running
@@ -820,5 +1074,9 @@ if __name__ == '__main__':
     if sys.platform == 'darwin':
         pet = MacPet('vita')
         pet.run()
-    else:
+    elif sys.platform.startswith('win'):
         pet = WinPet('vita')
+    else:
+        pet = LinuxPet('vita')
+        pet.run()
+

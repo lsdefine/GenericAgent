@@ -47,11 +47,27 @@ def get_last_reply_time():
     """) or 0
     return last or int(time.time())
 
+PASTE_HOOK_JS = """if (!window._pasteHooked) { window._pasteHooked = true;
+    document.addEventListener('paste', e => {
+        const items = e.clipboardData?.items; if (!items) return;
+        let t = null;
+        for (const item of items) { if (item.kind === 'file') { t = item.type.startsWith('image/') ? 'image in clipboard, ' : 'file in clipboard, '; break; } }
+        if (!t) return;
+        e.preventDefault(); e.stopImmediatePropagation();
+        const el = document.querySelector('textarea[data-testid="stChatInputTextArea"]') || document.activeElement;
+        if (el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT')) {
+            const s = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set || Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+            s.call(el, el.value + t); el.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+    }, true);
+}"""
+
 def idle_monitor():
     last_trigger_time = 0
     while True:
         time.sleep(5)
         try:
+            window.evaluate_js(PASTE_HOOK_JS)
             now = time.time()
             if now - last_trigger_time < 120: continue
             last_reply = get_last_reply_time()

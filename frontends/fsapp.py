@@ -34,10 +34,13 @@ MEDIA_DIR = os.path.join(TEMP_DIR, "feishu_media")
 os.makedirs(MEDIA_DIR, exist_ok=True)
 
 
+_TRUNC_TAIL = 300  # 截断兜底时保留原文尾部字符数
+
+
 def _clean(text):
     for pat in _TAG_PATS:
-        text = re.sub(pat, "", text, flags=re.DOTALL)
-    return re.sub(r"\n{3,}", "\n\n", text).strip() or "..."
+        text = re.sub(pat, "", text or "", flags=re.DOTALL)
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
 def _extract_files(text):
@@ -49,7 +52,11 @@ def _strip_files(text):
 
 
 def _display_text(text):
-    return _strip_files(_clean(text)) or "..."
+    cleaned = _strip_files(_clean(text))
+    if cleaned:
+        return cleaned
+    tail = (text or "").strip()[-_TRUNC_TAIL:]
+    return "⚠️ 模型输出被截断或为空" + (f"\n…{tail}" if tail else "")
 
 
 def _to_allowed_set(value):
@@ -588,18 +595,32 @@ def handle_command(open_id, cmd, chat_id=None):
             send_message(chat_id, content, receive_id_type="chat_id")
         else:
             send_message(open_id, content)
-    if cmd == "/stop":
+    parts = (cmd or "").split()
+    op = (parts[0] if parts else "").lower()
+    if op == "/stop":
         if open_id in user_tasks:
             user_tasks[open_id]["running"] = False
         agent.abort()
         _send_cmd_response("正在停止...")
-    elif cmd == "/new":
+    elif op == "/new":
         _send_cmd_response(reset_conversation(agent))
-    elif cmd == "/help":
-        _send_cmd_response("命令列表:\n/stop - 停止当前任务\n/status - 查看状态\n/restore - 恢复上次对话历史\n/continue - 列出可恢复会话\n/continue [n] - 恢复第 n 个会话\n/new - 开启新对话并清空当前上下文\n/help - 显示帮助")
-    elif cmd == "/status":
-        _send_cmd_response(f"状态: {'空闲' if not agent.is_running else '运行中'}")
-    elif cmd == "/restore":
+    elif op == "/help":
+        _send_cmd_response("命令列表:\n/stop - 停止当前任务\n/status - 查看状态\n/llm - 查看当前模型列表\n/llm [n] - 切换到第 n 个模型\n/restore - 恢复上次对话历史\n/continue - 列出可恢复会话\n/continue [n] - 恢复第 n 个会话\n/new - 开启新对话并清空当前上下文\n/help - 显示帮助")
+    elif op == "/status":
+        llm = agent.get_llm_name() if agent.llmclient else "未配置"
+        _send_cmd_response(f"状态: {'🔴 运行中' if agent.is_running else '🟢 空闲'}\nLLM: [{agent.llm_no}] {llm}")
+    elif op == "/llm":
+        if not agent.llmclient:
+            return _send_cmd_response("❌ 当前没有可用的 LLM 配置")
+        if len(parts) > 1:
+            try:
+                agent.next_llm(int(parts[1]))
+                return _send_cmd_response(f"✅ 已切换到 [{agent.llm_no}] {agent.get_llm_name()}")
+            except Exception:
+                return _send_cmd_response(f"用法: /llm <0-{len(agent.list_llms()) - 1}>")
+        lines = [f"{'→' if cur else '  '} [{i}] {name}" for i, name, cur in agent.list_llms()]
+        _send_cmd_response("LLMs:\n" + "\n".join(lines))
+    elif op == "/restore":
         try:
             restored_info, err = format_restore()
             if err:
@@ -610,7 +631,7 @@ def handle_command(open_id, cmd, chat_id=None):
             _send_cmd_response(f"已恢复 {count} 轮对话\n来源: {fname}\n(仅恢复上下文，请输入新问题继续)")
         except Exception as e:
             _send_cmd_response(f"恢复失败: {e}")
-    elif cmd.startswith("/continue"):
+    elif op == "/continue" or cmd.startswith("/continue"):
         _send_cmd_response(handle_continue_frontend(agent, cmd))
     else:
         _send_cmd_response(f"未知命令: {cmd}")

@@ -1,4 +1,4 @@
-import os, sys, re, threading, asyncio, queue as Q, socket, time, random
+import os, sys, re, threading, asyncio, queue as Q, time, random
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _TEMP_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'temp')
 from agentmain import GeneraticAgent
@@ -16,10 +16,12 @@ from chatapp_common import (
     HELP_TEXT,
     TELEGRAM_MENU_COMMANDS,
     clean_reply,
+    ensure_single_instance,
     extract_files,
     format_restore,
+    redirect_log,
+    require_runtime,
     split_text,
-    strip_files,
 )
 from continue_cmd import handle_frontend_command, reset_conversation
 from llmcore import mykeys
@@ -38,6 +40,8 @@ _MD_TOKEN_RE = re.compile(
     r"|\[([^\]]+)\]\(([^)\n]+)\)"
     r"|`([^`\n]+)`"
     r"|\*\*([^\n]+?)\*\*"
+    r"|__([^\n]+?)__"
+    r"|~~([^\n]+?)~~"
     r"|(?<!\*)\*(?!\*)([^\n]+?)(?<!\*)\*(?!\*)",
     re.DOTALL,
 )
@@ -60,6 +64,11 @@ def _resolve_files(paths):
         seen.add(fpath)
     return files
 
+
+def _render_file_markers(text):
+    def repl(match):
+        return os.path.basename(match.group(1))
+    return re.sub(r"\[FILE:([^\]]+)\]", repl, text or "").strip()
 
 def _escape_pre(text):
     return escape_markdown(text or "", version=2, entity_type="pre")
@@ -90,7 +99,11 @@ def _to_markdown_v2(text):
         elif match.group(7) is not None:
             parts.append(f"*{escape_markdown(match.group(7), version=2)}*")
         elif match.group(8) is not None:
-            parts.append(f"_{escape_markdown(match.group(8), version=2)}_")
+            parts.append(f"*{escape_markdown(match.group(8), version=2)}*")
+        elif match.group(9) is not None:
+            parts.append(f"~{escape_markdown(match.group(9), version=2)}~")
+        elif match.group(10) is not None:
+            parts.append(f"_{escape_markdown(match.group(10), version=2)}_")
         pos = match.end()
     parts.append(escape_markdown(text[pos:], version=2))
     return "".join(parts)
@@ -102,7 +115,7 @@ class _TelegramStreamSession:
     def __init__(self, root_msg):
         self.root_msg = root_msg
         self.private_chat = getattr(getattr(root_msg, "chat", None), "type", "") == ChatType.PRIVATE
-        self.can_use_draft = self.private_chat
+        self.can_use_draft = False  # can not use or streaming dead
         self.draft_id = _make_draft_id()
         self.live_msg = None
         self.raw_text = ""
@@ -144,7 +157,7 @@ class _TelegramStreamSession:
     async def _refresh(self, done, send_files):
         cleaned = clean_reply(self.raw_text) if self.raw_text.strip() else ""
         self.files = _resolve_files(extract_files(cleaned))
-        body = strip_files(cleaned)
+        body = _render_file_markers(cleaned)
         if done and not body and self.files:
             body = "已生成附件"
         elif done and not body:
@@ -244,16 +257,12 @@ async def _stream(dq, msg):
     await session.prime()
     try:
         while True:
-            try:
-                first = await asyncio.to_thread(dq.get, True, _QUEUE_WAIT_SECONDS)
-            except Q.Empty:
-                continue
+            try: first = await asyncio.to_thread(dq.get, True, _QUEUE_WAIT_SECONDS)
+            except Q.Empty: continue
             items = [first]
             try:
-                while True:
-                    items.append(dq.get_nowait())
-            except Q.Empty:
-                pass
+                while True: items.append(dq.get_nowait())
+            except Q.Empty: pass
             done_item = next((item for item in items if "done" in item), None)
             if done_item is not None:
                 await session.finalize(done_item.get("done", ""))
@@ -267,20 +276,16 @@ async def _stream(dq, msg):
         print(f"[TG stream error] {type(exc).__name__}: {exc}", flush=True)
         await session.finish_with_notice(f"❌ 输出失败: {exc}")
 
-
 def _normalized_command(text):
     parts = (text or "").strip().split(None, 1)
-    if not parts:
-        return ''
+    if not parts: return ''
     head = parts[0].lower()
-    if head.startswith('/'):
-        head = '/' + head[1:].split('@', 1)[0]
+    if head.startswith('/'): head = '/' + head[1:].split('@', 1)[0]
     return head + (f" {parts[1].strip()}" if len(parts) > 1 and parts[1].strip() else '')
 
 def _cancel_stream_task(ctx):
     task = ctx.user_data.pop('stream_task', None)
-    if task and not task.done():
-        task.cancel()
+    if task and not task.done(): task.cancel()
 
 async def _sync_commands(application):
     await application.bot.set_my_commands([BotCommand(command, description) for command, description in TELEGRAM_MENU_COMMANDS])
@@ -314,14 +319,22 @@ async def cmd_llm(update, ctx):
 
 async def handle_photo(update, ctx):
     uid = update.effective_user.id
-    if ALLOWED and uid not in ALLOWED:
-        return await update.message.reply_text("no")
-    photo = update.message.photo[-1]
-    file = await photo.get_file()
-    fpath = f"tg_{photo.file_unique_id}.jpg"
+    if ALLOWED and uid not in ALLOWED: return await update.message.reply_text("no")
+    if update.message.photo:
+        photo = update.message.photo[-1]
+        file = await photo.get_file()
+        fpath = f"tg_{photo.file_unique_id}.jpg"
+        kind = "图片"
+    elif update.message.document:
+        doc = update.message.document
+        file = await doc.get_file()
+        ext = os.path.splitext(doc.file_name or '')[1] or ''
+        fpath = f"tg_{doc.file_unique_id}{ext}"
+        kind = "文件"
+    else: return
     await file.download_to_drive(os.path.join(_TEMP_DIR, fpath))
     caption = update.message.caption
-    prompt = f"[TIPS] 收到图片temp/{fpath}\n{caption}" if caption else f"[TIPS] 收到图片temp/{fpath}，请等待下一步指令"
+    prompt = f"[TIPS] 收到{kind}temp/{fpath}\n{caption}" if caption else f"[TIPS] 收到{kind}temp/{fpath}，请等待下一步指令"
     dq = agent.put_task(prompt, source="telegram")
     task = asyncio.create_task(_stream(dq, update.message))
     ctx.user_data['stream_task'] = task
@@ -359,20 +372,18 @@ async def handle_command(update, ctx):
     return await update.message.reply_text(HELP_TEXT)
 
 if __name__ == '__main__':
-    try:  # Single instance lock using socket
-        _lock_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM); _lock_sock.bind(('127.0.0.1', 19527))
-    except OSError: 
-        print('[Telegram] Another instance is already running, skiping...')
-        sys.exit(1)
+    _LOCK_SOCK = ensure_single_instance(19527, "Telegram")
     if not ALLOWED: 
         print('[Telegram] ERROR: tg_allowed_users in mykey.py is empty or missing. Set it to avoid unauthorized access.')
         sys.exit(1)
-    _logf = open(os.path.join(os.path.dirname(os.path.dirname(__file__)), 'temp', 'tgapp.log'), 'a', encoding='utf-8', buffering=1)
-    sys.stdout = sys.stderr = _logf
-    print('[NEW] New process starting, the above are history infos ...')
+    require_runtime(agent, "Telegram", tg_bot_token=mykeys.get("tg_bot_token"))
+    redirect_log(__file__, "tgapp.log", "Telegram", ALLOWED)
     threading.Thread(target=agent.run, daemon=True).start()
-    proxy = mykeys.get('proxy', 'http://127.0.0.1:2082')
-    print('proxy:', proxy)
+    proxy = mykeys.get('proxy')
+    if proxy:
+        print('proxy:', proxy)
+    else:
+        print('proxy: <disabled>')
 
     async def _error_handler(update, context: ContextTypes.DEFAULT_TYPE):
         print(f"[{time.strftime('%m-%d %H:%M')}] TG error: {context.error}", flush=True)
@@ -381,11 +392,15 @@ if __name__ == '__main__':
         try:
             print(f"TG bot starting... {time.strftime('%m-%d %H:%M')}")
             # Recreate request and app objects on each restart to avoid stale connections
-            request = HTTPXRequest(proxy=proxy, read_timeout=30, write_timeout=30, connect_timeout=30, pool_timeout=30)
+            request_kwargs = dict(read_timeout=30, write_timeout=30, connect_timeout=30, pool_timeout=30)
+            if proxy:
+                request_kwargs['proxy'] = proxy
+            request = HTTPXRequest(**request_kwargs)
             app = (ApplicationBuilder().token(mykeys['tg_bot_token'])
                    .request(request).get_updates_request(request).post_init(_sync_commands).build())
             app.add_handler(MessageHandler(filters.COMMAND, handle_command))
             app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+            app.add_handler(MessageHandler(filters.Document.ALL, handle_photo))
             app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_msg))
             app.add_error_handler(_error_handler)
             app.run_polling(drop_pending_updates=True, poll_interval=1.0, timeout=30)

@@ -71,20 +71,20 @@ class WeComApp(AgentChatMixin):
             except Exception as e:
                 print(f"[WeCom] welcome error: {e}")
 
-    async def on_connected(self, frame):
+    async def on_connected(self):
         print("[WeCom] connected")
 
-    async def on_authenticated(self, frame):
+    async def on_authenticated(self):
         print("[WeCom] authenticated")
 
-    async def on_disconnected(self, frame):
-        print("[WeCom] disconnected")
+    async def on_disconnected(self, reason=""):
+        print(f"[WeCom] disconnected: {reason}")
 
-    async def on_error(self, frame):
-        print(f"[WeCom] error: {frame}")
+    async def on_error(self, error=None):
+        print(f"[WeCom] error: {error}")
 
     async def start(self):
-        self.client = WSClient({"bot_id": BOT_ID, "secret": SECRET, "reconnect_interval": 1000, "max_reconnect_attempts": -1, "heartbeat_interval": 30000})
+        self.client = WSClient(BOT_ID, SECRET, reconnect_interval=1000, max_reconnect_attempts=-1, heartbeat_interval=30000)
         for event, handler in {
             "connected": self.on_connected,
             "authenticated": self.on_authenticated,
@@ -95,7 +95,7 @@ class WeComApp(AgentChatMixin):
         }.items():
             self.client.on(event, handler)
         print("[WeCom] bot starting...")
-        await self.client.connect_async()
+        await self.client.connect()
         while True:
             await asyncio.sleep(1)
 

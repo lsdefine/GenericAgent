@@ -115,4 +115,9 @@ def _compact_tool_args(name, args):
     for k in ('path',): 
         if k in a: a[k] = os.path.basename(a[k])
     if name == 'update_working_checkpoint': s = a.get('key_info', ''); return (s[:60]+'...') if len(s)>60 else s
+    if name == 'ask_user':
+        q = str(a.get('question', ''))
+        cs = a.get('candidates') or []
+        if cs: q += '\ncandidates:\n' + '\n'.join(f'- {c}' for c in cs)
+        return q
     s = json.dumps(a, ensure_ascii=False); return (s[:120]+'...') if len(s)>120 else s

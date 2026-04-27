@@ -19,4 +19,9 @@ def _run(*a, **k):
         if r.stderr is not None: r.stderr = _d(r.stderr)
     return r
 subprocess.run = _run
+_Pi = subprocess.Popen.__init__
+def _pinit(self, *a, **k):
+    if os.name == 'nt': k['creationflags'] = (k.get('creationflags') or 0) | 0x08000000
+    _Pi(self, *a, **k)
+subprocess.Popen.__init__ = _pinit
 sys.excepthook = lambda t, v, tb: (sys.__excepthook__(t, v, tb), print(f"\n[Agent Hint]: NO GUESSING! You MUST probe first. If missing common package, pip.")) if issubclass(t, (ImportError, AttributeError)) else sys.__excepthook__(t, v, tb)

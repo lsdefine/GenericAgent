@@ -101,6 +101,8 @@ cp mykey_template.py mykey.py
 python launch.pyw
 ```
 
+Windows native shell fallback: if the desktop window fails during pywebview startup, run `python launch.pyw --browser` to use the Streamlit browser UI.
+
 > GenericAgent is meant to grow its environment through the Agent itself, not by pre-installing every possible package.
 
 Full guide: [GETTING_STARTED.md](GETTING_STARTED.md)
@@ -317,6 +319,8 @@ uv pip install -e ".[ui]"        # 核心 + GUI 依赖
 cp mykey_template.py mykey.py
 python launch.pyw
 ```
+
+Windows 原生桌面窗口启动失败时，可运行 `python launch.pyw --browser` 使用浏览器版 Streamlit UI。
 
 > GenericAgent 更推荐由 Agent 在使用中自举环境，而不是预先手动装完整依赖。
 

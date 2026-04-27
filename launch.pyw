@@ -1,9 +1,10 @@
-import webview, threading, subprocess, sys, time, os, ctypes, atexit, socket, random
+import threading, subprocess, sys, time, os, ctypes, atexit, socket, random, webbrowser, urllib.request
 
 WINDOW_WIDTH, WINDOW_HEIGHT, RIGHT_PADDING, TOP_PADDING = 600, 900, 0, 100
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 frontends_dir = os.path.join(script_dir, "frontends")
+window = proc = None
 
 def find_free_port(lo=18501, hi=18599):
     ports = list(range(lo, hi+1)); random.shuffle(ports)
@@ -21,6 +22,28 @@ def start_streamlit(port):
     cmd = [sys.executable, "-m", "streamlit", "run", os.path.join(frontends_dir, "stapp.py"), "--server.port", str(port), "--server.address", "localhost", "--server.headless", "true"]
     proc = subprocess.Popen(cmd)
     atexit.register(proc.kill)
+
+def wait_for_streamlit(url, timeout=20):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=0.5): return True
+        except Exception: time.sleep(0.5)
+    return False
+
+def keep_streamlit_alive():
+    try:
+        while proc and proc.poll() is None: time.sleep(1)
+    except KeyboardInterrupt:
+        if proc and proc.poll() is None: proc.kill()
+
+def open_browser_mode(port, reason=None):
+    url = f'http://localhost:{port}'
+    if reason: print(f'[Launch] Native window unavailable: {reason}')
+    wait_for_streamlit(url)
+    print(f'[Launch] Opening browser: {url}')
+    webbrowser.open(url)
+    keep_streamlit_alive()
 
 def inject(text):
     window.evaluate_js(f"""
@@ -62,9 +85,10 @@ PASTE_HOOK_JS = """if (!window._pasteHooked) { window._pasteHooked = true;
     }, true);
 }"""
 
-def idle_monitor():
+def idle_monitor(stop_event=None):
     last_trigger_time = 0
     while True:
+        if stop_event and stop_event.is_set(): return
         time.sleep(5)
         try:
             window.evaluate_js(PASTE_HOOK_JS)
@@ -78,10 +102,32 @@ def idle_monitor():
         except Exception as e:
             print(f'[Idle Monitor] Error: {e}')
 
+def start_native_window(port):
+    global window
+    if os.name == 'nt': os.environ.setdefault('PYTHONNET_RUNTIME', 'coreclr')
+    import webview
+    if os.name == 'nt':
+        screen_width = get_screen_width()
+        x_pos = screen_width - WINDOW_WIDTH - RIGHT_PADDING
+    else: x_pos = 100
+    time.sleep(2)
+    window = webview.create_window(
+        title='GenericAgent', url=f'http://localhost:{port}',
+        width=WINDOW_WIDTH, height=WINDOW_HEIGHT, x=x_pos, y=TOP_PADDING,
+        resizable=True, text_select=True)
+    monitor_stop = threading.Event()
+    monitor_thread = threading.Thread(target=idle_monitor, args=(monitor_stop,), daemon=True)
+    monitor_thread.start()
+    try: webview.start()
+    except Exception:
+        monitor_stop.set()
+        raise
+
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('port', nargs='?', default='0'); 
+    parser.add_argument('--browser', action='store_true', help='Open Streamlit in the default browser')
     parser.add_argument('--tg', action='store_true', help='启动 Telegram Bot'); 
     parser.add_argument('--qq', action='store_true', help='启动 QQ Bot');
     parser.add_argument('--feishu', '--fs', dest='feishu', action='store_true', help='启动 Feishu Bot');
@@ -130,15 +176,7 @@ if __name__ == '__main__':
         print('[Launch] Task Scheduler started (duplicate prevented by scheduler port lock)')
     else: print('[Launch] Task Scheduler not enabled (--sched)')
 
-    monitor_thread = threading.Thread(target=idle_monitor, daemon=True)
-    monitor_thread.start()
-    if os.name == 'nt':
-        screen_width = get_screen_width()
-        x_pos = screen_width - WINDOW_WIDTH - RIGHT_PADDING
-    else: x_pos = 100
-    time.sleep(2) 
-    window = webview.create_window(
-        title='GenericAgent', url=f'http://localhost:{port}',
-        width=WINDOW_WIDTH, height=WINDOW_HEIGHT, x=x_pos, y=TOP_PADDING,
-        resizable=True, text_select=True)
-    webview.start()
+    if args.browser: open_browser_mode(port)
+    else:
+        try: start_native_window(port)
+        except Exception as e: open_browser_mode(port, e)

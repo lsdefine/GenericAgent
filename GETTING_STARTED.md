@@ -171,6 +171,8 @@ Agent 会自己读代码、找出需要的包、全部装好。
 python3 launch.pyw
 ```
 
+Windows 原生桌面窗口启动失败时，可运行 `python3 launch.pyw --browser` 使用浏览器版 Streamlit UI。
+
 启动后会出现一个桌面悬浮窗，直接在里面输入任务指令。
 
 ### 可选：让 Agent 帮你做的事

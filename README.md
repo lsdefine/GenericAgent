@@ -11,6 +11,21 @@
 
 ---
 <a name="english"></a>
+
+### Table of Contents (English)
+
+- [Overview](#-overview)
+- [Core Features](#-core-features)
+- [Self-Evolution Mechanism](#-self-evolution-mechanism)
+- [Latest News](#-latest-news)
+- [Quick Start](#-quick-start)
+- [Bot Interface (Optional)](#-bot-interface-optional)
+- [Comparison with Similar Tools](#-comparison-with-similar-tools)
+- [How It Works](#-how-it-works)
+- [Support](#-support)
+- [License](#-license)
+- [中文版](#chinese)
+
 ## 🌟 Overview
 
 **GenericAgent** is a minimal, self-evolving autonomous agent framework. Its core is just **~3K lines of code**. Through **9 atomic tools + a ~100-line Agent Loop**, it grants any LLM system-level control over a local computer — covering browser, terminal, filesystem, keyboard/mouse input, screen vision, and mobile devices (ADB).
@@ -227,6 +242,21 @@ MIT License — see [LICENSE](LICENSE)
 
 ---
 <a name="chinese"></a>
+
+### 目录（中文）
+
+- [项目简介](#-项目简介)
+- [核心特性](#-核心特性)
+- [自我进化机制](#-自我进化机制)
+- [最新动态](#-最新动态)
+- [快速开始](#-快速开始)
+- [Bot 接口（可选）](#-bot-接口可选)
+- [与同类产品对比](#-与同类产品对比)
+- [工作机制](#-工作机制)
+- [支持](#-支持)
+- [许可](#-许可)
+- [English Version](#english)
+
 ## 🌟 项目简介
 
 **GenericAgent** 是一个极简、可自我进化的自主 Agent 框架。核心仅 **~3K 行代码**，通过 **9 个原子工具 + ~100 行 Agent Loop**，赋予任意 LLM 对本地计算机的系统级控制能力，覆盖浏览器、终端、文件系统、键鼠输入、屏幕视觉及移动设备。

@@ -1,33 +1,26 @@
-import os, json, re, time, requests, sys, threading, urllib3, base64, importlib, uuid
+import os, json, re, time, requests, sys, threading, urllib3, base64, mimetypes, uuid
 from datetime import datetime
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 _RESP_CACHE_KEY = str(uuid.uuid4())
 
 def _load_mykeys():
-    global _mykey_path
     try:
-        import mykey; importlib.reload(mykey); _mykey_path = mykey.__file__
-        return {k: v for k, v in vars(mykey).items() if not k.startswith('_')}
+        import mykey; return {k: v for k, v in vars(mykey).items() if not k.startswith('_')}
     except ImportError: pass
-    _mykey_path = p = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'mykey.json')
+    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'mykey.json')
     if not os.path.exists(p): raise Exception('[ERROR] mykey.py or mykey.json not found, please create one from mykey_template.')
     with open(p, encoding='utf-8') as f: return json.load(f)
 
-_mykey_path = _mykey_mtime = None
-def reload_mykeys():
-    global _mykey_mtime
-    mt = os.stat(_mykey_path).st_mtime_ns if _mykey_path else -1
-    if mt == _mykey_mtime: return globals().get('mykeys', {}), False
-    mk = _load_mykeys(); _mykey_mtime = os.stat(_mykey_path).st_mtime_ns
-    print(f'[Info] Load mykeys from {_mykey_path}')
-    globals().update(mykeys=mk)
-    if mk.get('langfuse_config'):
-        try: from plugins import langfuse_tracing
-        except Exception: pass
-    return mk, True
-
 def __getattr__(name):  # once guard in PEP 562
-    if name == 'mykeys': return reload_mykeys()[0]
+    if name in ('mykeys', 'proxies'):  
+        mk = _load_mykeys()
+        proxy = mk.get("proxy", 'http://127.0.0.1:2082')
+        px = {"http": proxy, "https": proxy} if proxy else None
+        globals().update(mykeys=mk, proxies=px)
+        if mk.get('langfuse_config'):
+            try: from plugins import langfuse_tracing
+            except Exception: pass
+        return globals()[name]
     raise AttributeError(f"module 'llmcore' has no attribute {name}")
 
 def compress_history_tags(messages, keep_recent=10, max_len=800, force=False):
@@ -80,12 +73,6 @@ def _sanitize_leading_user_msg(msg):
         elif block.get('type') == 'text': texts.append(block.get('text', ''))
     msg['content'] = [{"type": "text", "text": '\n'.join(t for t in texts if t)}]
     return msg
-
-_oldprint = print
-def safeprint(*argv):
-    try: _oldprint(*argv)
-    except OSError: pass
-print = safeprint
 
 def trim_messages_history(history, context_win):
     compress_history_tags(history)
@@ -165,11 +152,6 @@ def _parse_claude_sse(resp_lines):
     if not warn:
         if not got_message_stop and not stop_reason: warn = "\n\n[!!! 流异常中断，未收到完整响应 !!!]"
         elif stop_reason == "max_tokens": warn = "\n\n[!!! Response truncated: max_tokens !!!]"
-    if current_block:
-        if current_block["type"] == "tool_use":
-            try: current_block["input"] = json.loads(tool_json_buf) if tool_json_buf else {}
-            except: current_block["input"] = {"_raw": tool_json_buf}
-        content_blocks.append(current_block); current_block = None
     if warn:
         print(f"[WARN] {warn.strip()}")
         content_blocks.append({"type": "text", "text": warn}); yield warn
@@ -248,7 +230,6 @@ def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
         return blocks
     else:
         tc_buf = {}  # index -> {id, name, args}
-        reasoning_text = ""
         for line in resp_lines:
             if not line: continue
             line = line.decode('utf-8', errors='replace') if isinstance(line, bytes) else line
@@ -356,7 +337,6 @@ def _openai_stream(api_base, api_key, messages, model, api_mode='chat_completion
         payload = {"model": model, "input": _to_responses_input(messages), "stream": stream, 
                    "prompt_cache_key": _RESP_CACHE_KEY, "instructions": system or "You are an Omnipotent Executor."}
         if reasoning_effort: payload["reasoning"] = {"effort": reasoning_effort}
-        if max_tokens: payload["max_output_tokens"] = max_tokens
     else:
         url = auto_make_url(api_base, "chat/completions")
         if system: messages = [{"role": "system", "content": system}] + messages
@@ -364,7 +344,7 @@ def _openai_stream(api_base, api_key, messages, model, api_mode='chat_completion
         payload = {"model": model, "messages": messages, "stream": stream}
         if stream: payload["stream_options"] = {"include_usage": True}
         if temperature != 1: payload["temperature"] = temperature
-        if max_tokens: payload["max_completion_tokens" if ml.startswith(("gpt-5", "o1", "o2", "o3", "o4")) else "max_tokens"] = max_tokens
+        if max_tokens: payload["max_tokens"] = max_tokens
         if reasoning_effort: payload["reasoning_effort"] = reasoning_effort
     if tools: payload["tools"] = _prepare_oai_tools(tools, api_mode)
     RETRYABLE = {408, 409, 425, 429, 500, 502, 503, 504, 529}
@@ -439,7 +419,7 @@ def _to_responses_input(messages):
                 elif ptype == "image_url":
                     url = (part.get("image_url") or {}).get("url", "")
                     if url and role != "assistant": parts.append({"type": "input_image", "image_url": url})
-        if len(parts) == 0: parts = [{"type": text_type, "text": str(content) if not isinstance(content, list) else '[empty]'}]
+        if len(parts) == 0: parts = [{"type": text_type, "text": str(content) or '[empty]'}]
         result.append({"role": role, "content": parts})
         pending = []
         for tc in (msg.get("tool_calls") or []):
@@ -457,18 +437,16 @@ def _msgs_claude2oai(messages):
         content = msg.get("content", "")
         blocks = content if isinstance(content, list) else [{"type": "text", "text": str(content)}]
         if role == "assistant":
-            text_parts, tool_calls, reasoning = [], [], ""
+            text_parts, tool_calls = [], []
             for b in blocks:
                 if not isinstance(b, dict): continue
-                if b.get("type") == "thinking" and b.get("thinking"): reasoning = b["thinking"]
-                elif b.get("type") == "text" and b.get("text"): text_parts.append({"type": "text", "text": b.get("text", "")})
+                if b.get("type") == "text" and b.get("text"): text_parts.append({"type": "text", "text": b.get("text", "")})
                 elif b.get("type") == "tool_use":
                     tool_calls.append({
                         "id": b.get("id") or '', "type": "function",
                         "function": {"name": b.get("name", ""), "arguments": json.dumps(b.get("input", {}), ensure_ascii=False)}
                     })
             m = {"role": "assistant"}
-            if reasoning: m["reasoning_content"] = reasoning
             if text_parts: m["content"] = text_parts
             else: m["content"] = ""
             if tool_calls: m["tool_calls"] = tool_calls
@@ -501,7 +479,7 @@ class BaseSession:
         self.api_key = cfg['apikey']
         self.api_base = cfg['apibase'].rstrip('/')
         self.model = cfg.get('model', '')
-        self.context_win = cfg.get('context_win', 28000)
+        self.context_win = cfg.get('context_win', 24000)
         self.history = []
         self.lock = threading.Lock()
         self.system = ""
@@ -522,7 +500,7 @@ class BaseSession:
         mode = str(cfg.get('api_mode', 'chat_completions')).strip().lower().replace('-', '_')
         self.api_mode = 'responses' if mode in ('responses', 'response') else 'chat_completions'
         self.temperature = cfg.get('temperature', 1)
-        self.max_tokens = cfg.get('max_tokens')
+        self.max_tokens = cfg.get('max_tokens', 8192)
     def _apply_claude_thinking(self, payload):
         if self.thinking_type:
             thinking = {"type": self.thinking_type}
@@ -554,16 +532,8 @@ class BaseSession:
             if not content.startswith("!!!Error:"): self.history.append({"role": "assistant", "content": [{"type": "text", "text": content}]})
         return _ask_gen() if stream else ''.join(list(_ask_gen()))
 
-def _keep_claude_block(b): return not isinstance(b, dict) or b.get("type") != "thinking" or b.get("signature")
-def _drop_unsigned_thinking(messages):
-    for m in messages:
-        c = m.get("content")
-        if isinstance(c, list): m["content"] = [b for b in c if _keep_claude_block(b)]
-    return messages
-
 class ClaudeSession(BaseSession):
     def raw_ask(self, messages):
-        if self.max_tokens is None: self.max_tokens = 8192
         headers = {"x-api-key": self.api_key, "Content-Type": "application/json", "anthropic-version": "2023-06-01", "anthropic-beta": "prompt-caching-2024-07-31"}
         payload = {"model": self.model, "messages": messages, "max_tokens": self.max_tokens, "stream": True}
         if self.temperature != 1: payload["temperature"] = self.temperature
@@ -577,7 +547,7 @@ class ClaudeSession(BaseSession):
             yield (err := f"!!!Error: {e}")
             return [{"type": "text", "text": err}]
     def make_messages(self, raw_list):
-        msgs = _drop_unsigned_thinking([{"role": m['role'], "content": list(m['content'])} for m in raw_list])
+        msgs = [{"role": m['role'], "content": list(m['content'])} for m in raw_list]
         user_idxs = [i for i, m in enumerate(msgs) if m['role'] == 'user']
         for idx in user_idxs[-2:]:
             msgs[idx]["content"][-1] = dict(msgs[idx]["content"][-1], cache_control={"type": "ephemeral"})
@@ -611,6 +581,7 @@ def _fix_messages(messages):
 class NativeClaudeSession(BaseSession):
     def __init__(self, cfg):
         super().__init__(cfg)
+        self.context_win = cfg.get("context_win", 28000)
         self.fake_cc_system_prompt = cfg.get("fake_cc_system_prompt", False)
         self.user_agent = cfg.get("user_agent", "claude-cli/2.1.113 (external, cli)")
         self._session_id = str(uuid.uuid4())
@@ -618,8 +589,7 @@ class NativeClaudeSession(BaseSession):
         self._device_id = uuid.uuid4().hex + uuid.uuid4().hex[:32]
         self.tools = None
     def raw_ask(self, messages):
-        messages = _drop_unsigned_thinking(_fix_messages(messages))
-        if self.max_tokens is None: self.max_tokens = 8192
+        messages = _fix_messages(messages)
         model = self.model
         beta_parts = ["claude-code-20250219", "interleaved-thinking-2025-05-14", "redact-thinking-2026-02-12", "prompt-caching-scope-2026-01-05"]
         if "[1m]" in model.lower():
@@ -956,7 +926,7 @@ class MixinSession:
 
 THINKING_PROMPT_ZH = """
 ### 行动规范（持续有效）
-每次回复（含工具调用轮）都先在回复文字中包含一个<summary></summary> 中输出极简单行（<30字）物理快照：上次结果新信息+本次意图。此内容进入长期工作记忆。
+每次回复请先在回复文字中包含一个<summary></summary> 中输出极简单行（<30字）物理快照：上次结果新信息+本次意图。此内容进入长期工作记忆。
 \n**若用户需求未完成，必须进行工具调用！**
 """.strip()
 THINKING_PROMPT_EN = """

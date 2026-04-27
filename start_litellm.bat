@@ -2,19 +2,18 @@
 cd /d "%~dp0"
 setlocal
 
+:: ====== 硬编码虚拟环境路径（绕过 activate.bat）=====
+:: ⚠️ 直接设置完整路径，而非引用未定义变量
+set "PYTHON_EXE=%~dp0.venv\Scripts\python.exe"
+set "LITELLM_EXE=%~dp0.venv\Scripts\litellm.exe"
+
 set "LITELLM_PORT=8000"
 if "%GA_PROXY_MODE%"=="" set "GA_PROXY_MODE=auto"
 if "%GA_PROXY_URL%"=="" set "GA_PROXY_URL=http://127.0.0.1:6789"
 
-if not exist ".venv\Scripts\python.exe" (
+if not exist "%PYTHON_EXE%" (
   echo [ERROR] .venv not found. Please create virtual environment first.
   echo         python -m venv .venv
-  exit /b 1
-)
-
-call .venv\Scripts\activate.bat
-if errorlevel 1 (
-  echo [ERROR] Failed to activate .venv
   exit /b 1
 )
 
@@ -57,25 +56,25 @@ if "%GA_PROXY_ACTIVE%"=="1" (
   echo [INFO] Proxy mode=%GA_PROXY_MODE% ^(direct^)
 )
 
-if not exist ".venv\Scripts\litellm.exe" (
+if not exist "%LITELLM_EXE%" (
   echo [INFO] LiteLLM not found in .venv, installing...
-  .venv\Scripts\python.exe -m pip install "litellm[proxy]"
+  %PYTHON_EXE% -m pip install "litellm[proxy]"
   if errorlevel 1 (
     echo [ERROR] Failed to install litellm in .venv
     exit /b 1
   )
 )
 
-if exist ".venv\Scripts\python.exe" if exist "verify_copilot_models.py" (
+if exist "%PYTHON_EXE%" if exist "verify_copilot_models.py" (
   echo [INFO] Syncing available Copilot models into config...
   powershell -NoProfile -ExecutionPolicy Bypass -Command "$conn = Get-NetTCPConnection -LocalPort %LITELLM_PORT% -State Listen -ErrorAction SilentlyContinue; if ($conn) { $conn | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue } }" >nul 2>nul
-  powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -WindowStyle Hidden -FilePath '%CD%\.venv\Scripts\litellm.exe' -ArgumentList '--config','litellm_config.yaml','--port','%LITELLM_PORT%'"
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -WindowStyle Hidden -FilePath '%LITELLM_EXE%' -ArgumentList '--config','litellm_config.yaml','--port','%LITELLM_PORT%'"
   powershell -NoProfile -ExecutionPolicy Bypass -Command "$ready = $false; for ($i = 0; $i -lt 40; $i++) { try { $resp = Invoke-WebRequest -Uri 'http://127.0.0.1:%LITELLM_PORT%/v1/models' -TimeoutSec 2 -UseBasicParsing; if ($resp.StatusCode -eq 200) { $ready = $true; break } } catch {}; Start-Sleep -Milliseconds 500 }; if (-not $ready) { exit 1 }"
   if errorlevel 1 (
     echo [ERROR] Bootstrap LiteLLM failed to start.
     exit /b 1
   )
-  .venv\Scripts\python.exe verify_copilot_models.py --apply
+  %PYTHON_EXE% verify_copilot_models.py --apply
   if errorlevel 1 (
     echo [ERROR] Failed to refresh available Copilot models.
     powershell -NoProfile -ExecutionPolicy Bypass -Command "$conn = Get-NetTCPConnection -LocalPort %LITELLM_PORT% -State Listen -ErrorAction SilentlyContinue; if ($conn) { $conn | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue } }" >nul 2>nul
@@ -85,4 +84,4 @@ if exist ".venv\Scripts\python.exe" if exist "verify_copilot_models.py" (
 )
 
 echo [INFO] Starting LiteLLM on port 8000 using .venv
-.venv\Scripts\litellm.exe --config litellm_config.yaml --port %LITELLM_PORT%
+call %LITELLM_EXE% --config litellm_config.yaml --port %LITELLM_PORT%

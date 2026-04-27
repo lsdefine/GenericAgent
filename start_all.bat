@@ -1,13 +1,5 @@
 @echo off
-:: ====== 自动提权（UAC）逻辑 ======
-:: 检查是否为管理员，如果不是则自我提权
-whoami /groups | find "S-1-5-32-544" >nul 2>nul
-if not errorlevel 1 goto :gotAdmin
-:: 不是管理员，尝试自我提权
-echo [INFO] 当前未以管理员权限运行，尝试自动提权...
-powershell -Command "Start-Process '%~f0' -Verb RunAs" >nul 2>nul
-exit /b
-:gotAdmin
+chcp 65001 >nul 2>&1  :: 设置 UTF-8 代码页
 cd /d "%~dp0"
 setlocal
 

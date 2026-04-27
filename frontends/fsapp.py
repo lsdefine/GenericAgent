@@ -1,5 +1,37 @@
 import glob, json, os, queue as Q, re, sys, threading, time
 
+# ===== 进程锁：使用Windows Mutex防止多实例运行 =====
+import ctypes
+from ctypes import wintypes
+
+_MUTEX_NAME = "Global\\GenericAgent_fsapp_mutex"
+
+def check_single_instance():
+    """使用Windows命名互斥量防止多个fsapp.py实例运行"""
+    kernel32 = ctypes.windll.kernel32
+    
+    # 尝试创建命名互斥量
+    mutex = kernel32.CreateMutexW(None, True, _MUTEX_NAME)
+    error_code = kernel32.GetLastError()
+    
+    if error_code == 0:
+        # 成功创建，自己是第一个实例
+        print(f"[INFO] fsapp.py 互斥量创建成功，当前PID: {os.getpid()}")
+        return mutex
+    elif error_code == 183:  # ERROR_ALREADY_EXISTS
+        # 互斥量已存在，说明有另一个实例在运行
+        print(f"[INFO] 检测到已有fsapp.py实例在运行，当前实例将退出")
+        kernel32.CloseHandle(mutex)
+        sys.exit(0)
+    else:
+        # 其他错误
+        print(f"[WARN] 互斥量创建失败 (错误码: {error_code})，跳过实例检查")
+        return None
+
+# 保持互斥量句柄引用
+_mutex_handle = check_single_instance()
+# ===== 进程锁结束 =====
+
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 os.chdir(PROJECT_ROOT)
@@ -7,6 +39,7 @@ from agentmain import GeneraticAgent
 from frontends.chatapp_common import format_restore
 from frontends.continue_cmd import handle_frontend_command as handle_continue_frontend, reset_conversation
 from llmcore import mykeys
+from frontends.chat_logger import get_chat_logger
 
 import traceback
 import lark_oapi as lark
@@ -520,14 +553,17 @@ class _TaskCard:
         self._push()
 
 
-def _make_task_hook(card, done_event, on_final):
+def _make_task_hook(card, done_event, on_final, open_id=None):
     """飞书任务 hook：每轮 patch 卡片状态；结束触发 on_final(raw) 处理附件。"""
     def hook(ctx):
         try:
             if ctx.get('exit_reason'):
                 resp = ctx.get('response')
                 raw = resp.content if hasattr(resp, 'content') else str(resp)
-                card.done(_display_text(raw))
+                ai_text = _display_text(raw)
+                card.done(ai_text)
+                try: get_chat_logger().save_message("feishu", open_id, None, ai_text)
+                except: pass
                 on_final(raw)
                 done_event.set()
             elif ctx.get('summary'):
@@ -546,6 +582,10 @@ def handle_message(data):
         print(f"未授权用户: {open_id}")
         return
     user_input, image_paths = _build_user_message(message)
+    # 记录用户消息
+    try:
+        get_chat_logger().save_message("feishu", open_id, user_input)
+    except: pass
     if not user_input:
         if chat_id:
             send_message(chat_id, f"⚠️ 暂不支持处理此类飞书消息：{message.message_type}", receive_id_type="chat_id")
@@ -566,7 +606,7 @@ def handle_message(data):
         card.start()
         on_final = lambda raw: _send_generated_files(receive_id, raw, receive_id_type=rid_type)
         if not hasattr(agent, '_turn_end_hooks'): agent._turn_end_hooks = {}
-        agent._turn_end_hooks[hook_key] = _make_task_hook(card, done_event, on_final)
+        agent._turn_end_hooks[hook_key] = _make_task_hook(card, done_event, on_final, open_id)
         try:
             agent.put_task(user_input, source="feishu", images=image_paths)
             start = time.time()
@@ -614,7 +654,9 @@ def handle_command(open_id, cmd, chat_id=None):
             return _send_cmd_response("❌ 当前没有可用的 LLM 配置")
         if len(parts) > 1:
             try:
-                agent.next_llm(int(parts[1]))
+                # 移除参数中的方括号支持 /llm [1] 或 /llm 1
+                num_str = parts[1].strip("[]")
+                agent.next_llm(int(num_str))
                 return _send_cmd_response(f"✅ 已切换到 [{agent.llm_no}] {agent.get_llm_name()}")
             except Exception:
                 return _send_cmd_response(f"用法: /llm <0-{len(agent.list_llms()) - 1}>")

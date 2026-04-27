@@ -78,14 +78,15 @@ class GeneraticAgent:
         except: oldhistory = None
         llm_sessions = []
         for k, cfg in mykeys.items():
-            if not any(x in k for x in ['api', 'config', 'cookie']): continue
+            # Skip irrelevant config/cookie/api key variables (must start with valid prefixes)
+            if not any(k.startswith(p) for p in ['native', 'dashscope', 'copil', 'claude', 'gemini', 'mixin']): continue
             try:
                 if 'native' in k and 'claude' in k: llm_sessions += [NativeToolClient(NativeClaudeSession(cfg=cfg))]
                 elif 'native' in k and 'oai' in k: llm_sessions += [NativeToolClient(NativeOAISession(cfg=cfg))]
                 elif 'claude' in k: llm_sessions += [ToolClient(ClaudeSession(cfg=cfg))]
                 elif 'oai' in k: llm_sessions += [ToolClient(LLMSession(cfg=cfg))]
                 elif 'mixin' in k: llm_sessions += [{'mixin_cfg': cfg}]
-            except: pass
+            except Exception as e: print(f'[WARN] Failed to init {k}: {e}')
         for i, s in enumerate(llm_sessions):
             if isinstance(s, dict) and 'mixin_cfg' in s:
                 try:
@@ -104,6 +105,10 @@ class GeneraticAgent:
         self.llmclient = self.llmclients[self.llm_no]
         try: self.llmclient.backend.history = lastc.backend.history
         except: raise Exception('[ERROR] BAD Mixin config: Check your mykey.py')
+        # Sync MixinSession internal routing when switching clients
+        if hasattr(self.llmclient, 'set_primary_by_name'):
+            try: self.llmclient.set_primary_by_name(self.llmclient.name)
+            except Exception as _e: print(f'[WARN] MixinRoute sync fail: {_e}')
         self.llmclient.last_tools = ''
         name = self.get_llm_name(model=True)
         if 'glm' in name or 'minimax' in name or 'kimi' in name: load_tool_schema('_cn')
@@ -160,9 +165,7 @@ class GeneraticAgent:
 
                 sys_prompt = get_system_prompt() + getattr(self.llmclient.backend, 'extra_sys_prompt', '')
                 script_dir = os.path.dirname(os.path.abspath(__file__))
-                print(f"[DEBUG] 创建 GenericAgentHandler，工作目录设置为: {script_dir}")
-                handler = GenericAgentHandler(self, self.history, script_dir)
-                print(f"[DEBUG] Handler 创建成功，cwd = {handler.cwd}")
+                handler = GenericAgentHandler(self, self.history, os.path.join(script_dir, 'temp'))
                 if self.handler and 'key_info' in self.handler.working:
                     ki = re.sub(r'\n\[SYSTEM\] 此为.*?工作记忆[。\n]*', '', self.handler.working['key_info'])  # 去旧
                     handler.working['key_info'] = ki

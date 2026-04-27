@@ -213,7 +213,70 @@ def render_mykey(models):
 def apply_updates(models):
     supported = [m for m in models if m in MODEL_SPECS]
     Path("litellm_config.yaml").write_text(render_litellm_config(supported), encoding="utf-8")
-    Path("mykey.py").write_text(render_mykey(supported), encoding="utf-8")
+
+    # 读取原始 mykey.py，仅替换 Copilot 相关 section，保留其他配置
+    original_text = Path("mykey.py").read_text(encoding="utf-8")
+    original_lines = original_text.splitlines(keepends=True)
+    new_content = render_mykey(supported)
+    new_lines = new_content.splitlines(keepends=True)
+
+    def find_copilot_section(lines):
+        """定位 Copilot 配置 section 范围：从第一个 native_oai_config_copilot_ 到 mixin_config 结束
+        使用 native_oai_config_copilot_ 而非 header 文本定位，可跳过 GLM-5/DashScope 静态配置。
+        使用 brace depth 追踪确保 mixin_config 完整闭合。
+        """
+        start = None
+        end = None
+        brace_depth = 0
+        in_mixin = False
+
+        for i, line in enumerate(lines):
+            # 定位第一个 Copilot 配置块（跳过 GLM-5/DashScope 静态配置）
+            if start is None:
+                if "native_oai_config_copilot_" in line and "=" in line:
+                    start = i
+                    # 回溯找注释 header（保留配置块前的注释行）
+                    for j in range(i-1, max(0, i-5), -1):
+                        stripped = lines[j].strip()
+                        if stripped.startswith("#") or stripped == "":
+                            start = j
+                        else:
+                            break
+                    brace_depth = line.count("{") - line.count("}")
+                continue
+
+            # 定位 section 结束
+            if end is None:
+                if "mixin_config" in line and "=" in line:
+                    in_mixin = True
+                    brace_depth = line.count("{") - line.count("}")
+                elif brace_depth > 0:
+                    brace_depth += line.count("{") - line.count("}")
+                    if brace_depth <= 0:
+                        end = i + 1
+                        break
+
+        return start, end
+
+    # 校验新内容结构（防御 render_mykey 输出异常）
+    new_start, new_end = find_copilot_section(new_lines)
+    if new_start is None or new_end is None:
+        raise ValueError("render_mykey 输出结构异常：无法定位 Copilot section（可能 mixin_config 缺失或 render_mykey 格式变更）")
+
+    # 在原始文件中定位 Copilot section
+    orig_start, orig_end = find_copilot_section(original_lines)
+
+    # 执行替换或追加
+    if orig_start is not None and orig_end is not None:
+        # 防御：结构校验
+        if orig_start >= orig_end:
+            raise ValueError("mykey.py 结构异常：Copilot section 边界错误（start >= end）")
+        result = original_lines[:orig_start] + new_lines[new_start:new_end] + original_lines[orig_end:]
+    else:
+        # 原始文件无 Copilot section，追加到末尾
+        result = original_lines + ["\n"] + new_lines[new_start:new_end]
+
+    Path("mykey.py").write_text("".join(result), encoding="utf-8")
 
 
 def main():

@@ -926,6 +926,24 @@ class MixinSession:
     def _pick(self):
         if self._cur_idx and time.time() - self._switched_at > self._spring_sec: self._cur_idx = 0
         return self._cur_idx
+    def set_primary_by_name(self, name):
+        """Set the session with matching name as the new primary (idx 0)."""
+        for i, s in enumerate(self._sessions):
+            if s.name.lower() == name.lower():
+                if i == 0: return  # already primary
+                self._sessions[0], self._sessions[i] = self._sessions[i], self._sessions[0]
+                self._orig_raw_asks[0], self._orig_raw_asks[i] = self._orig_raw_asks[i], self._orig_raw_asks[0]
+                # Update broadcasted attrs to the new primary
+                for attr in self._BROADCAST_ATTRS:
+                    val = getattr(self._sessions[0], attr, None)
+                    if val is not None:
+                        for s in self._sessions[1:]:
+                            setattr(s, attr, val)
+                self._cur_idx = 0
+                self._switched_at = time.time()
+                print(f'[MixinSession] Primary switched to {name}')
+                return
+        print(f'[MixinSession] WARNING: session name "{name}" not found in mixin')
     def _raw_ask(self, *args, **kwargs):
         base, n = self._pick(), len(self._sessions)
         test_error = lambda x: isinstance(x, str) and x.lstrip().startswith(('!!!Error:', '[Error:'))

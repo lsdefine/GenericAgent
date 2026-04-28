@@ -36,14 +36,19 @@ class DingTalkApp(AgentChatMixin):
             resp.raise_for_status()
             return resp.json()
 
-        try:
-            data = await asyncio.to_thread(_fetch)
-            self.access_token = data.get("accessToken")
-            self.token_expiry = time.time() + int(data.get("expireIn", 7200)) - 60
-            return self.access_token
-        except Exception as e:
-            print(f"[DingTalk] token error: {e}")
-            return None
+        last_err = None
+        for attempt in range(2):
+            try:
+                data = await asyncio.to_thread(_fetch)
+                self.access_token = data.get("accessToken")
+                self.token_expiry = time.time() + int(data.get("expireIn", 7200)) - 60
+                return self.access_token
+            except Exception as e:
+                last_err = e
+                if attempt == 0:
+                    await asyncio.sleep(1)
+        print(f"[DingTalk] token error after retry: {last_err}")
+        return None
 
     async def _send_batch_message(self, chat_id, msg_key, msg_param):
         token = await self._get_access_token()
@@ -102,13 +107,19 @@ class DingTalkApp(AgentChatMixin):
         self.client = DingTalkStreamClient(Credential(CLIENT_ID, CLIENT_SECRET))
         self.client.register_callback_handler(ChatbotMessage.TOPIC, _DingTalkHandler(self))
         print("[DingTalk] bot starting...")
+        delay, max_delay = 5, 300
         while True:
+            started_at = time.monotonic()
             try:
                 await self.client.start()
             except Exception as e:
                 print(f"[DingTalk] stream error: {e}")
-            print("[DingTalk] reconnect in 5s...")
-            await asyncio.sleep(5)
+            # any session that lived >=60s is treated as healthy -> reset backoff
+            if time.monotonic() - started_at >= 60:
+                delay = 5
+            print(f"[DingTalk] reconnect in {delay}s...")
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, max_delay)
 
 
 class _DingTalkHandler(CallbackHandler):

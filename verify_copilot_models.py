@@ -9,6 +9,11 @@ from pathlib import Path
 import requests
 import yaml
 
+try:
+    import winreg
+except Exception:
+    winreg = None
+
 BASE_URL = "http://127.0.0.1:8000"
 MODELS_URL = f"{BASE_URL}/v1/models"
 CHAT_URL = f"{BASE_URL}/v1/chat/completions"
@@ -47,15 +52,45 @@ HEADER_LINES = [
 TOKEN_REF = "os.environ/GITHUB_COPILOT_TOKEN"
 
 
+def _resolve_wininet_proxy_url():
+    if os.name != "nt" or winreg is None:
+        return ""
+    try:
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Internet Settings")
+        proxy_enable, _ = winreg.QueryValueEx(key, "ProxyEnable")
+        proxy_server, _ = winreg.QueryValueEx(key, "ProxyServer")
+        if int(proxy_enable) != 1 or not proxy_server:
+            return ""
+
+        # ProxyServer may be host:port or protocol-specific pairs: http=...;https=...
+        value = str(proxy_server).strip()
+        if "=" in value:
+            mapping = {}
+            for part in value.split(";"):
+                if "=" in part:
+                    k, v = part.split("=", 1)
+                    mapping[k.strip().lower()] = v.strip()
+            value = mapping.get("https") or mapping.get("http") or (next(iter(mapping.values()), ""))
+
+        if value and "://" not in value:
+            value = "http://" + value
+        return value
+    except Exception:
+        return ""
+
+
 def detect_proxy_state():
-    proxy_url = (
+    wininet_url = _resolve_wininet_proxy_url()
+    env_proxy_url = (
         os.environ.get("HTTPS_PROXY")
         or os.environ.get("HTTP_PROXY")
         or os.environ.get("ALL_PROXY")
         or ""
     )
+    proxy_url = wininet_url or env_proxy_url
     info = {
         "proxy_env_url": proxy_url,
+        "proxy_source": "wininet" if wininet_url else ("env" if env_proxy_url else "none"),
         "proxy_configured": bool(proxy_url),
         "proxy_reachable": False,
         "proxy_mode": "direct",
@@ -70,7 +105,7 @@ def detect_proxy_state():
         if host and port:
             with socket.create_connection((host, port), timeout=1.2):
                 info["proxy_reachable"] = True
-                info["proxy_mode"] = "proxy-active"
+                info["proxy_mode"] = "proxy-port-reachable"
         else:
             info["proxy_mode"] = "proxy-configured-invalid"
     except Exception:

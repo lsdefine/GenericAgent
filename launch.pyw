@@ -4,6 +4,12 @@ WINDOW_WIDTH, WINDOW_HEIGHT, RIGHT_PADDING, TOP_PADDING = 600, 900, 0, 100
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 frontends_dir = os.path.join(script_dir, "frontends")
+_LOCK_SOCK = None
+
+# Ensure child processes prefer the current venv interpreter on Windows.
+os.environ.setdefault("PYTHONEXECUTABLE", sys.executable)
+if getattr(sys, "_base_executable", sys.executable) != sys.executable:
+    sys._base_executable = sys.executable
 
 def find_free_port(lo=18501, hi=18599):
     ports = list(range(lo, hi+1)); random.shuffle(ports)
@@ -16,10 +22,23 @@ def get_screen_width():
     try: return ctypes.windll.user32.GetSystemMetrics(0)
     except: return 1920
 
+def ensure_single_instance(port=19526):
+    lock_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        lock_sock.bind(("127.0.0.1", port))
+        return lock_sock
+    except OSError:
+        print(f"[Launch] Another launch instance is already running, skipping duplicate startup.")
+        try: lock_sock.close()
+        except: pass
+        return None
+
 def start_streamlit(port):
     global proc
     cmd = [sys.executable, "-m", "streamlit", "run", os.path.join(frontends_dir, "stapp.py"), "--server.port", str(port), "--server.address", "localhost", "--server.headless", "true"]
-    proc = subprocess.Popen(cmd, cwd=script_dir)
+    child_env = os.environ.copy()
+    child_env["PYTHONEXECUTABLE"] = sys.executable
+    proc = subprocess.Popen(cmd, cwd=script_dir, env=child_env)
     atexit.register(proc.kill)
 
 def inject(text):
@@ -85,6 +104,9 @@ def debug_cwd():
     print(f"[DEBUG] 脚本目录: {script_dir}")
 
 if __name__ == '__main__':
+    _LOCK_SOCK = ensure_single_instance()
+    if _LOCK_SOCK is None:
+        sys.exit(0)
     debug_cwd()
     import argparse
     parser = argparse.ArgumentParser()
@@ -102,37 +124,49 @@ if __name__ == '__main__':
     threading.Thread(target=start_streamlit, args=(port,), daemon=True).start()
 
     if args.tg:
-        tgproc = subprocess.Popen([sys.executable, os.path.join(frontends_dir, "tgapp.py")], creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
+        child_env = os.environ.copy()
+        child_env["PYTHONEXECUTABLE"] = sys.executable
+        tgproc = subprocess.Popen([sys.executable, os.path.join(frontends_dir, "tgapp.py")], env=child_env, creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
         atexit.register(tgproc.kill)
         print('[Launch] Telegram Bot started')
     else: print('[Launch] Telegram Bot not enabled (use --tg to start)')
 
     if args.qq:
-        qqproc = subprocess.Popen([sys.executable, os.path.join(frontends_dir, "qqapp.py")], creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
+        child_env = os.environ.copy()
+        child_env["PYTHONEXECUTABLE"] = sys.executable
+        qqproc = subprocess.Popen([sys.executable, os.path.join(frontends_dir, "qqapp.py")], env=child_env, creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
         atexit.register(qqproc.kill)
         print('[Launch] QQ Bot started')
     else: print('[Launch] QQ Bot not enabled (use --qq to start)')
 
     if args.feishu:
-        fsproc = subprocess.Popen([sys.executable, os.path.join(frontends_dir, "fsapp.py")], creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
+        child_env = os.environ.copy()
+        child_env["PYTHONEXECUTABLE"] = sys.executable
+        fsproc = subprocess.Popen([sys.executable, os.path.join(frontends_dir, "fsapp.py")], env=child_env, creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
         atexit.register(fsproc.kill)
         print('[Launch] Feishu Bot started')
     else: print('[Launch] Feishu Bot not enabled (use --feishu to start)')
 
     if args.wecom:
-        wcproc = subprocess.Popen([sys.executable, os.path.join(frontends_dir, "wecomapp.py")], creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
+        child_env = os.environ.copy()
+        child_env["PYTHONEXECUTABLE"] = sys.executable
+        wcproc = subprocess.Popen([sys.executable, os.path.join(frontends_dir, "wecomapp.py")], env=child_env, creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
         atexit.register(wcproc.kill)
         print('[Launch] WeCom Bot started')
     else: print('[Launch] WeCom Bot not enabled (use --wecom to start)')
 
     if args.dingtalk:
-        dtproc = subprocess.Popen([sys.executable, os.path.join(frontends_dir, "dingtalkapp.py")], creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
+        child_env = os.environ.copy()
+        child_env["PYTHONEXECUTABLE"] = sys.executable
+        dtproc = subprocess.Popen([sys.executable, os.path.join(frontends_dir, "dingtalkapp.py")], env=child_env, creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
         atexit.register(dtproc.kill)
         print('[Launch] DingTalk Bot started')
     else: print('[Launch] DingTalk Bot not enabled (use --dingtalk to start)')
     
     if args.sched:
-        scheduler_proc = subprocess.Popen([sys.executable, os.path.join(script_dir, "agentmain.py"), "--reflect", os.path.join(script_dir, "reflect", "scheduler.py"), "--llm_no", str(args.llm_no)], creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
+        child_env = os.environ.copy()
+        child_env["PYTHONEXECUTABLE"] = sys.executable
+        scheduler_proc = subprocess.Popen([sys.executable, os.path.join(script_dir, "agentmain.py"), "--reflect", os.path.join(script_dir, "reflect", "scheduler.py"), "--llm_no", str(args.llm_no)], env=child_env, creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
         atexit.register(scheduler_proc.kill)
         print('[Launch] Task Scheduler started (duplicate prevented by scheduler port lock)')
     else: print('[Launch] Task Scheduler not enabled (--sched)')

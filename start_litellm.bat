@@ -28,6 +28,9 @@ if "%GITHUB_COPILOT_TOKEN%"=="" (
 )
 
 set "GA_PROXY_ACTIVE=0"
+set "WININET_PROXY_URL="
+for /f "usebackq delims=" %%i in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$k='HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings'; $p=Get-ItemProperty -Path $k -ErrorAction SilentlyContinue; if($p -and $p.ProxyEnable -eq 1 -and $p.ProxyServer){ $s=$p.ProxyServer; if($s -match '='){ $m=@{}; foreach($part in $s -split ';'){ if($part -match '^(?<k>[^=]+)=(?<v>.+)$'){ $m[$Matches.k.ToLower()]=$Matches.v } }; $v=$m['https']; if(-not $v){$v=$m['http']}; if(-not $v -and $m.Count -gt 0){ $v=($m.Values | Select-Object -First 1) }; $s=$v }; if($s -and -not ($s -match '^[a-zA-Z]+://')){ $s='http://'+$s }; Write-Output $s }"`) do set "WININET_PROXY_URL=%%i"
+
 if /I "%GA_PROXY_MODE%"=="off" (
   set "GA_PROXY_ACTIVE=0"
 ) else if /I "%GA_PROXY_MODE%"=="on" (
@@ -38,6 +41,7 @@ if /I "%GA_PROXY_MODE%"=="off" (
   )
   set "GA_PROXY_ACTIVE=1"
 ) else (
+  if not "%WININET_PROXY_URL%"=="" set "GA_PROXY_URL=%WININET_PROXY_URL%"
   powershell -NoProfile -ExecutionPolicy Bypass -Command "$u=[uri]$env:GA_PROXY_URL; $c=New-Object Net.Sockets.TcpClient; try { $ar=$c.BeginConnect($u.Host,$u.Port,$null,$null); if(-not $ar.AsyncWaitHandle.WaitOne(1200)){ exit 1 }; $c.EndConnect($ar); exit 0 } catch { exit 1 } finally { $c.Close() }"
   if not errorlevel 1 set "GA_PROXY_ACTIVE=1"
 )
@@ -47,13 +51,25 @@ if "%GA_PROXY_ACTIVE%"=="1" (
   set "HTTPS_PROXY=%GA_PROXY_URL%"
   set "ALL_PROXY=%GA_PROXY_URL%"
   set "NO_PROXY=127.0.0.1,localhost"
-  echo [INFO] Proxy mode=%GA_PROXY_MODE% ^(active^): %GA_PROXY_URL%
+  if /I "%GA_PROXY_MODE%"=="auto" if not "%WININET_PROXY_URL%"=="" (
+    echo [INFO] Proxy mode=auto ^(WinINet primary^): %GA_PROXY_URL%
+  ) else (
+    echo [INFO] Proxy mode=%GA_PROXY_MODE% ^(proxy port reachable^): %GA_PROXY_URL%
+  )
 ) else (
   set "HTTP_PROXY="
   set "HTTPS_PROXY="
   set "ALL_PROXY="
   set "NO_PROXY=*"
   echo [INFO] Proxy mode=%GA_PROXY_MODE% ^(direct^)
+)
+
+set "PYTHONEXECUTABLE=%PYTHON_EXE%"
+
+for /f %%i in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "$root=(Resolve-Path '%~dp0').Path; $all=Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" -ErrorAction SilentlyContinue; $cnt=($all.Where({ $_.CommandLine -like '*-m litellm*' -and $_.CommandLine -like ('*' + $root + '*') })).Count; Write-Output $cnt"') do set "GA_LITELLM_COUNT=%%i"
+if not "%GA_LITELLM_COUNT%"=="0" (
+  echo [INFO] LiteLLM process is already running for this workspace. Skipping duplicate startup.
+  exit /b 0
 )
 
 if not exist "%LITELLM_EXE%" (
@@ -65,8 +81,8 @@ if not exist "%LITELLM_EXE%" (
   )
 )
 
-if exist "%PYTHON_EXE%" if exist "verify_copilot_models.py" (
-  echo [INFO] Syncing available Copilot models into config...
+if "%GA_PROXY_ACTIVE%"=="1" if exist "%PYTHON_EXE%" if exist "verify_copilot_models.py" (
+  echo [INFO] Proxy is active. Refreshing available Copilot models into config...
   powershell -NoProfile -ExecutionPolicy Bypass -Command "$conn = Get-NetTCPConnection -LocalPort %LITELLM_PORT% -State Listen -ErrorAction SilentlyContinue; if ($conn) { $conn | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue } }" >nul 2>nul
   powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -WindowStyle Hidden -FilePath '%LITELLM_EXE%' -ArgumentList '--config','litellm_config.yaml','--port','%LITELLM_PORT%'"
   powershell -NoProfile -ExecutionPolicy Bypass -Command "$ready = $false; for ($i = 0; $i -lt 40; $i++) { try { $resp = Invoke-WebRequest -Uri 'http://127.0.0.1:%LITELLM_PORT%/v1/models' -TimeoutSec 2 -UseBasicParsing; if ($resp.StatusCode -eq 200) { $ready = $true; break } } catch {}; Start-Sleep -Milliseconds 500 }; if (-not $ready) { exit 1 }"
@@ -83,5 +99,9 @@ if exist "%PYTHON_EXE%" if exist "verify_copilot_models.py" (
   powershell -NoProfile -ExecutionPolicy Bypass -Command "$conn = Get-NetTCPConnection -LocalPort %LITELLM_PORT% -State Listen -ErrorAction SilentlyContinue; if ($conn) { $conn | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue } }" >nul 2>nul
 )
 
+if not "%GA_PROXY_ACTIVE%"=="1" (
+  echo [INFO] Proxy is not active. Skipping model refresh.
+)
+
 echo [INFO] Starting LiteLLM on port 8000 using .venv
-call %LITELLM_EXE% --config litellm_config.yaml --port %LITELLM_PORT%
+call "%LITELLM_EXE%" --config litellm_config.yaml --port %LITELLM_PORT%

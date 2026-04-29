@@ -111,3 +111,4 @@ def _call_openai_compat(b64, prompt, timeout, *, apibase, apikey, model, proxy=N
     return resp.json()['choices'][0]['message']['content']
 
 if __name__ == '__main__':
+    pass

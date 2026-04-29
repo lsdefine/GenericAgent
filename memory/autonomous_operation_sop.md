@@ -29,11 +29,12 @@ print(get_todo())       # 查看待办
 - 即使失败也记录实验过程和结果，失败报告同样有价值
 - 用户不在线，遇到需要决策的问题写入报告待审，不要卡住
 
-**收尾（三件事缺一不可）**：
+**收尾（4件事缺一不可）**：
 0. 重读本sop
 1. 在cwd写报告（文件名任意），若有记忆更新建议，附在报告末尾
 2. `from/import helper; complete_task(tasktitle, historyline, report_path)` → 自动编号+移报告到 autonomous_reports/+prepend history（historyline 格式：`类型 | 主题 | 结论`，严格单行）
 3. `set_todo()` 获取TODO路径 → 将已完成条目标记为 `[x]`
+4. 结束，剩余TODO留到下次再做
 
 ## 权限边界
 - 无需批准：只读探测、cwd内写操作/脚本实验

@@ -1,4 +1,4 @@
-import os, sys, threading, queue, time, json, re, random, locale, base64, mimetypes
+import os, sys, threading, queue, time, json, re, random, locale
 os.environ.setdefault('GA_LANG', 'zh' if any(k in (locale.getlocale()[0] or '').lower() for k in ('zh', 'chinese')) else 'en')
 if sys.stdout is None: sys.stdout = open(os.devnull, "w")
 elif hasattr(sys.stdout, 'reconfigure'): sys.stdout.reconfigure(errors='replace')
@@ -39,28 +39,8 @@ def get_system_prompt():
     prompt += get_global_memory()
     return prompt
 
-def build_multimodal_user_content(text, images):
-    content = [{"type": "text", "text": text}]
-    for path in images or []:
-        if not path or not os.path.isfile(path):
-            continue
-        mime = mimetypes.guess_type(path)[0] or 'application/octet-stream'
-        if not mime.startswith('image/'):
-            continue
-        try:
-            with open(path, 'rb') as f:
-                data = base64.b64encode(f.read()).decode('ascii')
-        except OSError:
-            continue
-        content.append({
-            "type": "image",
-            "source": {"type": "base64", "media_type": mime, "data": data}
-        })
-    return content
-
 class GeneraticAgent:
     def __init__(self):
-        script_dir = os.path.dirname(os.path.abspath(__file__))
         os.makedirs(os.path.join(script_dir, 'temp'), exist_ok=True)
         self.lock = threading.Lock()
         self.task_dir = None
@@ -78,22 +58,21 @@ class GeneraticAgent:
         except: oldhistory = None
         llm_sessions = []
         for k, cfg in mykeys.items():
-            # Skip irrelevant config/cookie/api key variables (must start with valid prefixes)
-            if not any(k.startswith(p) for p in ['native', 'dashscope', 'copil', 'claude', 'gemini', 'mixin']): continue
+            if not any(x in k for x in ['api', 'config', 'cookie']): continue
             try:
                 if 'native' in k and 'claude' in k: llm_sessions += [NativeToolClient(NativeClaudeSession(cfg=cfg))]
                 elif 'native' in k and 'oai' in k: llm_sessions += [NativeToolClient(NativeOAISession(cfg=cfg))]
                 elif 'claude' in k: llm_sessions += [ToolClient(ClaudeSession(cfg=cfg))]
                 elif 'oai' in k: llm_sessions += [ToolClient(LLMSession(cfg=cfg))]
                 elif 'mixin' in k: llm_sessions += [{'mixin_cfg': cfg}]
-            except Exception as e: print(f'[WARN] Failed to init {k}: {e}')
+            except: pass
         for i, s in enumerate(llm_sessions):
             if isinstance(s, dict) and 'mixin_cfg' in s:
                 try:
                     mixin = MixinSession(llm_sessions, s['mixin_cfg'])
                     if isinstance(mixin._sessions[0], (NativeClaudeSession, NativeOAISession)): llm_sessions[i] = NativeToolClient(mixin)
                     else: llm_sessions[i] = ToolClient(mixin)
-                except Exception as e: print(f'[WARN] Failed to init MixinSession with cfg {s["mixin_cfg"]}: {e}')
+                except Exception as e: print(f'\n\n\n[ERROR] Failed to init MixinSession with cfg {s["mixin_cfg"]}: {e}!!!\n\n')
         self.llmclients = llm_sessions
         self.llmclient = self.llmclients[self.llm_no%len(self.llmclients)]
         if oldhistory: self.llmclient.backend.history = oldhistory
@@ -105,10 +84,6 @@ class GeneraticAgent:
         self.llmclient = self.llmclients[self.llm_no]
         try: self.llmclient.backend.history = lastc.backend.history
         except: raise Exception('[ERROR] BAD Mixin config: Check your mykey.py')
-        # Sync MixinSession internal routing when switching clients
-        if hasattr(self.llmclient, 'set_primary_by_name'):
-            try: self.llmclient.set_primary_by_name(self.llmclient.name)
-            except Exception as _e: print(f'[WARN] MixinRoute sync fail: {_e}')
         self.llmclient.last_tools = ''
         name = self.get_llm_name(model=True)
         if 'glm' in name or 'minimax' in name or 'kimi' in name: load_tool_schema('_cn')
@@ -146,44 +121,33 @@ class GeneraticAgent:
             display_queue.put({'done': smart_format(f"✅ session.{k} = {repr(v)}", max_str_len=500), 'source': 'system'})
             return None
         if raw_query.strip() == '/resume':
-            return r'用re.findall(r"<history>\\n\[(?:USER\|Agent)\].*?</history>", content, re.DOTALL) 扫temp/model_responses/下时间最近的10个文件(除本PID)，取每文件最后一个匹配(注意JSON里换行是字面\\n)作为该会话内容，按mtime倒序，每个用一句话总结聊了什么让我选择；选定后再简单读该文件末尾作为聊天基础'
+            return r'扫temp/model_responses/下时间最近的10个文件(除本PID)，读取每个文件content后先replace("\\n","\n").replace("\\r","\r")统一为真换行，再用re.findall(r"<history>\n\[(?:USER|Agent)\].*?</history>", content, re.DOTALL)提取，取每文件最后一个匹配作为该会话内容，按mtime倒序，每个用一句话总结聊了什么让我选择；选定后再简单读该文件末尾作为聊天基础'
         return raw_query
 
     def run(self):
         while True:
             task = self.task_queue.get()
             raw_query, source, images, display_queue = task["query"], task["source"], task.get("images") or [], task["output"]
+            raw_query = self._handle_slash_cmd(raw_query, display_queue)
+            if raw_query is None:
+                self.task_queue.task_done(); continue
             self.is_running = True
-            full_resp = ""
+            rquery = smart_format(raw_query.replace('\n', ' '), max_str_len=200)
+            self.history.append(f"[USER]: {rquery}")
+            
+            sys_prompt = get_system_prompt() + getattr(self.llmclient.backend, 'extra_sys_prompt', '')
+            handler = GenericAgentHandler(self, self.history, os.path.join(script_dir, 'temp'))
+            if self.handler and 'key_info' in self.handler.working: 
+                ki = re.sub(r'\n\[SYSTEM\] 此为.*?工作记忆[。\n]*', '', self.handler.working['key_info'])  # 去旧
+                handler.working['key_info'] = ki
+                handler.working['passed_sessions'] = ps = self.handler.working.get('passed_sessions', 0) + 1
+                if ps > 0: handler.working['key_info'] += f'\n[SYSTEM] 此为 {ps} 个对话前设置的key_info，若已在新任务，先更新或清除工作记忆。\n'
+            self.handler = handler
+            # although new handler, the **full** history is in llmclient, so it is full history!
+            gen = agent_runner_loop(self.llmclient, sys_prompt, raw_query, 
+                                handler, TOOLS_SCHEMA, max_turns=70, verbose=self.verbose)
             try:
-                raw_query = self._handle_slash_cmd(raw_query, display_queue)
-                if raw_query is None:
-                    continue
-
-                rquery = smart_format(raw_query.replace('\n', ' '), max_str_len=200)
-                self.history.append(f"[USER]: {rquery}")
-
-                sys_prompt = get_system_prompt() + getattr(self.llmclient.backend, 'extra_sys_prompt', '')
-                script_dir = os.path.dirname(os.path.abspath(__file__))
-                handler = GenericAgentHandler(self, self.history, os.path.join(script_dir, 'temp'))
-                if self.handler and 'key_info' in self.handler.working:
-                    ki = re.sub(r'\n\[SYSTEM\] 此为.*?工作记忆[。\n]*', '', self.handler.working['key_info'])  # 去旧
-                    handler.working['key_info'] = ki
-                    handler.working['passed_sessions'] = ps = self.handler.working.get('passed_sessions', 0) + 1
-                    if ps > 0: handler.working['key_info'] += f'\n[SYSTEM] 此为 {ps} 个对话前设置的key_info，若已在新任务，先更新或清除工作记忆。\n'
-                self.handler = handler
-                user_input = raw_query
-                if source == 'feishu' and len(self.history) > 1:   # 如果有历史记录且来自飞书，注入到首轮 user_input 中（支持/restore恢复上下文）
-                    user_input = handler._get_anchor_prompt() + f"\n\n### 用户当前消息\n{raw_query}"
-                initial_user_content = None
-                if images and isinstance(self.llmclient, NativeToolClient):
-                    initial_user_content = build_multimodal_user_content(user_input, images)
-                #if 'gpt' in self.get_llm_name(model=True): handler._done_hooks.append('请确定任务是否完成，如果完成请给出信息完整的简报回答，如未完成需要继续工具调用直到完成任务，确实需要问用户应使用ask_user工具')
-                # although new handler, the **full** history is in llmclient, so it is full history!
-                gen = agent_runner_loop(self.llmclient, sys_prompt, user_input,
-                                    handler, TOOLS_SCHEMA, max_turns=70, verbose=self.verbose,
-                                    initial_user_content=initial_user_content)
-                last_pos = 0
+                full_resp = ""; last_pos = 0
                 for chunk in gen:
                     if consume_file(self.task_dir, '_stop'): self.abort() 
                     if self.stop_sig: break

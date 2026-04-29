@@ -12,10 +12,6 @@
     *   **示例**：当前时间戳、临时 Session ID、正在运行的 PID、某个具体绝对路径、连接的设备信息
 4.  **最小充分指针 (Minimum Sufficient Pointer)**
     *   上层只留能定位下层的最短标识，多一词即冗余。
-5.  **写入前验证门控 (Pre-Write Verification Gate)**
-    *   **定义**：在所有记忆写入（L1/L2/L3 的创建或修改）之前，必须运行验证命令核查要写入的事项是否真实成立。
-    *   **操作**：使用 `scripts/verify_claims.py` 验证（优先），或手动 `file_read` 确认事实（`code_run` 仅限 verify_claims.py 不可用时）。写入后立即 `file_read` 确认修改生效。每次使用 verify_claims.py 前，先以 `from scripts.verify_claims import VerificationResult` 作为最小导入自检——导入失败则回退手动路径。
-    *   **红线**：未经验证的结论禁止写入记忆。违反此条的记忆修改视为无效且需回滚。
 ---
 ## 记忆层级架构
 ```
@@ -69,7 +65,8 @@ L4: ../memory/L4_raw_sessions/ (历史会话层 - scheduler反射自动收集，
 | L2/L3 修改值 | 若不影响场景定位则不动 L1 |
 | 发现通用避坑规律 | 压缩为一句加入 RULES |
 
-> **同步红线**：L1 只写关键词/名称，禁搬细节。需要评估L1中的token数和索引效用。
+> **同步红线**：L1 只写关键词/名称，禁搬细节。括号内只写场景触发词(2-4字)，禁写机制/方法/步骤。需要评估L1中的token数和索引效用。
+> 反例：❌ sop_name(场景A:方法1+方法2+方法3) → ✅ sop_name(场景A)
 
 ---
 ## 信息分类快速决策树

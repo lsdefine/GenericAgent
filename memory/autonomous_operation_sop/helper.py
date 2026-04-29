@@ -25,7 +25,6 @@ _REPORTS_DIR = _TEMP_DIR / "autonomous_reports"
 _HISTORY_FILE = _REPORTS_DIR / "history.txt"
 _TODO_FILE = _TEMP_DIR / "TODO.txt"
 
-
 def _next_report_number() -> int:
     """扫 history.txt 第一行提取最大 RXX 编号，返回下一个"""
     if not _HISTORY_FILE.exists():
@@ -41,11 +40,8 @@ def _next_report_number() -> int:
 
 def get_todo() -> str:
     """返回 TODO.txt 的内容。若文件不存在返回提示。"""
-    if not _TODO_FILE.exists():
-        return f"[autonomous_task] TODO.txt 不存在，路径: {_TODO_FILE}"
-    with open(_TODO_FILE, "r", encoding="utf-8") as f:
-        return f.read()
-
+    if not _TODO_FILE.exists(): return f"[autonomous_task] TODO.txt 不存在，路径: {_TODO_FILE}"
+    with open(_TODO_FILE, "r", encoding="utf-8") as f: return f.read()
 
 def get_history(n: int = 20) -> str:
     """返回 history.txt 的前 n 行（最新在前）。"""
@@ -67,12 +63,10 @@ def complete_task(taskname: str, historyline: str, report_path: str) -> str:
     1. 移动 report_path → autonomous_reports/R{XX}_{taskname}.md（自动编号）
     2. prepend historyline 到 history.txt（校验必须单行）
     3. 返回字符串指示 agent 自己去改 TODO
-
     Args:
         taskname: 任务简短名称（用于报告文件名，如 "晨间简报"）
         historyline: 历史记录内容（必须单行，日期自动添加，如 "工程 | 晨间简报 | 完成7模块聚合"）
         report_path: agent 已写好的报告文件路径（绝对或相对于cwd）
-
     Returns:
         成功消息 + 改TODO指令，或错误消息
     """
@@ -128,7 +122,7 @@ def complete_task(taskname: str, historyline: str, report_path: str) -> str:
     return (
         f"✅ 完成！报告已保存: {dest_name}\n"
         f"历史已记录: {line}\n"
-        f"👉 请在 {_TODO_FILE} 中将对应任务标记为 [x] R{rnum}"
+        f"👉 请在 {_TODO_FILE} 中将对应任务标记为 [x] R{rnum}，然后结束，**其他TODO下次再干**"
     )
 
 

@@ -11,7 +11,7 @@
 ⛔ **硬性规则（先读再做）**：
 
 - **主agent禁止直接执行环境探测**（必须委托subagent，无例外）
-- 主agent只做：创建目录、读SOP索引、启动subagent、读取结论
+- 主agent只做：创建目录、匹配SOP、启动subagent、读取结论
 - subagent只读探测，禁止修改任何文件、执行有副作用的操作
 - **探索subagent启动失败时：排查原因→重试，最多2次。禁止主agent回退为自己探测**
 
@@ -23,7 +23,7 @@
 ### 步骤1：创建目录（必做） + SOP匹配 + 设置plan标志（主agent直接做）
 
 1. 创建工作目录 `mkdir plan_XXX/`
-2. 读 `sop_index.md` 匹配可用领域SOP
+2. 从上下文中的 L1 Insight 索引匹配可用领域SOP
 3. 更新checkpoint：`[任务] XXX | [需求] 一句话 | [约束] 关键限制 | [匹配SOP] ... | [进度] 探索态`
 
 ### 步骤2：启动探索subagent（监察模式）

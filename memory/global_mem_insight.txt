@@ -1,4 +1,5 @@
 # [Global Memory Insight]
+代理: utils(PROXY) | 代理处理: ensure_proxy→test_proxy→get_proxy_dict | okz.exe(127.0.0.1:6789)
 搜索：WEB-SEARCH(L2→**Baidu/Tavily/Brave/Serper/Exa 已验证** | Jina✅免费端点 +API Key(10M tokens,402 时自动回退))
 浏览器特殊操作: tmwebdriver_sop(文件上传/图搜/PDF blob/物理坐标/HttpOnly Cookie/autofill突破/跨域iframe/CDP/跨tab)
 键鼠: ljqCtrl_sop(禁pyautogui/先activate) 截图/视觉: ocr/vision_sop | 禁全屏截图，优先窗口
@@ -8,8 +9,9 @@
 需要时read L2 或 ls ../memory/ 查L3
 L0(META-SOP): memory_management_sop
 L2: 飞书:lark-cli | (按section扩展)
-L3: verify_sop(事实验证闭环) | memory_cleanup_sop(记忆整理) | skill_search | web_search_sop(国内搜索方案) | deep_research_sop(多源深度研究) | ui_detect.py | ocr_utils.py | subagent | web_setup_sop | plan_sop 
-| procmem_scanner | keychain | ljqCtrl_sop+.py | tmwebdriver_sop | autonomous_operation_sop | scheduled_task_sop | vision_sop | adb_ui.py
+L3: verify_sop(事实验证闭环) | memory_cleanup_sop(记忆整理) | skill_search | web_search_sop | deep_research_sop | ui_detect.py | ocr_utils.py | subagent | web_setup_sop | plan_sop 
+| procmem_scanner | keychain | ljqCtrl_sop+.py | tmwebdriver_sop | autonomous_operation_sop | scheduled_task_sop | vision_sop | adb_ui.py | case0_audit(复盘)
+| web_extract_fallback_sop(提取回退)
 L4: L4_raw_sessions/
 
 [RULES]

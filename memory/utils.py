@@ -244,3 +244,53 @@ if __name__ == "__main__":
     for p in unsafe_tests:
         print(f"  {p}: {'✅拒绝' if not is_path_safe(p) else '❌应拒绝'}")
     print("\n=== R6模块加载成功 ===")
+
+
+# === RT5: 审计日志防篡改模块 ===
+def compute_file_hash(file_path: str) -> str:
+    """计算文件的SHA256哈希"""
+    import hashlib
+    with open(file_path, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()
+
+def store_integrity_hash(file_path: str, hash_dir: str = None) -> str:
+    """存储文件哈希到独立位置，返回哈希文件路径"""
+    import os
+    if hash_dir is None:
+        hash_dir = os.path.dirname(file_path)
+    hash_file = os.path.join(hash_dir, ".integrity_" + os.path.basename(file_path) + ".sha256")
+    sha256 = compute_file_hash(file_path)
+    with open(hash_file, "w") as f:
+        f.write(f"{os.path.basename(file_path)}|{sha256}")
+    return hash_file
+
+def verify_file_integrity(file_path: str, hash_dir: str = None) -> tuple:
+    """验证文件完整性，返回(is_valid, current_hash, stored_hash)"""
+    import os
+    if hash_dir is None:
+        hash_dir = os.path.dirname(file_path)
+    hash_file = os.path.join(hash_dir, ".integrity_" + os.path.basename(file_path) + ".sha256")
+    if not os.path.exists(hash_file):
+        return False, None, None
+    with open(hash_file, "r") as f:
+        stored = f.read().strip().split("|")[1]
+    current = compute_file_hash(file_path)
+    return current == stored, current, stored
+
+def audit_integrity_check() -> dict:
+    """检查所有受保护审计文件的完整性"""
+    import os
+    ga_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    audit_dir = os.path.join(ga_root, "memory", "audit")
+    protected = [
+        "capability_profile_v2.md",
+        "rt_regression_full.md",
+        "rt_regression_fix.md",
+    ]
+    results = {}
+    for fname in protected:
+        fpath = os.path.join(audit_dir, fname)
+        if os.path.exists(fpath):
+            ok, curr, stored = verify_file_integrity(fpath, audit_dir)
+            results[fname] = {"valid": ok, "current": (curr[:16] + "...") if curr else None, "stored": (stored[:16] + "...") if stored else None}
+    return results

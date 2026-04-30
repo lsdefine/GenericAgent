@@ -398,7 +398,9 @@ if sys.platform == 'darwin':
                     from AppKit import NSMenu, NSMenuItem, NSApp
 
                     menu = NSMenu.alloc().init()
-                    pet = self.window().delegate()  # Assuming the window’s delegate is MacPet instance
+                    pet = getattr(self, 'mac_pet', None) or self.window().delegate()
+                    if not pet:
+                        return
 
                     for skin_name in pet.available_skins:  # preload this in MacPet.__init__
                         item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
@@ -421,6 +423,7 @@ if sys.platform == 'darwin':
             self.content_view = DraggableImageView.alloc().initWithFrame_(
                 NSMakeRect(0, 0, self.display_width, self.display_height)
             )
+            self.content_view.mac_pet = self
             self.image_view = self.content_view.image_view
             self.overlay_view = self.content_view.overlay_view
             self.window.setContentView_(self.content_view)

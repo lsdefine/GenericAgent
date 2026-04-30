@@ -1,0 +1,94 @@
+# [Global Memory - L2]
+
+## [LARK-CLI]
+version: 1.0.19
+install: C:\nvm4w\nodejs\lark-cli.CMD (全局npm)
+appId: cli_a9671506d0b81cce | brand: feishu
+config_dir: ~/.lark-cli/
+user: 航乾倬 | openId: ou_c7c15dc671f7d494f3d46e94ae61ad93
+auth: user+bot 双身份可用 | scopes覆盖: IM/文档/日历/多维表格/任务/知识库/搜索/联系人/白板/云文档/Sheets
+usage_note: code_run调用需shell=True (.cmd文件); scopes详情可重查lark-cli auth status
+pitfall: API 404 = 飞书开放平台应用权限未开通(非CLI问题); bot身份不能查用户信息需指定--user-id
+
+## [EVERYTHING-CLI]
+install: C:\Program Files\Everything\es.exe (PATH已加入系统环境变量)
+service: Everything (需net start Everything; 服务STOPPED时es.exe搜索会超时挂死)
+version: es.exe 44KB | Everything.exe 从 voidtools
+
+## [WEB-SEARCH]
+verified_engines: Baidu ✅ | Tavily ✅ | Brave ✅ | Serper ✅ (X-API-KEY) | Exa ✅ | Jina ✅ (免费端点可用) | Jina Search ⚠️ (402 需充值)
+strategy: Local(Everything) -> Web(Baidu 中文/Tavily 英文/Brave 替代) -> 多源交叉验证 (Deep-Research 框架)
+default_web_search:
+  - 中文通用 -> Baidu (千帆直连，国内无需代理)
+  - 英文/AI 对话 -> Tavily (AI 摘要/语义理解)
+  - 替代方案 -> Brave (需 API Key), Serper (Google 结果，X-API-KEY), Exa (语义搜索)
+call_format:
+  - 统一入口：python ./scripts/search.py '{"engine": "baidu|tavily|brave|serper|exa|jina", "query": "...", "count": 5}'
+  - 独立脚本：./scripts/search_baidu.py, search_tavily.py, brave_search.py, serper_search.py, exa_search.py, jina_reader.py
+baidu-search: C:/Users/Administrator/.agents/skills/baidu-search/scripts/search.py | 中文/时间过滤 (pd/pw/pm/py)
+tavily-search: C:/Users/Administrator/.agents/skills/tavily-search/scripts/search.py | AI 摘要/语义理解
+verification: ./scripts/search_verification.py (--verbose/--json)
+pitfall: 
+  - Baidu 必须传 JSON 参数 (非-q); Tavily 接受纯文本或 JSON(不支持-q)
+  - Serper 使用 X-API-KEY 环境变量 (非 GOOGLE_SERPER_API_KEY)
+  - Jina Reader: 免费端点 https://r.jina.ai/http://<URL> 无需 Key; API Key(10M tokens) 有 402 限制，已实现自动回退免费端点
+  - deep-research 是编排框架，实际搜索依赖上述引擎
+
+## [GA-FSAPP]
+auto_start: start.bat 已添加 --feishu 参数，start_all.bat 启动时自动拉起飞书Bot
+single_instance: fsapp.py 已添加进程锁，启动时检测已有实例则自动退出防竞争
+launch_chain: start_all.bat → start.bat → launch.pyw --feishu → fsapp.py (via subprocess with CREATE_NO_WINDOW)
+
+## [D8-SECURITY-EVOLUTION]
+# 安全进化闭环：建设 → 攻击 → 发现漏洞 → 修复 → 验证
+path_traversal_test: memory/audit/rt_regression_full.md
+fix_verification: memory/audit/rt_regression_fix.md
+is_path_safe_impl: memory/utils.py (get_allowed_prefixes + realpath/normpath)
+current_score: D8=68/100 (经过真实攻击验证，比纸面规则更可靠)
+known_limits:
+  - RT3: 资源泄漏累积检测敏感度不足
+  - RT5: 审计日志缺乏防篡改保护
+# MINOR缺口，未来Case0复盘SOP中安排强化
+
+## [PROXY]
+config: memory/utils.py (代理处理通用模块)
+PROXY_HOST: 127.0.0.1:6789
+NO_PROXY: localhost,127.*,10.*,172.16-31.*,192.168.*
+functions:
+  - ensure_proxy() -> bool (检测/启动okz.exe，设置环境变量，测试连通性)
+  - test_proxy() -> bool (测试代理连通性)
+  - get_proxy_dict() -> dict (返回requests代理字典)
+  - is_process_running(process_name) -> bool
+  - is_internal_ip(ip) -> bool
+usage: from memory import utils; utils.ensure_proxy()
+pitfall: okz.exe进程需存在，否则启动失败；直连需设置NO_PROXY排除内网
+
+## [OCR/VISION]
+本地OCR: memory/ocr_utils.py (rapidocr-onnxruntime引擎, 中英文, ~1s/次, 带bbox)
+  - 函数: ocr_image(img_path) -> {'text': str, 'lines': list, 'details': list}
+  - 函数: ocr_window(hwnd) -> 同上 (解决RDP断开后截图全黑)
+  - 依赖: pip install rapidocr-onnxruntime
+视觉识别: memory/vision_api.py (已配置 MODELSCOPE_API_KEY, DEFAULT_BACKEND='modelscope')
+  - 函数: ask_vision(img_path, prompt, backend='modelscope', timeout=60) -> str
+  - 后端: modelscope(Qwen3-VL-235B, 已验证可用) | claude | openai
+  - 配置: MODELSCOPE_API_KEY 从 os.environ 读取
+使用规则: memory/vision_sop.md
+  - 🚫 禁止全屏截图，优先窗口截图（ljqCtrl）
+  - 优先级: 窗口标题/本地OCR(ocr_utils.py) > vision API（最后手段，省token）
+  - 前置: 必须先用 pygetwindow 枚举窗口，确认目标存在且激活
+pitfall: 
+  - rapidocr: result[i][2] conf是str不是float; 无文字时返回None非空列表
+  - RDP断开后: ImageGrab/mss截图全黑，必须用ocr_window(hwnd)
+  - vision_api: 初次构建时从vision_api.template.py复制，只改头部配置区
+
+## [CONSTITUTION 安全规则]
+# 以下规则为 [致命型] 约束，违反将导致系统不稳定或安全风险
+# R1-R5 沿用原有编号，新增 R6 目录操作安全
+# R6: 目录白名单 (2026-04-30 新增，来源: MiniCase-D 发现Admin权限风险)
+#   - 仅允许在白名单目录树内进行文件写入/读取操作
+#   - 白名单范围: cwd + memory + temp + scripts + logs 子目录
+#   - 禁止写入: C:\Windows, C:\Windows\System32, C:\Program Files 等系统目录
+#   - 禁止写入: HOME(Administrator) 桌面/文档以外的私人路径
+#   - 执行文件操作前必须校验路径: 调用 is_path_safe(path) 确认在白名单内
+#   - 工具层封装: memory/utils.py 已提供 is_path_safe() 函数可直接调用
+

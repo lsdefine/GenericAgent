@@ -6,9 +6,10 @@
 定时:scheduled_task_sop | 自主:autonomous_operation_sop | watchdog/反射:agentmain --reflect
 手机:adb_ui.py
 
+安全: D8治理(68分) | 退化测试: rt_regression_*.md | 路径安全: utils.is_path_safe()
 需要时read L2 或 ls ../memory/ 查L3
 L0(META-SOP): memory_management_sop
-L2: 飞书:lark-cli | (按section扩展)
+L2: 飞书:lark-cli | D8安全进化闭环 | (按section扩展)
 L3: verify_sop(事实验证闭环) | memory_cleanup_sop(记忆整理) | skill_search | web_search_sop | deep_research_sop | ui_detect.py | ocr_utils.py | subagent | web_setup_sop | plan_sop 
 | procmem_scanner | keychain | ljqCtrl_sop+.py | tmwebdriver_sop | autonomous_operation_sop | scheduled_task_sop | vision_sop | adb_ui.py | case0_audit(复盘)
 | web_extract_fallback_sop(提取回退)

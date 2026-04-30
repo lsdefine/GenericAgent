@@ -39,6 +39,13 @@ auto_start: start.bat 已添加 --feishu 参数，start_all.bat 启动时自动�
 single_instance: fsapp.py 已添加进程锁，启动时检测已有实例则自动退出防竞争
 launch_chain: start_all.bat → start.bat → launch.pyw --feishu → fsapp.py (via subprocess with CREATE_NO_WINDOW)
 
+## [SOP-L3 新集成]
+# 来源: Sophub (2026-04-30)
+deep_research_sop: memory/deep_research_sop.md (DAG规划框架)
+github_learning_sop: memory/github_learning_sop.md (项目分析方法)
+code_review_principles: memory/code_review_principles.md (代码质量标准)
+remote_deploy_sop: memory/remote_deploy_sop.md (SSH部署运维)
+
 ## [D8-SECURITY-EVOLUTION]
 # 安全进化闭环：建设 → 攻击 → 发现漏洞 → 修复 → 验证
 path_traversal_test: memory/audit/rt_regression_full.md

@@ -7,6 +7,14 @@ if sys.stderr is None: sys.stderr = open(os.devnull, "w")
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from agent_loop import BaseHandler, StepOutcome, json_default
+
+# === R6 目录白名单: 加载 is_path_safe 校验函数 ===
+try:
+    from memory.utils import is_path_safe
+    _R6_ENABLED = True
+except ImportError:
+    _R6_ENABLED = False
+    def is_path_safe(path): return True  # 降级兜底，不阻断
 script_dir = os.path.dirname(os.path.abspath(__file__))
 
 def code_run(code, code_type="python", timeout=60, cwd=None, code_cwd=None, stop_signal=[]):
@@ -352,6 +360,13 @@ class GenericAgentHandler(BaseHandler):
     
     def do_file_patch(self, args, response):
         path = self._get_abs_path(args.get("path", ""))
+        # === R6 目录白名单校验 ===
+        if _R6_ENABLED and not is_path_safe(path):
+            err_msg = (f"[R6拒绝] 路径不在白名单内: {path}\n"
+                       f"白名单范围: cwd + memory + temp + scripts + logs\n"
+                       f"如需授权请使用 ask_user 工具申请临时权限。")
+            yield f"[Status] ❌ 补丁被 R6 拦截\n"
+            return StepOutcome({"status": "error", "msg": err_msg}, next_prompt="\n")
         yield f"[Action] Patching file: {path}\n"
         old_content = args.get("old_content", "")
         new_content = args.get("new_content", "")
@@ -368,6 +383,13 @@ class GenericAgentHandler(BaseHandler):
         '''用于对整个文件的大量处理，精细修改要用file_patch。
         需要将要写入的内容放在<file_content>标签内，或者放在代码块中'''
         path = self._get_abs_path(args.get("path", ""))
+        # === R6 目录白名单校验 ===
+        if _R6_ENABLED and not is_path_safe(path):
+            err_msg = (f"[R6拒绝] 路径不在白名单内: {path}\n"
+                       f"白名单范围: cwd + memory + temp + scripts + logs\n"
+                       f"如需授权请使用 ask_user 工具申请临时权限。")
+            yield f"[Status] ❌ 写入被 R6 拦截\n"
+            return StepOutcome({"status": "error", "msg": err_msg}, next_prompt="\n")
         mode = args.get("mode", "overwrite")  # overwrite/append/prepend
         action_str = {"prepend": "Prepending to", "append": "Appending to"}.get(mode, "Overwriting")
         yield f"[Action] {action_str} file: {os.path.basename(path)}\n"
@@ -400,6 +422,13 @@ class GenericAgentHandler(BaseHandler):
     def do_file_read(self, args, response):
         '''读取文件内容。从第start行开始读取。如有keyword则返回第一个keyword(忽略大小写)周边内容'''
         path = self._get_abs_path(args.get("path", ""))
+        # === R6 目录白名单校验 ===
+        if _R6_ENABLED and not is_path_safe(path):
+            err_msg = (f"[R6拒绝] 路径不在白名单内: {path}\n"
+                       f"白名单范围: cwd + memory + temp + scripts + logs\n"
+                       f"如需授权请使用 ask_user 工具申请临时权限。")
+            yield f"[Status] ❌ 读取被 R6 拦截\n"
+            return StepOutcome({"status": "error", "msg": err_msg}, next_prompt="\n")
         yield f"\n[Action] Reading file: {path}\n"
         start = args.get("start", 1)
         count = args.get("count", 200)

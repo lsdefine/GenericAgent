@@ -32,7 +32,8 @@
     "description": "Create/overwrite/append files. HUGE edits ONLY. Content must in <file_content>...</file_content> in reply body BEFORE the file_write call (not args). Supports {{file:path:startLine:endLine}}, auto-expanded",
     "parameters": {"type": "object", "properties": {
       "path": {"type": "string", "description": "File path"},
-      "mode": {"type": "string", "enum": ["overwrite", "append", "prepend"], "description": "Write mode", "default": "overwrite"}}}
+      "mode": {"type": "string", "enum": ["overwrite", "append", "prepend"], "description": "Write mode", "default": "overwrite"},
+      "content": {"type": "string", "description": "[Optional fallback] Direct content. Used only when reply body has no <file_content> or trailing code block"}}}
   }},
   {"type": "function", "function": {
     "name": "web_scan",

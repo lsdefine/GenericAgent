@@ -374,13 +374,13 @@ class GenericAgentHandler(BaseHandler):
         yield f"[Action] {action_str} file: {os.path.basename(path)}\n"
 
         def extract_robust_content(text):
-            tag = re.search(r"<file_content[^>]*>(.*)</file_content>", text, re.DOTALL)
-            if tag: return tag.group(1).strip()
-            s, e = text.find("```"), text.rfind("```")
-            if -1 < s < e: return text[text.find("\n", s)+1 : e].strip()
+            tags = re.findall(r"<file_content[^>]*>(.*?)</file_content>", text, re.DOTALL)
+            if tags: return tags[-1].strip()
+            fences = re.findall(r"```[^\n`]*\n([\s\S]*?)```", text)
+            if fences: return fences[-1].strip()
             return None
-        
-        blocks = extract_robust_content(response.content)
+
+        blocks = args.get("content") or extract_robust_content(response.content)
         if not blocks:
             yield f"[Status] ❌ 失败: 未在回复中找到<file_content>代码块内容\n"
             return StepOutcome({"status": "error", "msg": "No content found. Put content inside <file_content>...</file_content> tags in your reply body before call file_write."}, next_prompt="\n")

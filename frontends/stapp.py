@@ -186,7 +186,19 @@ _js_ime_fix = ("" if os.name == 'nt' else
     "e.key==='Enter'&&!e.shiftKey&&(e.isComposing||c||e.keyCode===229)&&"
     "(e.stopImmediatePropagation(),e.preventDefault())},!0))})}"
     "f();new MutationObserver(f).observe(d.body,{childList:1,subtree:1})}()")
-_embed_html(f'<script>{_js_scroll_fix};{_js_ime_fix}</script>', height=0)
+_js_homeend_fix = (
+    "!function(){if(window.parent.__hef)return;window.parent.__hef=1;"
+    "var d=window.parent.document;"
+    "function f(){d.querySelectorAll('textarea[data-testid=stChatInputTextArea]')"
+    ".forEach(t=>{if(t.__hef)return;t.__hef=1;"
+    "t.addEventListener('keydown',e=>{"
+    "if(e.key==='Home'||e.key==='End'){"
+    "e.preventDefault();e.stopPropagation();"
+    "t.selectionStart=t.selectionEnd=(e.key==='Home')?0:t.value.length;"
+    "}},!0)})}"
+    "f();new MutationObserver(f).observe(d.body,{childList:1,subtree:1})}()"
+)
+_embed_html(f'<script>{_js_scroll_fix};{_js_ime_fix};{_js_homeend_fix}</script>', height=0)
 
 if prompt := st.chat_input("any task?"):
     ts = time.strftime("%Y-%m-%d %H:%M:%S")

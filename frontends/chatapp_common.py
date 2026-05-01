@@ -42,6 +42,15 @@ HISTORY_RE = re.compile(r"<history>\s*(.*?)\s*</history>", re.DOTALL)
 SUMMARY_RE = re.compile(r"<summary>\s*(.*?)\s*</summary>", re.DOTALL)
 
 
+def with_scheduled_context(text):
+    try:
+        from scheduled_context import recent_scheduled_context
+        ctx = recent_scheduled_context(PROJECT_ROOT)
+    except Exception:
+        ctx = ""
+    return f"{ctx}\n\n{text}" if ctx else text
+
+
 def clean_reply(text):
     for pat in TAG_PATS:
         text = re.sub(pat, "", text or "", flags=re.DOTALL)
@@ -307,7 +316,7 @@ class AgentChatMixin:
         self.user_tasks[chat_id] = state
         try:
             await self.send_text(chat_id, "思考中...", **ctx)
-            dq = self.agent.put_task(f"{FILE_HINT}\n\n{text}", source=self.source)
+            dq = self.agent.put_task(f"{FILE_HINT}\n\n{with_scheduled_context(text)}", source=self.source)
             last_ping = time.time()
             while state["running"]:
                 try:

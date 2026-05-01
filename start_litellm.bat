@@ -6,10 +6,22 @@ setlocal
 :: ⚠️ 直接设置完整路径，而非引用未定义变量
 set "PYTHON_EXE=%~dp0.venv\Scripts\python.exe"
 set "LITELLM_EXE=%~dp0.venv\Scripts\litellm.exe"
+set "LITELLM_LOG_DIR=%~dp0logs"
 
 set "LITELLM_PORT=8000"
 if "%GA_PROXY_MODE%"=="" set "GA_PROXY_MODE=auto"
 if "%GA_PROXY_URL%"=="" set "GA_PROXY_URL=http://127.0.0.1:6789"
+
+if not exist "%LITELLM_LOG_DIR%" mkdir "%LITELLM_LOG_DIR%" >nul 2>nul
+for /f "usebackq delims=" %%i in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-Date -Format 'yyyyMMdd_HHmmss_fff'"`) do set "GA_LOG_TS=%%i"
+set "LITELLM_STDOUT_LOG=%LITELLM_LOG_DIR%\litellm_proxy_%GA_LOG_TS%.out.log"
+set "LITELLM_STDERR_LOG=%LITELLM_LOG_DIR%\litellm_proxy_%GA_LOG_TS%.err.log"
+set "LEGACY_RUNTIME_LOG=%LITELLM_LOG_DIR%\litellm_proxy_runtime.log"
+set "LEGACY_ARCHIVE_LOG=%LITELLM_LOG_DIR%\litellm_proxy_runtime_legacy_%GA_LOG_TS%.log"
+if exist "%LEGACY_RUNTIME_LOG%" (
+  move /Y "%LEGACY_RUNTIME_LOG%" "%LEGACY_ARCHIVE_LOG%" >nul 2>nul
+  if exist "%LEGACY_ARCHIVE_LOG%" echo [INFO] Archived legacy runtime log: %LEGACY_ARCHIVE_LOG%
+)
 
 if not exist "%PYTHON_EXE%" (
   echo [ERROR] .venv not found. Please create virtual environment first.
@@ -66,7 +78,7 @@ if "%GA_PROXY_ACTIVE%"=="1" (
 
 set "PYTHONEXECUTABLE=%PYTHON_EXE%"
 
-for /f %%i in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "$root=(Resolve-Path '%~dp0').Path; $all=Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" -ErrorAction SilentlyContinue; $cnt=($all.Where({ $_.CommandLine -like '*-m litellm*' -and $_.CommandLine -like ('*' + $root + '*') })).Count; Write-Output $cnt"') do set "GA_LITELLM_COUNT=%%i"
+for /f %%i in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "$conn = Get-NetTCPConnection -LocalPort %LITELLM_PORT% -State Listen -ErrorAction SilentlyContinue; if ($conn) { 1 } else { 0 }"') do set "GA_LITELLM_COUNT=%%i"
 if not "%GA_LITELLM_COUNT%"=="0" (
   echo [INFO] LiteLLM process is already running for this workspace. Skipping duplicate startup.
   exit /b 0
@@ -90,7 +102,7 @@ if "%GA_PROXY_ACTIVE%"=="1" if exist "%PYTHON_EXE%" if exist "verify_copilot_mod
     echo [ERROR] Bootstrap LiteLLM failed to start.
     exit /b 1
   )
-  %PYTHON_EXE% verify_copilot_models.py --apply
+  %PYTHON_EXE% verify_copilot_models.py --apply --quiet >nul 2>nul
   if errorlevel 1 (
     echo [ERROR] Failed to refresh available Copilot models.
     powershell -NoProfile -ExecutionPolicy Bypass -Command "$conn = Get-NetTCPConnection -LocalPort %LITELLM_PORT% -State Listen -ErrorAction SilentlyContinue; if ($conn) { $conn | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue } }" >nul 2>nul
@@ -104,4 +116,20 @@ if not "%GA_PROXY_ACTIVE%"=="1" (
 )
 
 echo [INFO] Starting LiteLLM on port 8000 using .venv
-call "%LITELLM_EXE%" --config litellm_config.yaml --port %LITELLM_PORT%
+echo [INFO] Runtime stdout log: %LITELLM_STDOUT_LOG%
+echo [INFO] Runtime stderr log: %LITELLM_STDERR_LOG%
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -WindowStyle Hidden -FilePath '%LITELLM_EXE%' -ArgumentList '--config','litellm_config.yaml','--port','%LITELLM_PORT%' -RedirectStandardOutput '%LITELLM_STDOUT_LOG%' -RedirectStandardError '%LITELLM_STDERR_LOG%'"
+if errorlevel 1 (
+  echo [ERROR] Failed to launch LiteLLM background process.
+  exit /b 1
+)
+
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ready = $false; for ($i = 0; $i -lt 40; $i++) { try { $resp = Invoke-WebRequest -Uri 'http://127.0.0.1:%LITELLM_PORT%/v1/models' -TimeoutSec 2 -UseBasicParsing; if ($resp.StatusCode -eq 200) { $ready = $true; break } } catch {}; Start-Sleep -Milliseconds 500 }; if (-not $ready) { exit 1 }"
+if errorlevel 1 (
+  echo [ERROR] LiteLLM started but did not become ready in time.
+  echo [ERROR] Check logs: %LITELLM_STDOUT_LOG% and %LITELLM_STDERR_LOG%
+  exit /b 1
+)
+
+echo [INFO] LiteLLM is ready on http://127.0.0.1:%LITELLM_PORT%
+exit /b 0

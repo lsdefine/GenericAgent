@@ -1,33 +1,33 @@
 model_list:
   # OpenAI Models
-  - model_name: gpt-4
+  - model_name: gpt-5.4
     litellm_params:
-      model: github_copilot/gpt-4
+      model: github_copilot/gpt-5.4
       api_key: os.environ/GITHUB_COPILOT_TOKEN
       extra_headers:
-        Editor-Version: "vscode/1.85.1"
-        Editor-Plugin-Version: "copilot/1.155.0"
+        Editor-Version: "vscode/1.95.0"
+        Editor-Plugin-Version: "copilot-chat/0.26.7"
         Copilot-Integration-Id: "vscode-chat"
-        User-Agent: "GitHubCopilotChat/0.35.0"
+        User-Agent: "GitHubCopilotChat/0.26.7"
 
   # Anthropic Models
-  - model_name: claude-sonnet-4.5
+  - model_name: claude-sonnet-4.6
     litellm_params:
-      model: github_copilot/claude-sonnet-4.5
+      model: github_copilot/claude-sonnet-4.6
       api_key: os.environ/GITHUB_COPILOT_TOKEN
       extra_headers:
-        Editor-Version: "vscode/1.85.1"
-        Editor-Plugin-Version: "copilot/1.155.0"
+        Editor-Version: "vscode/1.95.0"
+        Editor-Plugin-Version: "copilot-chat/0.26.7"
         Copilot-Integration-Id: "vscode-chat"
-        User-Agent: "GitHubCopilotChat/0.35.0"
+        User-Agent: "GitHubCopilotChat/0.26.7"
 
   # Google Models
-  - model_name: gemini-2.5-pro
+  - model_name: gemini-3.1-pro-preview
     litellm_params:
-      model: github_copilot/gemini-2.5-pro
+      model: github_copilot/gemini-3.1-pro-preview
       api_key: os.environ/GITHUB_COPILOT_TOKEN
       extra_headers:
-        Editor-Version: "vscode/1.85.1"
-        Editor-Plugin-Version: "copilot/1.155.0"
+        Editor-Version: "vscode/1.95.0"
+        Editor-Plugin-Version: "copilot-chat/0.26.7"
         Copilot-Integration-Id: "vscode-chat"
-        User-Agent: "GitHubCopilotChat/0.35.0"
+        User-Agent: "GitHubCopilotChat/0.26.7"

@@ -9,6 +9,7 @@
 5. [配置方法（直连模式）](#配置方法直连模式)
 6. [常见问题](#常见问题)
 7. [可用模型列表](#可用模型列表)
+8. [推荐自测入口](#8-推荐自测入口)
 
 ---
 
@@ -117,7 +118,38 @@ native_oai_config_copilot = {
 # 或直接双击项目根目录下 start_litellm.bat
 ```
 
-### 步骤 4：启动 GenericAgent
+### 步骤 4：验证 Claude 长上下文路由（推荐）
+
+在启动 GenericAgent 之前，建议先运行仓库内置自测，确认本地 LiteLLM、自动路由和 Copilot Claude 映射都处于正常状态：
+
+```bash
+python verify_copilot_claude_route.py
+```
+
+该脚本会做 4 件事：
+
+1. 检查 `http://127.0.0.1:8000/v1/models` 是否包含当前预期模型
+2. 通过真实 AutoRoutingAgent 发送一条长上下文请求
+3. 校验路由是否命中 `copilot-claude`
+4. 校验底层实际执行模型是否为 `claude-sonnet-4.6`
+
+成功时输出中应至少包含：
+
+```json
+{
+  "route_selected_name": "copilot-claude",
+  "route_reason": "long_context",
+  "executed_backend_model": "claude-sonnet-4.6"
+}
+```
+
+如果你只想刷新可用模型映射，而不跑完整长上下文自测，可以使用：
+
+```bash
+python verify_copilot_models.py --apply --quiet
+```
+
+### 步骤 5：启动 GenericAgent
 
 ```bash
 python launch.pyw
@@ -205,7 +237,7 @@ set HTTPS_PROXY=http://127.0.0.1:6789
 ### Anthropic 模型
 | 模型名称 | litellm 格式 | 说明 |
 |----------|-------------|------|
-| `claude-sonnet-4.5` | `github_copilot/claude-sonnet-4.5` | 长上下文支持 |
+| `claude-sonnet-4.6` | `github_copilot/claude-sonnet-4.6` | 当前已实测可用的长上下文默认版本 |
 | `claude-opus-4.5` | `github_copilot/claude-opus-4.5` | 旗舰模型 |
 | `claude-opus-4.6` | `github_copilot/claude-opus-4.6` | 更新版本 |
 | `claude-opus-4.7` | `github_copilot/claude-opus-4.7` | 最新版本 |
@@ -247,7 +279,7 @@ model_list:
   
   - model_name: claude-sonnet
     litellm_params:
-      model: github_copilot/claude-sonnet-4.5
+      model: github_copilot/claude-sonnet-4.6
       api_key: gho_your_token_here
       extra_headers:
         Editor-Version: "vscode/1.85.1"
@@ -255,6 +287,27 @@ model_list:
         Copilot-Integration-Id: "vscode-chat"
         User-Agent: "GitHubCopilotChat/0.35.0"
 ```
+
+    ## 8. 推荐自测入口
+
+    当你怀疑模型版本回退、Copilot Token 失效、LiteLLM 配置漂移，或自动路由没有正确落到 Claude 长上下文时，优先运行：
+
+    ```bash
+    python verify_copilot_claude_route.py
+    ```
+
+    这条命令是当前仓库里最直接的端到端检查入口，覆盖：
+
+    - LiteLLM 本地代理是否可达
+    - 当前 `/v1/models` 是否仍包含 `gpt-5.4`、`claude-sonnet-4.6`、`gemini-3.1-pro-preview`
+    - 长上下文路由是否仍然选择 `copilot-claude`
+    - `copilot-claude` 背后是否仍实际执行 `claude-sonnet-4.6`
+
+    如果脚本退出码非 0，优先检查：
+
+    1. 先运行 `cmd /c start_litellm.bat` 确认本地代理已启动
+    2. 再运行 `python verify_copilot_models.py --apply --quiet` 刷新可用模型配置
+    3. 最后重新执行 `python verify_copilot_claude_route.py`
 
 ---
 

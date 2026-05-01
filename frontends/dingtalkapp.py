@@ -2,7 +2,7 @@ import asyncio, json, os, sys, threading, time
 import requests
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from agentmain import GeneraticAgent
+from agent_factory import create_agent
 from chatapp_common import AgentChatMixin, ensure_single_instance, public_access, redirect_log, require_runtime, split_text
 from llmcore import mykeys
 
@@ -13,7 +13,7 @@ except Exception:
     print("Please install dingtalk-stream to use DingTalk: pip install dingtalk-stream")
     sys.exit(1)
 
-agent = GeneraticAgent(); agent.verbose = False
+agent = create_agent(); agent.verbose = False
 CLIENT_ID = str(mykeys.get("dingtalk_client_id", "") or "").strip()
 CLIENT_SECRET = str(mykeys.get("dingtalk_client_secret", "") or "").strip()
 ALLOWED = {str(x).strip() for x in mykeys.get("dingtalk_allowed_users", []) if str(x).strip()}

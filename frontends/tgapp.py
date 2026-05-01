@@ -1,7 +1,7 @@
 import os, sys, re, threading, asyncio, queue as Q, time, random, uuid
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _TEMP_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'temp')
-from agentmain import GeneraticAgent
+from agent_factory import create_agent
 try:
     from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
     from telegram.constants import ChatType, MessageLimit, ParseMode
@@ -27,7 +27,7 @@ from chatapp_common import (
 from continue_cmd import handle_frontend_command, reset_conversation
 from llmcore import mykeys
 
-agent = GeneraticAgent()
+agent = create_agent()
 agent.verbose = False
 agent.inc_out = True
 ALLOWED = set(mykeys.get('tg_allowed_users', []))

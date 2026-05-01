@@ -35,7 +35,7 @@ _mutex_handle = check_single_instance()
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 os.chdir(PROJECT_ROOT)
-from agentmain import GeneraticAgent
+from agent_factory import create_agent
 from frontends.chatapp_common import format_restore
 from frontends.continue_cmd import handle_frontend_command as handle_continue_frontend, reset_conversation
 from llmcore import mykeys
@@ -268,7 +268,7 @@ ALLOWED_USERS = _to_allowed_set(mykeys.get("fs_allowed_users", []))
 PUBLIC_ACCESS = not ALLOWED_USERS or "*" in ALLOWED_USERS
 AGENT_TIMEOUT_SEC = 900
 
-agent = GeneraticAgent()
+agent = create_agent()
 threading.Thread(target=agent.run, daemon=True).start()
 client, user_tasks = None, {}
 

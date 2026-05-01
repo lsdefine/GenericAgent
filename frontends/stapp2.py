@@ -16,7 +16,7 @@ except (ImportError, AttributeError):
     from streamlit.components.v1 import html as _embed_html  # ≤1.55
 import time, json, re, threading, queue
 from datetime import datetime
-from agentmain import GeneraticAgent
+from agent_factory import create_agent
 
 st.set_page_config(page_title="Cowork", layout="wide")
 
@@ -799,7 +799,7 @@ ANTHROPIC_SELECTBOX_SCRIPT = """
 
 @st.cache_resource
 def init():
-    agent = GeneraticAgent()
+    agent = create_agent()
     if agent.llmclient is None:
         st.error("⚠️ 未配置任何可用的 LLM 接口，请在 mykey.py 中添加 sider_cookie 或 oai_apikey+oai_apibase 等信息后重启。")
         st.stop()

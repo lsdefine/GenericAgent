@@ -103,10 +103,38 @@ def debug_cwd():
     print(f"[DEBUG] 当前工作目录: {os.getcwd()}")
     print(f"[DEBUG] 脚本目录: {script_dir}")
 
+
+def run_auto_route_startup_guard():
+    heal_script = os.path.join(script_dir, "scripts", "auto_route_self_heal.py")
+    if not os.path.exists(heal_script):
+        print('[Launch] auto-route self-heal script not found, skip guard.')
+        return True
+
+    os.environ.setdefault("GA_AUTO_ROUTE_ALL_FRONTENDS", "1")
+
+    print('[Launch] Running auto-route self-heal...')
+    heal = subprocess.run([sys.executable, heal_script], cwd=script_dir)
+    if heal.returncode != 0:
+        print('[Launch] auto-route self-heal failed.')
+        return False
+
+    print('[Launch] Running auto-route guard test...')
+    guard = subprocess.run(
+        [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_frontend_agent_factory_guard.py"],
+        cwd=script_dir,
+    )
+    if guard.returncode != 0:
+        print('[Launch] auto-route guard test failed.')
+        return False
+
+    return True
+
 if __name__ == '__main__':
     _LOCK_SOCK = ensure_single_instance()
     if _LOCK_SOCK is None:
         sys.exit(0)
+    if not run_auto_route_startup_guard():
+        sys.exit(1)
     debug_cwd()
     import argparse
     parser = argparse.ArgumentParser()

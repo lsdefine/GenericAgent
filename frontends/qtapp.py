@@ -28,7 +28,7 @@ from PySide6.QtGui import (
 )
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from agentmain import GeneraticAgent
+from agent_factory import create_agent
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1970,7 +1970,7 @@ def main():
     app.setFont(font)
 
     # ── Agent initialisation ──────────────────────────────
-    agent = GeneraticAgent()
+    agent = create_agent()
     if agent.llmclient is None:
         QMessageBox.critical(
             None,

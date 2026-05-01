@@ -5,7 +5,7 @@ import requests, qrcode
 from Crypto.Cipher import AES
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _TEMP_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'temp')
-from agentmain import GeneraticAgent
+from agent_factory import create_agent
 
 # ── WxBotClient (inline from wx_bot_client.py) ──
 for _k in ('HTTPS_PROXY', 'https_proxy'):
@@ -252,7 +252,7 @@ def _dl_media(items):
             break  # one media per item
     return paths
 
-agent = GeneraticAgent()
+agent = create_agent()
 agent.verbose = False
 
 _TAG_PATS = [r'<' + t + r'>.*?</' + t + r'>' for t in ('thinking', 'tool_use')]

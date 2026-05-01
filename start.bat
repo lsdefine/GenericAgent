@@ -7,10 +7,24 @@ set "LITELLM_PORT=8000"
 
 if "%GA_PROXY_MODE%"=="" set "GA_PROXY_MODE=auto"
 if "%GA_PROXY_URL%"=="" set "GA_PROXY_URL=http://127.0.0.1:6789"
+if "%GA_AUTO_ROUTE_ALL_FRONTENDS%"=="" set "GA_AUTO_ROUTE_ALL_FRONTENDS=1"
 
 if not exist "%PYTHON_EXE%" (
 	echo [ERROR] .venv not found. Please create virtual environment first.
 	echo         python -m venv .venv
+	exit /b 1
+)
+
+echo [INFO] Auto-route self-check and self-heal...
+"%PYTHON_EXE%" scripts\auto_route_self_heal.py
+if errorlevel 1 (
+	echo [ERROR] Auto-route self-heal failed. Startup aborted.
+	exit /b 1
+)
+
+"%PYTHON_EXE%" -m unittest discover -s tests -p "test_frontend_agent_factory_guard.py"
+if errorlevel 1 (
+	echo [ERROR] Auto-route guard test failed after self-heal. Startup aborted.
 	exit /b 1
 )
 

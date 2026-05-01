@@ -1,0 +1,20 @@
+{
+  "enabled": true,
+  "default_model": "copilot-gpt4",
+  "route_targets": {
+    "multimodal": "copilot-gemini",
+    "long_context": "copilot-claude",
+    "coding": "copilot-gpt4",
+    "fast": "opencode-minimax"
+  },
+  "thresholds": {
+    "long_query_chars": 800,
+    "long_history_entries": 12
+  },
+  "path_detection": {
+    "enabled": true,
+    "image_exts": [".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".heic"],
+    "video_exts": [".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"],
+    "doc_exts": [".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx", ".txt", ".md"]
+  }
+}

@@ -4,10 +4,11 @@ import os
 
 mixin_config = {
     'llm_nos': [
-        'copilot-gpt4',              # 首选：已验证可用
-        'copilot-claude',            # 兜底：已验证可用
-        'copilot-gemini',            # 兜底：已验证可用
-        'dashscope-glm-5',           # 兜底：已验证可用
+        'opencode-minimax',
+        'copilot-gpt4',          
+        'copilot-claude',           
+        'copilot-gemini', 
+        'opencode-big-pickle',        
     ],
     'max_retries': 4,              # 两模型间轮询重试，避免长时间无效重试
     'base_delay': 0.5,             # 指数退避起始延迟
@@ -30,18 +31,6 @@ native_oai_config_opencode_big_pickle = {
     'apikey': os.environ.get('OPENCODE_API_KEY', ''),
     'apibase': 'https://opencode.ai/zen/v1',
     'model': 'big-pickle',
-    'api_mode': 'chat_completions',
-    'proxy': None,
-    'stream': True,
-}
-
-
-# GLM-5 - DashScope 兼容模式 API（直连，不走代理）
-native_oai_config_dashscope_glm_5 = {
-    'name': 'dashscope-glm-5',
-    'apikey': os.environ.get('DASHSCOPE_API_KEY', ''),
-    'apibase': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-    'model': 'glm-5',
     'api_mode': 'chat_completions',
     'proxy': None,
     'stream': True,
@@ -77,65 +66,6 @@ native_oai_config_copilot_gemini = {
     'stream': True,
 }
 
-# cliproxyapi Gemini3.1-Pro-Preview
-native_oai_config_cliproxyapi_Gemini_3_1_Pro_Preview = {  
-    'name': 'Gemini 3.1 Pro Preview',
-    'apikey': 'hGlReGWt12IwLjqJMfBa3CPu4kMM6FcTZJOePGUUDtc=',
-    'apibase': 'http://172.18.80.1:8317/v1',
-    'model': 'gemini-3.1-pro-preview',
-    'api_mode': 'chat_completions',
-    'stream': True,
-}
-
-# cliproxyapi Gemini 3.1 Flash Lite Preview
-native_oai_config_cliproxyapi_Gemini_3_1_Flash_Lite_Preview = {  
-    'name': 'Gemini 3.1 Flash Lite Preview',
-    'apikey': 'hGlReGWt12IwLjqJMfBa3CPu4kMM6FcTZJOePGUUDtc=',
-    'apibase': 'http://172.18.80.1:8317/v1',
-    'model': 'gemini-3.1-flash-lite-preview',
-    'api_mode': 'chat_completions',
-    'stream': True,
-}
-
-# cliproxyapi gemini-2.5-flash
-native_oai_config_cliproxyapi_gemini_2_5_flash = {  
-    'name': 'Gemini 2.5 Flash',
-    'apikey': 'hGlReGWt12IwLjqJMfBa3CPu4kMM6FcTZJOePGUUDtc=',
-    'apibase': 'http://172.18.80.1:8317/v1',
-    'model': 'gemini-2.5-flash',
-    'api_mode': 'chat_completions',
-    'stream': True,
-}
-
-# cliproxyapi gemini 2.5 flash lite
-native_oai_config_cliproxyapi_gemini_2_5_flash_lite = {  
-    'name': 'gemini 2.5 flash lite',
-    'apikey': 'hGlReGWt12IwLjqJMfBa3CPu4kMM6FcTZJOePGUUDtc=',
-    'apibase': 'http://172.18.80.1:8317/v1',
-    'model': 'gemini-2.5-flash-lite',
-    'api_mode': 'chat_completions',
-    'stream': True,
-}
-
-# cliproxyapi gemma 4 31b
-native_oai_config_cliproxyapi_gemma_4_31b = {  
-    'name': 'gemma 4 31b',
-    'apikey': 'hGlReGWt12IwLjqJMfBa3CPu4kMM6FcTZJOePGUUDtc=',
-    'apibase': 'http://172.18.80.1:8317/v1',
-    'model': 'gemma-4-31b',
-    'api_mode': 'chat_completions',
-    'stream': True,
-}
-
-# cliproxyapi gemma 4 26b
-native_oai_config_cliproxyapi_gemma_4_26b = {  
-    'name': 'gemma 4 26b',
-    'apikey': 'hGlReGWt12IwLjqJMfBa3CPu4kMM6FcTZJOePGUUDtc=',
-    'apibase': 'http://172.18.80.1:8317/v1',
-    'model': 'gemma-4-26b',
-    'api_mode': 'chat_completions',
-    'stream': True,
-}
 
 # ══════飞书配置══════════════════
 fs_app_id = 'cli_a9671506d0b81cce'

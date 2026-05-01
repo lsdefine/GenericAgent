@@ -16,7 +16,7 @@ class TurnContext(TypedDict, total=False):
 TurnHookFn = Callable[[TurnContext], None]
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from agentmain import GeneraticAgent
+from agent_factory import create_agent
 from chatapp_common import (AgentChatMixin, FILE_HINT, build_done_text, clean_reply,
                             ensure_single_instance, extract_files, public_access,
                             redirect_log, require_runtime, split_text, strip_files)
@@ -335,7 +335,7 @@ class WeComApp(AgentChatMixin):
 
 # ── Main ────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    agent = GeneraticAgent(); agent.verbose = False
+    agent = create_agent(); agent.verbose = False
     _LOCK = ensure_single_instance(PORT, "WeCom")
     require_runtime(agent, "WeCom", wecom_bot_id=BOT_ID, wecom_secret=SECRET)
     redirect_log(__file__, "wecomapp.log", "WeCom", ALLOWED)

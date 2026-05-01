@@ -14,18 +14,54 @@ sys.path.append(os.path.abspath(script_dir))
 import streamlit as st
 import time, json, re, threading, queue
 from agentmain import GeneraticAgent
+from auto_routing_agent import AutoRoutingAgent
 import chatapp_common  # activate /continue command (monkey patches GeneraticAgent)
 from continue_cmd import handle_frontend_command, reset_conversation, list_sessions, extract_ui_messages
 
 st.set_page_config(page_title="Cowork", layout="wide")
 
+AUTO_ROUTE_CONFIG_PATH = os.path.join(script_dir, '..', 'auto_route_config.json')
+
+
+def _format_route_status(status):
+    def _clip(value, max_len=72):
+        text = str(value or '-').replace('\n', ' ').replace('\r', ' ')
+        text = re.sub(r'\s+', ' ', text).strip()
+        if len(text) > max_len:
+            return text[:max_len - 3] + '...'
+        return text
+
+    if not status:
+        return '自动路由状态不可用'
+    last = status.get('last_route') or {}
+    blocked = status.get('blocked_targets') or {}
+    lines = [
+        f"auto_route: {'on' if status.get('auto_route_enabled') else 'off'}",
+        f"manual_override: {'on' if status.get('manual_override') else 'off'}",
+        f"effective_mode: {_clip(status.get('effective_mode'))}",
+        f"current_model: {_clip(status.get('current_model'))}",
+    ]
+    if last:
+        lines.append(f"last_reason: {_clip(last.get('reason'))}")
+        lines.append(f"last_selected: {_clip(last.get('selected_name'))}")
+        trigger = (last.get('details') or {}).get('trigger_source')
+        if trigger:
+            lines.append(f"trigger_source: {_clip(trigger)}")
+        if last.get('fallback_reason'):
+            lines.append(f"fallback: {_clip(last.get('fallback_reason'))}")
+    if blocked:
+        lines.append(f"blocked_targets: {len(blocked)}")
+    return '\n'.join(lines)
+
 @st.cache_resource
 def init():
-    agent = GeneraticAgent()
+    base_agent = GeneraticAgent()
+    agent = AutoRoutingAgent(base_agent=base_agent, config_path=AUTO_ROUTE_CONFIG_PATH)
     if agent.llmclient is None:
         st.error("⚠️ 未配置任何可用的 LLM 接口，请设置mykey.py。")
         st.stop()
-    else: threading.Thread(target=agent.run, daemon=True).start()
+    else:
+        threading.Thread(target=agent.base_agent.run, daemon=True).start()
     return agent
 
 agent = init()
@@ -37,13 +73,14 @@ st.session_state.setdefault('autonomous_enabled', False)
 @st.fragment
 def render_sidebar():
     st.session_state.setdefault('autonomous_enabled', False)
+    st.session_state.setdefault('auto_route_enabled_ui', True)
     llm_options = agent.list_llms()
     current_idx = agent.llm_no
     llm_labels = {idx: f"{idx}: {(name or '').strip()}" for idx, name, _ in llm_options}
     st.caption(f"LLM Core: {llm_labels.get(current_idx, str(current_idx))}", help="下拉切换备用链路")
     selected_idx = st.selectbox("备用链路", [idx for idx, _, _ in llm_options], index=next((i for i, (idx, _, _) in enumerate(llm_options) if idx == current_idx), 0), format_func=llm_labels.get, label_visibility="collapsed", key="sidebar_llm_select")
     if selected_idx != current_idx:
-        agent.next_llm(selected_idx); st.rerun(scope="fragment")
+        agent.next_llm(selected_idx); st.rerun()
     last_reply_time = st.session_state.get('last_reply_time', 0)
     if last_reply_time > 0:
         st.caption(f"空闲时间：{int(time.time()) - last_reply_time}秒", help="当超过30分钟未收到回复时，系统会自动任务")
@@ -57,6 +94,32 @@ def render_sidebar():
             agent.llmclient.backend.history.extend(tool_hist)
             st.toast(f"已重新注入工具，追加了 {len(tool_hist)} 条示范记录")
         except Exception as e: st.toast(f"注入工具示范失败: {e}")
+
+    st.divider()
+    route_status = agent.route_status() if hasattr(agent, 'route_status') else {}
+    auto_enabled = bool(route_status.get('auto_route_enabled'))
+    manual_locked = bool(route_status.get('manual_override'))
+    st.caption("自动路由", help="按任务特征自动选择模型；手动切换后会进入手动锁定")
+    if auto_enabled:
+        if st.button("关闭自动路由"):
+            agent.enable_auto_route(False)
+            st.toast("已关闭自动路由")
+            st.rerun()
+    else:
+        if st.button("开启自动路由", type="primary"):
+            agent.enable_auto_route(True, clear_manual_override=True)
+            st.toast("已开启自动路由")
+            st.rerun()
+    if manual_locked:
+        if st.button("解除手动锁定"):
+            agent.clear_manual_override()
+            st.toast("已解除手动锁定")
+            st.rerun()
+        st.caption("当前处于手动锁定：自动路由不会改写你手动选择的模型")
+    else:
+        st.caption("当前未锁定：自动路由可在请求前切换模型")
+    st.code(_format_route_status(route_status), language='text')
+
     if st.button("🐱 桌面宠物"):
         kwargs = {'creationflags': 0x08} if sys.platform == 'win32' else {}
         pet_script = os.path.join(script_dir, 'desktop_pet_v2.pyw')
@@ -135,7 +198,17 @@ def render_segments(segments, suffix=''):
 
 def agent_backend_stream(prompt):
     display_queue = agent.put_task(prompt, source="user")
-    response = ''
+    status = agent.route_status() if hasattr(agent, 'route_status') else {}
+    last = (status.get('last_route') or {}) if isinstance(status, dict) else {}
+    mode = status.get('effective_mode') if isinstance(status, dict) else None
+    selected = last.get('selected_name') or status.get('current_model')
+    reason = last.get('reason') or mode or 'unknown'
+    trigger = (last.get('details') or {}).get('trigger_source') if isinstance(last, dict) else None
+    if trigger:
+        route_line = f"[ROUTE] {mode or 'unknown'} -> {selected or 'unknown'} ({reason}; {trigger})"
+    else:
+        route_line = f"[ROUTE] {mode or 'unknown'} -> {selected or 'unknown'} ({reason})"
+    response = ""
     try:
         while True:
             try: item = display_queue.get(timeout=1)
@@ -143,9 +216,19 @@ def agent_backend_stream(prompt):
                 yield response   # heartbeat: let outer st.markdown() run → Streamlit checks StopException
                 continue
             if 'next' in item:
-                response = item['next']; yield response
+                response = item['next']
+                yield response
             if 'done' in item:
-                yield item['done']; break
+                # 回复最后一行加路由信息
+                done = item.get('done', '')
+                if done.endswith('\n'):
+                    response = done + route_line
+                elif done:
+                    response = done + '\n' + route_line
+                else:
+                    response = route_line
+                yield response
+                break
     finally: agent.abort()
 
 if "messages" not in st.session_state: st.session_state.messages = []
@@ -171,8 +254,8 @@ _js_scroll_fix = ("!function(){var p=window.parent;if(p.__sfx)return;p.__sfx=1;"
     "if(m.scrollHeight>b.scrollHeight+150){"
     "m.style.overflow='hidden';void m.offsetHeight;m.style.overflow=''}"
     "},3000)}()")
-# IME composition fix (macOS only) - prevents Enter from submitting during CJK input
-_js_ime_fix = ("" if os.name == 'nt' else
+# IME composition fix (cross-platform) - prevents Enter from submitting during CJK input
+_js_ime_fix = (
     "!function(){if(window.parent.__imeFix)return;window.parent.__imeFix=1;"
     "var d=window.parent.document,c=0;"
     "d.addEventListener('compositionstart',()=>c=1,!0);"
@@ -182,9 +265,25 @@ _js_ime_fix = ("" if os.name == 'nt' else
     "e.key==='Enter'&&!e.shiftKey&&(e.isComposing||c||e.keyCode===229)&&"
     "(e.stopImmediatePropagation(),e.preventDefault())},!0))})}"
     "f();new MutationObserver(f).observe(d.body,{childList:1,subtree:1})}()")
-_embed_html(f'<script>{_js_scroll_fix};{_js_ime_fix}</script>', height=0)
+
+# Draft guard: cache/restore unsent text to reduce occasional Enter-send loss.
+_js_draft_guard = (
+    "!function(){var p=window.parent,d=p.document;if(p.__gaDraftGuard)return;p.__gaDraftGuard=1;"
+    "var K='ga_chat_draft';"
+    "function ta(){return d.querySelector('textarea[data-testid=stChatInputTextArea]')}"
+    "function setV(el,v){var s=Object.getOwnPropertyDescriptor(p.HTMLTextAreaElement.prototype,'value').set;s.call(el,v);el.dispatchEvent(new Event('input',{bubbles:true}))}"
+    "function save(v){try{p.localStorage.setItem(K,v||'')}catch(e){}}"
+    "function restore(){var t=ta();if(!t||t.value)return;var v='';try{v=p.localStorage.getItem(K)||''}catch(e){}if(v)setV(t,v)}"
+    "function bind(){var t=ta();if(!t)return;if(!t.__gaDraftBind){t.__gaDraftBind=1;t.addEventListener('input',function(){save(t.value)},!0);"
+    "t.addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.shiftKey)save(t.value)},!0)}"
+    "var b=d.querySelector('[data-testid=stChatInputSubmitButton]');if(b&&!b.__gaDraftBind){b.__gaDraftBind=1;b.addEventListener('click',function(){var t2=ta();if(t2)save(t2.value)},!0)}"
+    "restore()}"
+    "bind();new MutationObserver(bind).observe(d.body,{childList:1,subtree:1});setInterval(restore,900)}()"
+)
+_embed_html(f'<script>{_js_scroll_fix};{_js_ime_fix};{_js_draft_guard}</script>', height=0)
 
 if prompt := st.chat_input("any task?"):
+    _embed_html("<script>try{window.parent.localStorage.removeItem('ga_chat_draft')}catch(e){}</script>", height=0)
     ts = time.strftime("%Y-%m-%d %H:%M:%S")
     cmd = (prompt or "").strip()
     def _reset_and_rerun():
@@ -213,6 +312,27 @@ if prompt := st.chat_input("any task?"):
         else:
             st.session_state.messages = list(st.session_state.messages) + \
                 [{"role": "user", "content": cmd, "time": ts}] + tail
+        _reset_and_rerun()
+    if cmd == '/route_status':
+        st.session_state.messages = list(st.session_state.messages) + [
+            {"role": "user", "content": cmd, "time": ts},
+            {"role": "assistant", "content": _format_route_status(agent.route_status()), "time": ts}
+        ]
+        _reset_and_rerun()
+    if cmd.startswith('/auto_route'):
+        parts = cmd.split()
+        if len(parts) != 2 or parts[1].lower() not in ('on', 'off'):
+            result = '用法: /auto_route on|off'
+        elif parts[1].lower() == 'on':
+            agent.enable_auto_route(True, clear_manual_override=True)
+            result = '✅ 自动路由已开启（并清除手动锁定）'
+        else:
+            agent.enable_auto_route(False)
+            result = '⏸️ 自动路由已关闭'
+        st.session_state.messages = list(st.session_state.messages) + [
+            {"role": "user", "content": cmd, "time": ts},
+            {"role": "assistant", "content": result, "time": ts}
+        ]
         _reset_and_rerun()
     st.session_state.messages.append({"role": "user", "content": prompt})
     if hasattr(agent, '_pet_req') and not prompt.startswith('/'): agent._pet_req('state=walk')

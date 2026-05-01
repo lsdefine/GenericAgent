@@ -2,7 +2,7 @@ import asyncio, os, sys, threading, time
 from collections import deque
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from agentmain import GeneraticAgent
+from agent_factory import create_agent
 from chatapp_common import AgentChatMixin, ensure_single_instance, public_access, redirect_log, require_runtime, split_text
 from llmcore import mykeys
 
@@ -13,7 +13,7 @@ except Exception:
     print("Please install qq-botpy to use QQ module: pip install qq-botpy")
     sys.exit(1)
 
-agent = GeneraticAgent(); agent.verbose = False
+agent = create_agent(); agent.verbose = False
 APP_ID = str(mykeys.get("qq_app_id", "") or "").strip()
 APP_SECRET = str(mykeys.get("qq_app_secret", "") or "").strip()
 ALLOWED = {str(x).strip() for x in mykeys.get("qq_allowed_users", []) if str(x).strip()}

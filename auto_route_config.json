@@ -1,11 +1,11 @@
 {
   "enabled": true,
-  "default_model": "copilot-gpt4",
+  "default_model": "copilot-free-gpt41",
   "route_targets": {
     "multimodal": "copilot-gemini",
     "long_context": "copilot-claude",
     "coding": "copilot-gpt4",
-    "fast": "opencode-minimax"
+    "fast": "copilot-haiku"
   },
   "thresholds": {
     "long_query_chars": 800,

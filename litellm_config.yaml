@@ -1,5 +1,66 @@
 model_list:
-  # OpenAI Models
+  # --- FREE models (0x multiplier, no premium request consumption) ---
+
+  # GPT-5 mini - free on paid plan, fast and capable
+  - model_name: gpt-5-mini
+    litellm_params:
+      model: github_copilot/gpt-5-mini
+      api_key: os.environ/GITHUB_COPILOT_TOKEN
+      extra_headers:
+        Editor-Version: "vscode/1.95.0"
+        Editor-Plugin-Version: "copilot-chat/0.26.7"
+        Copilot-Integration-Id: "vscode-chat"
+        User-Agent: "GitHubCopilotChat/0.26.7"
+
+  # GPT-4.1 - free on paid plan, solid general model
+  - model_name: gpt-4.1
+    litellm_params:
+      model: github_copilot/gpt-4.1
+      api_key: os.environ/GITHUB_COPILOT_TOKEN
+      extra_headers:
+        Editor-Version: "vscode/1.95.0"
+        Editor-Plugin-Version: "copilot-chat/0.26.7"
+        Copilot-Integration-Id: "vscode-chat"
+        User-Agent: "GitHubCopilotChat/0.26.7"
+
+  # GPT-4o - free on paid plan, multimodal fallback
+  - model_name: gpt-4o
+    litellm_params:
+      model: github_copilot/gpt-4o
+      api_key: os.environ/GITHUB_COPILOT_TOKEN
+      extra_headers:
+        Editor-Version: "vscode/1.95.0"
+        Editor-Plugin-Version: "copilot-chat/0.26.7"
+        Copilot-Integration-Id: "vscode-chat"
+        User-Agent: "GitHubCopilotChat/0.26.7"
+
+  # --- CHEAP models (0.33x multiplier) ---
+
+  # Claude Haiku 4.5 - 0.33x, fast Claude for lightweight tasks
+  - model_name: claude-haiku-4.5
+    litellm_params:
+      model: github_copilot/claude-haiku-4.5
+      api_key: os.environ/GITHUB_COPILOT_TOKEN
+      extra_headers:
+        Editor-Version: "vscode/1.95.0"
+        Editor-Plugin-Version: "copilot-chat/0.26.7"
+        Copilot-Integration-Id: "vscode-chat"
+        User-Agent: "GitHubCopilotChat/0.26.7"
+
+  # Gemini 3 Flash - 0.33x, fast Gemini for lightweight tasks
+  - model_name: gemini-3-flash-preview
+    litellm_params:
+      model: github_copilot/gemini-3-flash-preview
+      api_key: os.environ/GITHUB_COPILOT_TOKEN
+      extra_headers:
+        Editor-Version: "vscode/1.95.0"
+        Editor-Plugin-Version: "copilot-chat/0.26.7"
+        Copilot-Integration-Id: "vscode-chat"
+        User-Agent: "GitHubCopilotChat/0.26.7"
+
+  # --- STANDARD models (1x multiplier) ---
+
+  # GPT-5.4 - 1x, top OpenAI coding model
   - model_name: gpt-5.4
     litellm_params:
       model: github_copilot/gpt-5.4
@@ -10,7 +71,7 @@ model_list:
         Copilot-Integration-Id: "vscode-chat"
         User-Agent: "GitHubCopilotChat/0.26.7"
 
-  # Anthropic Models
+  # Claude Sonnet 4.6 - 1x, best Claude for long context & reasoning
   - model_name: claude-sonnet-4.6
     litellm_params:
       model: github_copilot/claude-sonnet-4.6
@@ -21,10 +82,32 @@ model_list:
         Copilot-Integration-Id: "vscode-chat"
         User-Agent: "GitHubCopilotChat/0.26.7"
 
-  # Google Models
+  # Gemini 3.1 Pro Preview - 1x, multimodal flagship
   - model_name: gemini-3.1-pro-preview
     litellm_params:
       model: github_copilot/gemini-3.1-pro-preview
+      api_key: os.environ/GITHUB_COPILOT_TOKEN
+      extra_headers:
+        Editor-Version: "vscode/1.95.0"
+        Editor-Plugin-Version: "copilot-chat/0.26.7"
+        Copilot-Integration-Id: "vscode-chat"
+        User-Agent: "GitHubCopilotChat/0.26.7"
+
+  # GPT-5.2 - 1x, alternative OpenAI model
+  - model_name: gpt-5.2
+    litellm_params:
+      model: github_copilot/gpt-5.2
+      api_key: os.environ/GITHUB_COPILOT_TOKEN
+      extra_headers:
+        Editor-Version: "vscode/1.95.0"
+        Editor-Plugin-Version: "copilot-chat/0.26.7"
+        Copilot-Integration-Id: "vscode-chat"
+        User-Agent: "GitHubCopilotChat/0.26.7"
+
+  # Gemini 2.5 Pro - 1x, alternative Gemini model
+  - model_name: gemini-2.5-pro
+    litellm_params:
+      model: github_copilot/gemini-2.5-pro
       api_key: os.environ/GITHUB_COPILOT_TOKEN
       extra_headers:
         Editor-Version: "vscode/1.95.0"

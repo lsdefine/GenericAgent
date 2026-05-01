@@ -93,26 +93,13 @@ if not exist "%LITELLM_EXE%" (
   )
 )
 
-if "%GA_PROXY_ACTIVE%"=="1" if exist "%PYTHON_EXE%" if exist "verify_copilot_models.py" (
-  echo [INFO] Proxy is active. Refreshing available Copilot models into config...
-  powershell -NoProfile -ExecutionPolicy Bypass -Command "$conn = Get-NetTCPConnection -LocalPort %LITELLM_PORT% -State Listen -ErrorAction SilentlyContinue; if ($conn) { $conn | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue } }" >nul 2>nul
-  powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -WindowStyle Hidden -FilePath '%LITELLM_EXE%' -ArgumentList '--config','litellm_config.yaml','--port','%LITELLM_PORT%'"
-  powershell -NoProfile -ExecutionPolicy Bypass -Command "$ready = $false; for ($i = 0; $i -lt 40; $i++) { try { $resp = Invoke-WebRequest -Uri 'http://127.0.0.1:%LITELLM_PORT%/v1/models' -TimeoutSec 2 -UseBasicParsing; if ($resp.StatusCode -eq 200) { $ready = $true; break } } catch {}; Start-Sleep -Milliseconds 500 }; if (-not $ready) { exit 1 }"
-  if errorlevel 1 (
-    echo [ERROR] Bootstrap LiteLLM failed to start.
-    exit /b 1
-  )
-  %PYTHON_EXE% verify_copilot_models.py --apply --quiet >nul 2>nul
-  if errorlevel 1 (
-    echo [ERROR] Failed to refresh available Copilot models.
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "$conn = Get-NetTCPConnection -LocalPort %LITELLM_PORT% -State Listen -ErrorAction SilentlyContinue; if ($conn) { $conn | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue } }" >nul 2>nul
-    exit /b 1
-  )
-  powershell -NoProfile -ExecutionPolicy Bypass -Command "$conn = Get-NetTCPConnection -LocalPort %LITELLM_PORT% -State Listen -ErrorAction SilentlyContinue; if ($conn) { $conn | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue } }" >nul 2>nul
-)
+:: Kill any stale LiteLLM process on this port before starting
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$conn = Get-NetTCPConnection -LocalPort %LITELLM_PORT% -State Listen -ErrorAction SilentlyContinue; if ($conn) { $conn | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue } }" >nul 2>nul
 
-if not "%GA_PROXY_ACTIVE%"=="1" (
-  echo [INFO] Proxy is not active. Skipping model refresh.
+if "%GA_PROXY_ACTIVE%"=="1" (
+  echo [INFO] Proxy is active. Starting LiteLLM with static multi-model config...
+) else (
+  echo [INFO] Proxy is not active. Starting LiteLLM with static multi-model config...
 )
 
 echo [INFO] Starting LiteLLM on port 8000 using .venv
@@ -124,7 +111,7 @@ if errorlevel 1 (
   exit /b 1
 )
 
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$ready = $false; for ($i = 0; $i -lt 40; $i++) { try { $resp = Invoke-WebRequest -Uri 'http://127.0.0.1:%LITELLM_PORT%/v1/models' -TimeoutSec 2 -UseBasicParsing; if ($resp.StatusCode -eq 200) { $ready = $true; break } } catch {}; Start-Sleep -Milliseconds 500 }; if (-not $ready) { exit 1 }"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ready = $false; for ($i = 0; $i -lt 80; $i++) { try { $resp = Invoke-WebRequest -Uri 'http://127.0.0.1:%LITELLM_PORT%/v1/models' -TimeoutSec 2 -UseBasicParsing; if ($resp.StatusCode -eq 200) { $ready = $true; break } } catch {}; Start-Sleep -Milliseconds 750 }; if (-not $ready) { exit 1 }"
 if errorlevel 1 (
   echo [ERROR] LiteLLM started but did not become ready in time.
   echo [ERROR] Check logs: %LITELLM_STDOUT_LOG% and %LITELLM_STDERR_LOG%

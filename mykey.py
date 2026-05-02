@@ -4,26 +4,28 @@ import os
 # 轮询顺序按额度成本排列：0x免费 → 0.33x低廉 → 1x标准 → 外部兜底
 # Copilot Pro 每月 300 premium requests，0x模型不消耗配额可无限使用
 
-mixin_config = {
-    'llm_nos': [
-        # 0x 免费（不消耗 premium requests）
-        'copilot-free',        # GPT-5 mini，快速通用
-        'copilot-free-gpt41',  # GPT-4.1，稳定通用
-        'copilot-free-gpt4o',  # GPT-4o，多模态备用
-        # 0.33x 低成本
-        'copilot-haiku',       # Claude Haiku 4.5，轻量任务
-        'copilot-flash',       # Gemini 3 Flash，轻量任务
-        # 1x 标准（用于复杂任务，受自动路由优先调度）
-        'copilot-gpt4',        # GPT-5.4，代码任务首选
-        'copilot-claude',      # Claude Sonnet 4.6，长上下文/推理首选
-        'copilot-gemini',      # Gemini 3.1 Pro，多模态首选
-        # 外部兜底
-        'opencode-minimax',
-        'opencode-big-pickle',
-    ],
-    'max_retries': 4,
-    'base_delay': 0.5,
-}
+# mixin_config = {
+#     'llm_nos': [
+#         # 0x 免费（不消耗 premium requests）
+#         'copilot-free',        # GPT-5 mini，快速通用
+#         'opencode-minimax',
+#         'copilot-free-gpt41',  # GPT-4.1，稳定通用
+#         'copilot-free-gpt4o',  # GPT-4o，多模态备用
+#         # 0.33x 低成本
+#         'copilot-haiku',       # Claude Haiku 4.5，轻量任务
+#         'copilot-flash',       # Gemini 3 Flash，轻量任务
+#         # 1x 标准（用于复杂任务，受自动路由优先调度）
+#         'copilot-gpt4',        # GPT-5.4，代码任务首选
+#         'copilot-claude',      # Claude Sonnet 4.6，长上下文/推理首选
+#         'copilot-gemini',      # Gemini 3.1 Pro，多模态首选
+#         'copilot-gpt52',
+#         'copilot-gemini25',
+#         # 外部兜底
+#         'opencode-big-pickle',
+#     ],
+#     'max_retries': 4,
+#     'base_delay': 0.5,
+# }
 
 # ── 外部模型（OpenCode） ──────────────────────────────────────────────────────
 

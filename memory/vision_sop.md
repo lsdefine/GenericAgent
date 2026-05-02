@@ -21,3 +21,15 @@ result = ask_vision(image, prompt="描述图片内容", backend="claude", timeou
 1. 复制 `memory/vision_api.template.py` → `memory/vision_api.py`
 2. 只改头部"用户配置区"：去 `mykey.py` 里扫描变量名（⚠️ 只看名字，禁止输出 apikey 值），尝试找能用配置名填入 `CLAUDE_CONFIG_KEY` / `OPENAI_CONFIG_KEY`，`DEFAULT_BACKEND` 选后端，并测试
 3. 保底：没有可用 config 时去 `https://modelscope.cn/my/myaccesstoken` 申请 token 填入 `MODELSCOPE_API_KEY`
+
+## ⚠️ 已知坑点
+
+### URL双重/v1问题
+- **现象**：API调用返回404 Not Found
+- **原因**：`native_oai_config`的apibase已含`/v1`（如`https://token-plan-cn.xiaomimimo.com/v1`），`vision_api.py`的`_call_openai_compat`函数又拼接了`/v1/chat/completions`，导致双重`/v1`
+- **修复**：检查apibase末尾是否已有`/v1`，若有则不再拼接
+- **验证**：已通过测试确认（2026-05-01）
+
+### ask_vision函数签名
+- **正确调用**：`ask_vision(image_input, prompt="描述图片内容")`
+- **注意**：第一个参数是图片路径，第二个是prompt（非反序）

@@ -59,6 +59,8 @@ web_execute_js script='{"cmd": "batch", "commands": [...]}'
   - 子命令会自动继承外层batch的tabId（如cookies命令可正确获取当前页面URL）
   - `$N.path`引用第N个结果字段(0-indexed)，如`"nodeId":"$2.root.nodeId"`
   - ⚠batch前序命令失败时，后续`$N`引用会静默变成undefined；要检查results数组中每项的ok状态
+  - ⚠**Runtime.evaluate返回的objectId在DOM域无效**（"Could not find object with given id"），文件上传必须走batch链式nodeId，不能先evaluate拿objectId再传给setFileInputFiles
+  - ⚠https页面fetch http://localhost会被CORS阻止，不能用fetch+DataTransfer绕过文件上传
   - 典型文件上传：getDocument(**depth:1**) → querySelector(`input[type=file]`) → setFileInputFiles
   - 思想：
     - 同一链路内保持nodeId来源一致，不混用querySelector路径与performSearch路径
@@ -120,3 +122,13 @@ web_scan失败时按序排查（自动检测优先，用户参与放最后）：
 ③扩展没装？→读Chrome用户目录下`Secure Preferences`→`extensions.settings`中找`path`含`tmwd_cdp_bridge`的条目
   找到→扩展已装，排查其他原因；没找到→走web_setup_sop
 ④以上都正常仍连不上→请求用户协助
+
+## 小红书(XHS)发布
+- **标题限制：≤20字**（含标点，超限点击发布会提示"标题最多输入20字哦~"不发布）
+- ⚠页面默认打开**视频tab**，需先点击"上传图文"切到图片模式（`span.title`文本匹配点击）
+- 标题input：`input.d-text[placeholder*="标题"]`，用原生setter+input/change事件
+- 正文编辑器：`.tiptap.ProseMirror[contenteditable="true"]`，用`execCommand('insertText')`填充（insertHTML也行）
+- 标签：直接追加在正文末尾`#标签`文本即可，编辑器自动识别
+- 图片上传：CDP batch `input[type=file][accept*='.jpg']` → `setFileInputFiles`，验证9张OK
+- 发布按钮：`button.bg-red`（textContent含"发布"），JS click已验证有效；如遇检测换CDP getBoxModel+Input.dispatchMouseEvent，成功页`.success-page`含"发布成功"
+- 内容JSON：key是`body`不是`content`（路径`creations/content/creation_*.json`）

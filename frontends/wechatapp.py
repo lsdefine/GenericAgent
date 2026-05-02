@@ -259,22 +259,29 @@ _TAG_PATS = [r'<' + t + r'>.*?</' + t + r'>' for t in ('thinking', 'tool_use')]
 _TAG_PATS.append(r'<file_content>.*?</file_content>')
 
 def _strip_md(t):
+    """Filter markdown for WeChat rich-text rendering.
+    WeChat natively renders: code fences, inline code, bold, italic,
+    H1-H4 headings, horizontal rules, tables. We only strip unsupported syntax."""
     def _trunc_code(m):
-        body = m.group().strip('`')
-        if '\n' not in body: return body
-        lines = body.split('\n', 1)[-1].split('\n')  # drop language line
-        if len(lines) > 10: return '\n'.join(lines[:10]) + '\n...'
-        return '\n'.join(lines)
+        full = m.group()
+        fence = re.match(r'`{3,}', full).group()
+        rest = full[len(fence):-len(fence)]
+        if '\n' not in rest: return full  # single-line, keep as-is
+        lang_line, _, body = rest.partition('\n')
+        lines = body.split('\n')
+        if len(lines) > 10:
+            return f'{fence}{lang_line}\n' + '\n'.join(lines[:10]) + '\n...\n' + fence
+        return full  # keep intact
     t = re.sub(r'(`{3,})[\s\S]*?\1', _trunc_code, t)
-    t = re.sub(r'`([^`]+)`', r'\1', t)
-    t = re.sub(r'!\[.*?\]\(.*?\)', '', t)
-    t = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', t)
-    t = re.sub(r'^#{1,6}\s+', '', t, flags=re.M)
-    t = re.sub(r'(\*{1,3})(.*?)\1', r'\2', t)
-    t = re.sub(r'^\s*[-*+]\s+', '• ', t, flags=re.M)
-    t = re.sub(r'^\s*\d+\.\s+', '', t, flags=re.M)
-    t = re.sub(r'^\s*>\s?', '', t, flags=re.M)
-    t = re.sub(r'^---+$', '', t, flags=re.M)
+    # inline code: keep (WeChat renders it)
+    # bold/italic (*/**/***): keep (WeChat renders it)
+    t = re.sub(r'!\[.*?\]\(.*?\)', '', t)                        # images: remove
+    t = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', t)              # links: text only
+    t = re.sub(r'^#{5,6}\s+', '', t, flags=re.M)                 # H5-H6: strip (H1-H4 kept)
+    t = re.sub(r'^\s*[-*+]\s+', '• ', t, flags=re.M)             # unordered list: bullet
+    t = re.sub(r'^\s*\d+\.\s+', '', t, flags=re.M)               # ordered list: strip num
+    t = re.sub(r'^\s*>\s?', '', t, flags=re.M)                   # blockquote: strip
+    # horizontal rules (---): keep (WeChat renders it)
     return re.sub(r'\n{3,}', '\n\n', t).strip()
 
 def _clean(t):

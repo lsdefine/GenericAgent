@@ -7,14 +7,6 @@ if sys.stderr is None: sys.stderr = open(os.devnull, "w")
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from agent_loop import BaseHandler, StepOutcome, json_default
-
-# === R6 目录白名单: 加载 is_path_safe 校验函数 ===
-try:
-    from memory.utils import is_path_safe
-    _R6_ENABLED = True
-except ImportError:
-    _R6_ENABLED = False
-    def is_path_safe(path): return True  # 降级兜底，不阻断
 script_dir = os.path.dirname(os.path.abspath(__file__))
 
 def code_run(code, code_type="python", timeout=60, cwd=None, code_cwd=None, stop_signal=[]):
@@ -83,6 +75,7 @@ def code_run(code, code_type="python", timeout=60, cwd=None, code_cwd=None, stop
         status_icon = "✅" if exit_code == 0 else "❌"
         if exit_code is None: status_icon = "⏳" 
         output_snippet = smart_format(stdout_str, max_str_len=600, omit_str='\n\n[omitted long output]\n\n')
+        output_snippet = re.sub(r'`{4,}', lambda m: m.group(0)[:3] + '\u200b' + m.group(0)[3:], output_snippet)
         yield f"[Status] {status_icon} Exit Code: {exit_code}\n[Stdout]\n{output_snippet}\n"
         if process.stdout: threading.Thread(target=process.stdout.close, daemon=True).start()
         return {
@@ -360,13 +353,6 @@ class GenericAgentHandler(BaseHandler):
     
     def do_file_patch(self, args, response):
         path = self._get_abs_path(args.get("path", ""))
-        # === R6 目录白名单校验 ===
-        if _R6_ENABLED and not is_path_safe(path):
-            err_msg = (f"[R6拒绝] 路径不在白名单内: {path}\n"
-                       f"白名单范围: cwd + memory + temp + scripts + logs\n"
-                       f"如需授权请使用 ask_user 工具申请临时权限。")
-            yield f"[Status] ❌ 补丁被 R6 拦截\n"
-            return StepOutcome({"status": "error", "msg": err_msg}, next_prompt="\n")
         yield f"[Action] Patching file: {path}\n"
         old_content = args.get("old_content", "")
         new_content = args.get("new_content", "")
@@ -383,22 +369,15 @@ class GenericAgentHandler(BaseHandler):
         '''用于对整个文件的大量处理，精细修改要用file_patch。
         需要将要写入的内容放在<file_content>标签内，或者放在代码块中'''
         path = self._get_abs_path(args.get("path", ""))
-        # === R6 目录白名单校验 ===
-        if _R6_ENABLED and not is_path_safe(path):
-            err_msg = (f"[R6拒绝] 路径不在白名单内: {path}\n"
-                       f"白名单范围: cwd + memory + temp + scripts + logs\n"
-                       f"如需授权请使用 ask_user 工具申请临时权限。")
-            yield f"[Status] ❌ 写入被 R6 拦截\n"
-            return StepOutcome({"status": "error", "msg": err_msg}, next_prompt="\n")
         mode = args.get("mode", "overwrite")  # overwrite/append/prepend
         action_str = {"prepend": "Prepending to", "append": "Appending to"}.get(mode, "Overwriting")
         yield f"[Action] {action_str} file: {os.path.basename(path)}\n"
 
         def extract_robust_content(text):
-            tag = re.search(r"<file_content[^>]*>(.*)</file_content>", text, re.DOTALL)
-            if tag: return tag.group(1).strip()
-            s, e = text.find("```"), text.rfind("```")
-            if -1 < s < e: return text[text.find("\n", s)+1 : e].strip()
+            tags = re.findall(r"<file_content[^>]*>(.*?)</file_content>", text, re.DOTALL)
+            if tags: return tags[-1].strip()
+            blocks = re.findall(r"```[^\n]*\n([\s\S]*?)```", text)
+            if blocks: return blocks[-1].strip()
             return None
         
         blocks = extract_robust_content(response.content)
@@ -422,13 +401,6 @@ class GenericAgentHandler(BaseHandler):
     def do_file_read(self, args, response):
         '''读取文件内容。从第start行开始读取。如有keyword则返回第一个keyword(忽略大小写)周边内容'''
         path = self._get_abs_path(args.get("path", ""))
-        # === R6 目录白名单校验 ===
-        if _R6_ENABLED and not is_path_safe(path):
-            err_msg = (f"[R6拒绝] 路径不在白名单内: {path}\n"
-                       f"白名单范围: cwd + memory + temp + scripts + logs\n"
-                       f"如需授权请使用 ask_user 工具申请临时权限。")
-            yield f"[Status] ❌ 读取被 R6 拦截\n"
-            return StepOutcome({"status": "error", "msg": err_msg}, next_prompt="\n")
         yield f"\n[Action] Reading file: {path}\n"
         start = args.get("start", 1)
         count = args.get("count", 200)
@@ -474,6 +446,8 @@ class GenericAgentHandler(BaseHandler):
         content = getattr(response, 'content', '') or ""
         thinking = getattr(response, 'thinking', '') or ""
         if not response or (not content.strip() and not thinking.strip()):
+            self._empty_ct = getattr(self, '_empty_ct', 0) + 1
+            if self._empty_ct >= 3: return StepOutcome({}, should_exit=True)
             yield "[Warn] LLM returned an empty response. Retrying...\n"
             return StepOutcome({}, next_prompt="[System] Blank response, regenerate and tooluse")
         if len(content) > 50 and ('[!!! 流异常中断' in content[-100:] or '!!!Error:' in content[-100:]):
@@ -534,10 +508,26 @@ class GenericAgentHandler(BaseHandler):
         else: result = "Memory Management SOP not found. Do not update memory."
         return StepOutcome(result, next_prompt=prompt)
 
+    def _fold_earlier(self, lines):
+        FALLBACK = '直接回答了用户问题'
+        parts, cnt, last = [], 0, ''
+        def flush():
+            if cnt:
+                if FALLBACK in last: parts.append(f'[Agent]（{cnt} turns）')
+                else: parts.append(f'{last}（{cnt} turns）')
+        for line in lines:
+            if line.startswith('[USER]'):
+                flush(); parts.append(line); cnt = 0; last = ''
+            else: cnt += 1; last = line
+        flush()
+        return "\n".join(parts[-150:])
+
     def _get_anchor_prompt(self, skip=False):
         if skip: return "\n"
-        h_str = "\n".join(self.history_info[-40:])
-        prompt = f"\n### [WORKING MEMORY]\n<history>\n{h_str}\n</history>"
+        h = self.history_info; W = 30
+        earlier = f'<earlier_context>\n{self._fold_earlier(h[:-W])}\n</earlier_context>\n' if len(h) > W else ""
+        h_str = "\n".join(h[-W:])
+        prompt = f"\n### [WORKING MEMORY]\n{earlier}<history>\n{h_str}\n</history>"
         prompt += f"\nCurrent turn: {self.current_turn}\n"
         if self.working.get('key_info'): prompt += f"\n<key_info>{self.working.get('key_info')}</key_info>"
         if self.working.get('related_sop'): prompt += f"\n有不清晰的地方请再次读取{self.working.get('related_sop')}"
@@ -555,16 +545,17 @@ class GenericAgentHandler(BaseHandler):
             clean_args = {k: v for k, v in args.items() if not k.startswith('_')}
             summary = f"调用工具{tool_name}, args: {clean_args}"
             if tool_name == 'no_tool': summary = "直接回答了用户问题"
-            next_prompt += "\n[DANGER] 你遗漏了<summary>，必须按协议一直在每次回复中用<summary>中输出极简单行摘要！" 
-        summary = smart_format(summary, max_str_len=100)
+            next_prompt += "\n[DANGER] 你遗漏了<summary>，必须按协议在每次回复中用<summary>中输出极简单行摘要" 
+        summary = smart_format(summary.replace('\n', ''), max_str_len=100)
         self.history_info.append(f'[Agent] {summary}')
-        if turn % 65 == 0 and 'plan' not in str(self.working.get('related_sop')):
+        _plan = self._in_plan_mode()
+        if turn % 65 == 0 and (not _plan):
             next_prompt += f"\n\n[DANGER] 已连续执行第 {turn} 轮。你必须总结情况进行ask_user，不允许继续重试。"
         elif turn % 7 == 0:
             next_prompt += f"\n\n[DANGER] 已连续执行第 {turn} 轮。禁止无效重试。若无有效进展，必须切换策略：1. 探测物理边界 2. 请求用户协助。如有需要，可调用 update_working_checkpoint 保存关键上下文。"
         elif turn % 10 == 0: next_prompt += get_global_memory()
 
-        if (_plan := self._in_plan_mode()) and turn >= 10 and turn % 5 == 0:
+        if _plan and turn >= 10 and turn % 5 == 0:
             next_prompt = f"[Plan Hint] 你正在计划模式。必须 file_read({_plan}) 确认当前步骤，回复开头引用：📌 当前步骤：...\n\n" + next_prompt
         if _plan and turn >= 90: next_prompt += f"\n\n[DANGER] Plan模式已运行 {turn} 轮，已达上限。必须 ask_user 汇报进度并确认是否继续。"
 
@@ -581,9 +572,9 @@ def get_global_memory():
         suffix = '_en' if os.environ.get('GA_LANG', '') == 'en' else ''
         with open(os.path.join(script_dir, 'memory/global_mem_insight.txt'), 'r', encoding='utf-8', errors='replace') as f: insight = f.read()
         with open(os.path.join(script_dir, f'assets/insight_fixed_structure{suffix}.txt'), 'r', encoding='utf-8') as f: structure = f.read()
-        prompt += f'cwd = {script_dir} (./)\n'
-        prompt += f"\n[Memory] (./memory)\n"
-        prompt += structure + '\n./memory/global_mem_insight.txt:\n'
+        prompt += f'cwd = {os.path.join(script_dir, "temp")} (./)\n'
+        prompt += f"\n[Memory] (../memory)\n"
+        prompt += structure + '\n../memory/global_mem_insight.txt:\n'
         prompt += insight + "\n"
     except FileNotFoundError: pass
     return prompt

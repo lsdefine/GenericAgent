@@ -44,11 +44,11 @@ class GeneraticAgent:
         os.makedirs(os.path.join(script_dir, 'temp'), exist_ok=True)
         self.lock = threading.Lock()
         self.task_dir = None
-        self.history = []
+        self.history = []; self.handler = None; 
         self.task_queue = queue.Queue() 
         self.is_running = False; self.stop_sig = False
-        self.llm_no = 0;  self.inc_out = False
-        self.handler = None; self.verbose = True
+        self.llm_no = 0;  self.inc_out = False; self.verbose = True
+        self.peer_hint = True
         self.load_llm_sessions()
 
     def load_llm_sessions(self):
@@ -162,6 +162,7 @@ class GeneraticAgent:
             self.history.append(f"[USER]: {rquery}")
             
             sys_prompt = get_system_prompt() + getattr(self.llmclient.backend, 'extra_sys_prompt', '')
+            if self.peer_hint: sys_prompt += f"\n[Peer] 用户提及其他会话/后台任务状态时: temp/model_responses/ (只找近期修改的文件尾部)\n"
             handler = GenericAgentHandler(self, self.history, os.path.join(script_dir, 'temp'))
             if self.handler and 'key_info' in self.handler.working: 
                 ki = re.sub(r'\n\[SYSTEM\] 此为.*?工作记忆[。\n]*', '', self.handler.working['key_info'])  # 去旧
@@ -226,6 +227,7 @@ if __name__ == '__main__':
     threading.Thread(target=agent.run, daemon=True).start()
 
     if args.task:
+        agent.peer_hint = False
         agent.task_dir = d = os.path.join(script_dir, f'temp/{args.task}'); nround = ''
         infile = os.path.join(d, 'input.txt')
         if args.input:
@@ -246,6 +248,7 @@ if __name__ == '__main__':
             else: break
             nround = nround + 1 if isinstance(nround, int) else 1
     elif args.reflect:
+        agent.peer_hint = False
         import importlib.util
         spec = importlib.util.spec_from_file_location('reflect_script', args.reflect)
         mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)

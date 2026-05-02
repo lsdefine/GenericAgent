@@ -37,7 +37,7 @@ def compress_history_tags(messages, keep_recent=10, max_len=800, force=False):
     if compress_history_tags._cd % 5 != 0: return messages
     _before = sum(len(json.dumps(m, ensure_ascii=False)) for m in messages)
     _pats = {tag: re.compile(rf'(<{tag}>)([\s\S]*?)(</{tag}>)') for tag in ('thinking', 'think', 'tool_use', 'tool_result')}
-    _hist_pat = re.compile(r'<(history|key_info)>[\s\S]*?</\1>')
+    _hist_pat = re.compile(r'<(history|key_info|earlier_context)>[\s\S]*?</\1>')
     def _trunc_str(s): return s[:max_len//2] + '\n...[Truncated]...\n' + s[-max_len//2:] if isinstance(s, str) and len(s) > max_len else s
     def _trunc(text):
         text = _hist_pat.sub(lambda m: f'<{m.group(1)}>[...]</{m.group(1)}>', text)
@@ -481,6 +481,7 @@ def _msgs_claude2oai(messages):
             if text_parts: m["content"] = text_parts
             else: m["content"] = ""
             if tool_calls: m["tool_calls"] = tool_calls
+            if not text_parts and not tool_calls and reasoning: m["content"] = "."
             result.append(m)
         elif role == "user":
             text_parts = []
@@ -953,6 +954,7 @@ class NativeToolClient:
         self.backend.system = combined
     def chat(self, messages, tools=None):
         if tools: self.backend.tools = tools
+        if not self.backend.history: self._pending_tool_ids = []
         combined_content = []; resp = None; tool_results = []
         for msg in messages:
             c = msg.get('content', '')

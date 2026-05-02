@@ -1,45 +1,12 @@
 import glob, json, os, queue as Q, re, sys, threading, time
 
-# ===== 进程锁：使用Windows Mutex防止多实例运行 =====
-import ctypes
-from ctypes import wintypes
-
-_MUTEX_NAME = "Global\\GenericAgent_fsapp_mutex"
-
-def check_single_instance():
-    """使用Windows命名互斥量防止多个fsapp.py实例运行"""
-    kernel32 = ctypes.windll.kernel32
-    
-    # 尝试创建命名互斥量
-    mutex = kernel32.CreateMutexW(None, True, _MUTEX_NAME)
-    error_code = kernel32.GetLastError()
-    
-    if error_code == 0:
-        # 成功创建，自己是第一个实例
-        print(f"[INFO] fsapp.py 互斥量创建成功，当前PID: {os.getpid()}")
-        return mutex
-    elif error_code == 183:  # ERROR_ALREADY_EXISTS
-        # 互斥量已存在，说明有另一个实例在运行
-        print(f"[INFO] 检测到已有fsapp.py实例在运行，当前实例将退出")
-        kernel32.CloseHandle(mutex)
-        sys.exit(0)
-    else:
-        # 其他错误
-        print(f"[WARN] 互斥量创建失败 (错误码: {error_code})，跳过实例检查")
-        return None
-
-# 保持互斥量句柄引用
-_mutex_handle = check_single_instance()
-# ===== 进程锁结束 =====
-
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 os.chdir(PROJECT_ROOT)
-from agent_factory import create_agent
+from agentmain import GeneraticAgent
 from frontends.chatapp_common import format_restore
 from frontends.continue_cmd import handle_frontend_command as handle_continue_frontend, reset_conversation
 from llmcore import mykeys
-from frontends.chat_logger import get_chat_logger
 
 import traceback
 import lark_oapi as lark
@@ -268,7 +235,7 @@ ALLOWED_USERS = _to_allowed_set(mykeys.get("fs_allowed_users", []))
 PUBLIC_ACCESS = not ALLOWED_USERS or "*" in ALLOWED_USERS
 AGENT_TIMEOUT_SEC = 900
 
-agent = create_agent()
+agent = GeneraticAgent()
 threading.Thread(target=agent.run, daemon=True).start()
 client, user_tasks = None, {}
 
@@ -301,13 +268,18 @@ def _send_raw(receive_id, payload, msg_type, rtype):
 
 
 def _patch_card(message_id, card_json):
+    return _patch_card_result(message_id, card_json)[0]
+
+
+def _patch_card_result(message_id, card_json):
     body = PatchMessageRequest.builder().message_id(message_id).request_body(
         PatchMessageRequestBody.builder().content(card_json).build()
     ).build()
     r = client.im.v1.message.patch(body)
     if not r.success():
         print(f"[ERROR] patch_card 失败: {r.code}, {r.msg}")
-    return r.success()
+    msg = f"{getattr(r, 'code', '')} {getattr(r, 'msg', '')}".lower()
+    return r.success(), ("230099" in msg or "11310" in msg or "element exceeds the limit" in msg)
 
 
 def send_message(receive_id, content, msg_type="text", use_card=False, receive_id_type="open_id"):
@@ -500,6 +472,7 @@ def _build_step_detail(resp, tool_calls):
 class _TaskCard:
     """飞书任务卡片：单卡片持续 patch；每步一个独立折叠面板（header 显示 summary，展开看详情）。"""
     _DETAIL_LIMIT = 8000
+    _FINAL_LIMIT = 6000
 
     def __init__(self, receive_id, rid_type):
         self.rid, self.rtype = receive_id, rid_type
@@ -507,6 +480,10 @@ class _TaskCard:
         self.status = "🤔 思考中..."
         self.final = None
         self.msg_id = None
+        self.page_no = 1
+        self.turn_no = 0
+        self.turn_base = 1
+        self.note = None
 
     def _step_panel(self, idx, summary, detail):
         detail = detail or "_(无输出)_"
@@ -519,8 +496,13 @@ class _TaskCard:
         }
 
     def _build(self):
-        els = [{"tag": "markdown", "content": f"**{self.status}**"}]
-        for i, (s, d) in enumerate(self.steps, 1):
+        header = f"**{self.status}**"
+        if self.page_no > 1:
+            header += f"\n\n📄 工作卡片 {self.page_no}"
+        els = [{"tag": "markdown", "content": header}]
+        if self.note:
+            els.append({"tag": "markdown", "content": self.note})
+        for i, (s, d) in enumerate(self.steps, self.turn_base):
             els.append(self._step_panel(i, s, d))
         if self.final:
             els += [{"tag": "hr"}, {"tag": "markdown", "content": self.final}]
@@ -529,9 +511,16 @@ class _TaskCard:
     def _push(self):
         card = self._build()
         if self.msg_id:
-            _patch_card(self.msg_id, card)
+            return _patch_card_result(self.msg_id, card)
         else:
             self.msg_id = _send_raw(self.rid, card, "interactive", self.rtype)
+            return bool(self.msg_id), False
+
+    def _rollover(self):
+        self.page_no += 1
+        self.msg_id = None
+        self.final = None
+        self.note = "⚠️ 上一张工作卡片达到飞书限制，本页继续展示后续进展。"
 
     # ── 公开接口 ──
 
@@ -539,31 +528,42 @@ class _TaskCard:
         self._push()
 
     def step(self, summary, detail=""):
-        self.steps.append((summary, detail))
-        self.status = f"⏳ 工作中 · Turn {len(self.steps)}"
-        self._push()
+        self.turn_no += 1
+        step = (summary, detail)
+        self.steps.append(step)
+        self.status = f"⏳ 工作中 · Turn {self.turn_no}"
+        ok, limit = self._push()
+        if limit:
+            self.steps.pop()
+            self._rollover()
+            self.turn_base = self.turn_no
+            self.steps = [step]
+            self._push()
 
     def done(self, text):
         self.status = "✅ 已完成"
-        self.final = text or "_(无文本输出)_"
-        self._push()
+        self.final = (text or "_(无文本输出)_")[:self._FINAL_LIMIT]
+        ok, limit = self._push()
+        if limit:
+            self._rollover()
+            self.steps = []
+            self.turn_base = self.turn_no + 1
+            self.final = (text or "_(无文本输出)_")[:self._FINAL_LIMIT]
+            self._push()
 
     def fail(self, msg):
         self.status = f"❌ {msg}"
         self._push()
 
 
-def _make_task_hook(card, done_event, on_final, open_id=None):
+def _make_task_hook(card, done_event, on_final):
     """飞书任务 hook：每轮 patch 卡片状态；结束触发 on_final(raw) 处理附件。"""
     def hook(ctx):
         try:
             if ctx.get('exit_reason'):
                 resp = ctx.get('response')
                 raw = resp.content if hasattr(resp, 'content') else str(resp)
-                ai_text = _display_text(raw)
-                card.done(ai_text)
-                try: get_chat_logger().save_message("feishu", open_id, None, ai_text)
-                except: pass
+                card.done(_display_text(raw))
                 on_final(raw)
                 done_event.set()
             elif ctx.get('summary'):
@@ -582,10 +582,6 @@ def handle_message(data):
         print(f"未授权用户: {open_id}")
         return
     user_input, image_paths = _build_user_message(message)
-    # 记录用户消息
-    try:
-        get_chat_logger().save_message("feishu", open_id, user_input)
-    except: pass
     if not user_input:
         if chat_id:
             send_message(chat_id, f"⚠️ 暂不支持处理此类飞书消息：{message.message_type}", receive_id_type="chat_id")
@@ -606,7 +602,7 @@ def handle_message(data):
         card.start()
         on_final = lambda raw: _send_generated_files(receive_id, raw, receive_id_type=rid_type)
         if not hasattr(agent, '_turn_end_hooks'): agent._turn_end_hooks = {}
-        agent._turn_end_hooks[hook_key] = _make_task_hook(card, done_event, on_final, open_id)
+        agent._turn_end_hooks[hook_key] = _make_task_hook(card, done_event, on_final)
         try:
             agent.put_task(user_input, source="feishu", images=image_paths)
             start = time.time()
@@ -654,9 +650,7 @@ def handle_command(open_id, cmd, chat_id=None):
             return _send_cmd_response("❌ 当前没有可用的 LLM 配置")
         if len(parts) > 1:
             try:
-                # 移除参数中的方括号支持 /llm [1] 或 /llm 1
-                num_str = parts[1].strip("[]")
-                agent.next_llm(int(num_str))
+                agent.next_llm(int(parts[1]))
                 return _send_cmd_response(f"✅ 已切换到 [{agent.llm_no}] {agent.get_llm_name()}")
             except Exception:
                 return _send_cmd_response(f"用法: /llm <0-{len(agent.list_llms()) - 1}>")

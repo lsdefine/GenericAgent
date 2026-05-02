@@ -66,6 +66,32 @@ class GeneraticAgent:
                 elif 'oai' in k: llm_sessions += [ToolClient(LLMSession(cfg=cfg))]
                 elif 'mixin' in k: llm_sessions += [{'mixin_cfg': cfg}]
             except: pass
+
+        # 默认只注册免费/白名单模型，避免自动路由意外使用到高成本模型。
+        # 若需要允许注册所有模型，请设置环境变量 `GA_ALLOW_NONFREE_MODELS=1`。
+        try:
+            allow_nonfree = os.environ.get('GA_ALLOW_NONFREE_MODELS', '').lower() in ('1', 'true', 'yes')
+        except:
+            allow_nonfree = False
+        if not allow_nonfree:
+            filtered = []
+            for s in llm_sessions:
+                try:
+                    if isinstance(s, dict):
+                        # keep mixin placeholder for later handling
+                        filtered.append(s); continue
+                    m = getattr(s.backend, 'model', '') or ''
+                    n = getattr(s.backend, 'name', '') or ''
+                    m = m.lower(); n = n.lower()
+                    # 允许注册的关键词（免费或外部免费替代）
+                    if any(k in m for k in ('gpt-5-mini', 'gpt-4.1', 'gpt-4o', 'minimax', 'big-pickle')) or any(k in n for k in ('copilot-free', 'opencode')):
+                        filtered.append(s)
+                    else:
+                        print(f"[Info] Skipping non-free model registration: model={m} name={n}")
+                except Exception:
+                    # 保守策略：若无法判断则跳过
+                    continue
+            llm_sessions = filtered
         for i, s in enumerate(llm_sessions):
             if isinstance(s, dict) and 'mixin_cfg' in s:
                 try:

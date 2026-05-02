@@ -1,0 +1,39 @@
+name: CI Matrix Tests
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        allow_nonfree: [ '0', '1' ]
+    env:
+      # GA_ALLOW_NONFREE_MODELS set per-matrix
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then python -m pip install -r requirements.txt; fi
+
+      - name: Run tests (matrix allow_nonfree=${{ matrix.allow_nonfree }})
+        env:
+          GA_ALLOW_NONFREE_MODELS: ${{ matrix.allow_nonfree }}
+        run: |
+          echo "GA_ALLOW_NONFREE_MODELS=${GA_ALLOW_NONFREE_MODELS}"
+          # Run strict router tests and full pytest
+          python test_router_strategy_strict.py
+          python -m pytest -q

@@ -18,6 +18,15 @@ class AutoRoutingAgent:
         self._auto_unlock_turns = 3  # 可配置，默认3轮自动解锁
         self._blocked_targets = {}
         self._invalid_model_pattern = re.compile(r'Invalid model name passed in model=([^\.\'\"\s]+)', re.IGNORECASE)
+        # 从 router 配置读取允许的自动路由白名单（优先），否则使用默认免费模型集合
+        cfg_allowed = self.router.config.get('allowed_free_models') if isinstance(self.router.config, dict) else None
+        if cfg_allowed and isinstance(cfg_allowed, (list, tuple)):
+            self._allowed_free_models = set(cfg_allowed)
+        else:
+            self._allowed_free_models = set([
+                'copilot-free', 'copilot-free-gpt41', 'copilot-free-gpt4o',
+                'opencode-minimax', 'opencode-big-pickle', 'copilot-free-gpt4o'
+            ])
 
     def __getattr__(self, name):
         return getattr(self.base_agent, name)
@@ -39,15 +48,31 @@ class AutoRoutingAgent:
             self._manual_override_turns = 0
 
     def _is_target_blocked(self, target_name):
-        return bool(target_name) and target_name in self._blocked_targets
+        if not target_name: return False
+        info = self._blocked_targets.get(target_name)
+        if not info: return False
+        exp = info.get('expires_at')
+        if exp and time.time() > exp:
+            # expired -> unblocked
+            try: del self._blocked_targets[target_name]
+            except: pass
+            return False
+        return True
 
     def _mark_target_blocked(self, target_name, reason):
         if not target_name:
             return
+        now = int(time.time())
+        # 不同原因可以设置不同的熔断时长
+        ttl = 300
+        if reason == 'invalid_model_name': ttl = 3600
+        if reason == 'quota_exhausted': ttl = 600
         self._blocked_targets[target_name] = {
             'reason': reason,
-            'at': int(time.time()),
+            'at': now,
+            'expires_at': now + ttl,
         }
+        print(f"[AutoRoute] Blocked target {target_name} for {ttl}s due to {reason}")
 
     def _record_execution_feedback(self, executed_target, done_text):
         text = str(done_text or '')
@@ -55,6 +80,12 @@ class AutoRoutingAgent:
             return
         if self._invalid_model_pattern.search(text):
             self._mark_target_blocked(executed_target, 'invalid_model_name')
+        # 检测来自 llmcore 的 HTTP 错误提示并做熔断处理
+        if 'HTTP 429' in text or 'HTTP 503' in text:
+            self._mark_target_blocked(executed_target, 'quota_exhausted')
+        if 'HTTP 400' in text or 'Bad Request' in text:
+            # 400 可能是参数/兼容性问题，短期屏蔽以避免循环重试
+            self._mark_target_blocked(executed_target, 'bad_request')
 
     def _wrap_queue_with_feedback(self, inner_queue, executed_target):
         if inner_queue is None:
@@ -84,6 +115,15 @@ class AutoRoutingAgent:
 
     def route_for_task(self, query, images=None):
         decision = self.router.route(query=query, images=images, history=getattr(self.base_agent, 'history', []))
+        # 白名单断言：如果路由决策返回的目标不在允许名单内，则阻止自动路由选取该目标
+        if decision and getattr(decision, 'target_name', None):
+            tname = decision.target_name
+            if tname and tname not in self._allowed_free_models:
+                print(f"[AutoRoute] Blocking non-free auto-target {tname} (not in allowed_free_models)")
+                # 置空以触发后续对 default 的回退
+                decision.target_name = None
+                # 记录 blocked_targets 以便观察
+                self._mark_target_blocked(tname, 'not_in_whitelist')
         mapping = self._name_to_index()
         default_name = self.router.config.get('default_model')
         route_targets = self.router.config.get('route_targets', {})

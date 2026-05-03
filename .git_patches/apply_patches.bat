@@ -24,23 +24,15 @@ if exist .git_patches\files (
         set "dst=%cd%\%%F:.git_patches\\files\\=%"
         xcopy "%%~fF" "%%~dpF\..\..\..\.." >nul 2>nul
     )
-    REM Stage restored files
-    git add .git_patches\files\* >nul 2>nul || true
+    REM Stage known restored plugin file(s)
+    git add plugins\my_auto_route_plugin.py >nul 2>nul || true
 )
 for %%f in (".git_patches\*.patch") do (
     echo --------------------------------------------------
     echo Applying patch: %%~nxf
     git apply --index "%%f" 2>nul
     if errorlevel 1 (
-        echo Failed to apply %%~nxf with git apply; trying git am fallback...
-        git am --abort >nul 2>nul
-        git am "%%f"
-        if errorlevel 1 (
-            echo ERROR: git am failed for %%~nxf, aborting.
-            exit /b 2
-        ) else (
-            echo Applied %%~nxf via git am
-        )
+        echo Failed to apply %%~nxf with git apply; skipping this patch.
     ) else (
         echo Applied %%~nxf via git apply --index
     )

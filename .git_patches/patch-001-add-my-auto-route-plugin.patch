@@ -1,0 +1,9 @@
+*** Begin Patch
+*** Add File: plugins/my_auto_route_plugin.py
++"""
++Auto-route plugin (migrated core logic).
++This file is managed as a patch in .git_patches so it can be re-applied after upstream updates.
++"""
++# Placeholder: the real plugin content is maintained in repo; this patch ensures the file exists
++
+*** End Patch

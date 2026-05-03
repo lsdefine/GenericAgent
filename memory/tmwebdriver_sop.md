@@ -130,5 +130,9 @@ web_scan失败时按序排查（自动检测优先，用户参与放最后）：
 - 正文编辑器：`.tiptap.ProseMirror[contenteditable="true"]`，用`execCommand('insertText')`填充（insertHTML也行）
 - 标签：直接追加在正文末尾`#标签`文本即可，编辑器自动识别
 - 图片上传：CDP batch `input[type=file][accept*='.jpg']` → `setFileInputFiles`，验证9张OK
-- 发布按钮：`button.bg-red`（textContent含"发布"），JS click已验证有效；如遇检测换CDP getBoxModel+Input.dispatchMouseEvent，成功页`.success-page`含"发布成功"
+- 发布按钮：`button.bg-red`（textContent含"发布"），JS click已验证有效；备用选择器`[...document.querySelectorAll('button')].find(b => b.textContent.includes('发布'))`
+- ⚠发布成功标志：URL含`published=true`即确认成功（比`.success-page`更可靠），发布后页面**重置到视频tab**，下一篇必须重新点击"上传图文"
+- ⚠标题原生setter：`Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set.call(input,val)`会报Illegal invocation，**去掉`window.`前缀**才行（CDP注入环境区别）
+- ⚠批量发布节奏：CDP上传图片后等3-4秒再填标题正文，否则图片未处理完会导致异常
+- ⚠**原创声明**：发布前必须点击「原创声明」勾选（用户偏好，必须执行）
 - 内容JSON：key是`body`不是`content`（路径`creations/content/creation_*.json`）

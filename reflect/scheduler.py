@@ -28,6 +28,7 @@ if not _logger.handlers:
 # 默认最大延迟窗口（小时），超过此时间不触发
 DEFAULT_MAX_DELAY = 6
 _l4_t = 0  # last L4 archive time
+_last_task_timeout = 2  # 默认超时(分钟)，check()会从任务JSON的timeout_minutes更新
 
 def _parse_cooldown(repeat):
     """解析repeat为冷却时间(比实际周期略短,防漂移)"""
@@ -49,9 +50,16 @@ def _parse_cooldown(repeat):
     return timedelta(hours=20)
 
 def _last_run(tid, done_files):
-    """找最近一次执行时间"""
+    """找最近一次执行时间，包括done文件和pending占位文件"""
     latest = None
     for df in done_files:
+        # 识别 .pending 占位文件（防止agentmain完成前重复触发）
+        if df.startswith('pending_') and df.endswith(f'_{tid}.pending'):
+            try:
+                t = datetime.strptime(df[len('pending_'):df.index('_', len('pending_')+1)], '%Y-%m-%d_%H%M')
+                if latest is None or t > latest: latest = t
+            except: continue
+            continue
         if not df.endswith(f'_{tid}.md'): continue
         try:
             t = datetime.strptime(df[:15], '%Y-%m-%d_%H%M')
@@ -121,7 +129,19 @@ def check():
                      f'last_run={last})')
         ts = now.strftime('%Y-%m-%d_%H%M')
         rpt = os.path.join(DONE, f'{ts}_{tid}.md')
+        
+        # 创建pending占位文件防止agentmain完成前重复触发
+        pending_file = os.path.join(DONE, f'pending_{ts}_{tid}.pending')
+        try:
+            with open(pending_file, 'w') as _pf:
+                _pf.write(f'pending at {ts}\n')
+        except Exception as e:
+            _logger.warning(f'Failed to create pending file: {e}')
+        
         prompt = task.get('prompt', '')
+        # 暴露timeout供agentmain读取（方案B）
+        global _last_task_timeout
+        _last_task_timeout = task.get('timeout_minutes', 2)
         return (f'[定时任务] {tid}\n'
                 f'[报告路径] {rpt}\n\n'
                 f'先读 scheduled_task_sop 了解执行流程，然后执行以下任务：\n\n'

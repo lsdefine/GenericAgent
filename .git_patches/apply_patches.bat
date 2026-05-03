@@ -24,8 +24,19 @@ if exist .git_patches\files (
         set "dst=%cd%\%%F:.git_patches\\files\\=%"
         xcopy "%%~fF" "%%~dpF\..\..\..\.." >nul 2>nul
     )
-    REM Stage known restored plugin file(s)
-    git add plugins\my_auto_route_plugin.py >nul 2>nul || true
+    REM Stage all restored files (iterate copied files and git add them)
+    for /r .git_patches\files %%F in (*) do (
+        set "dst=%%F"
+        setlocal enabledelayedexpansion
+        set "dst=!dst:.git_patches\\files\\=!"
+        endlocal & set "dst=%cd%\%dst%"
+        git add "%dst%" >nul 2>nul || rem ignore failures
+    )
+    REM If any staged changes, commit them as a single restore commit
+    git diff --cached --quiet 2>nul
+    if errorlevel 1 (
+        git commit -m "chore: restore files from .git_patches" >nul 2>nul || rem ignore
+    )
 )
 for %%f in (".git_patches\*.patch") do (
     echo --------------------------------------------------

@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Desktop Pet with HTTP Toast — ~90 lines"""
 import tkinter as tk, threading, random, os, sys
 from http.server import HTTPServer, BaseHTTPRequestHandler

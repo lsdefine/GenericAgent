@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # launcher.pyw - GenericAgent 服务启动器
 # 纯 tkinter + 标准库，零第三方依赖，跨平台
 import os, sys, socket, subprocess, threading

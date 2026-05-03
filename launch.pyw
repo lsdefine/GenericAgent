@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import webview, threading, subprocess, sys, time, os, ctypes, atexit, socket, random
 
 WINDOW_WIDTH, WINDOW_HEIGHT, RIGHT_PADDING, TOP_PADDING = 600, 900, 0, 100
@@ -13,8 +14,10 @@ def find_free_port(lo=18501, hi=18599):
     raise RuntimeError(f'No free port in {lo}-{hi}')
 
 def get_screen_width():
-    try: return ctypes.windll.user32.GetSystemMetrics(0)
-    except: return 1920
+    if os.name == 'nt':
+        try: return ctypes.windll.user32.GetSystemMetrics(0)
+        except: pass
+    return 1920
 
 def start_streamlit(port):
     global proc

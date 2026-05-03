@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Desktop Pet with Skin System — Cross-platform with True Transparency"""
 import os, re, sys, json, threading, io
 from http.server import HTTPServer, BaseHTTPRequestHandler

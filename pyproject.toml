@@ -17,12 +17,14 @@ dependencies = [
 
 [project.optional-dependencies]
 # select extras, not all. match current task/env.
-# examples: .[ui] for GUI, bot deps only if bot needed.
+# examples: pip install .[ui] for GUI, .[bots] for bot deps only.
 ui = [
     "streamlit>=1.28",
     "pywebview>=4.0",
+    "Pillow>=10.0",
+    "PySide6>=6.5",
 ]
-all-frontends = [
+bots = [
     "python-telegram-bot>=20.0",
     "qq-botpy>=1.0",
     "pycryptodome>=3.19",
@@ -30,6 +32,35 @@ all-frontends = [
     "lark-oapi>=1.0",
     "wecom-aibot-sdk>=1.0",
     "dingtalk-stream>=0.20",
+]
+ml = [
+    "ultralytics>=8.0",
+    "numpy>=1.24",
+    "yara-python>=4.2",
+    "rapidocr-onnxruntime>=1.3",
+    "opencv-python-headless>=4.8",
+]
+all = [
+    "streamlit>=1.28",
+    "pywebview>=4.0",
+    "Pillow>=10.0",
+    "PySide6>=6.5",
+    "python-telegram-bot>=20.0",
+    "qq-botpy>=1.0",
+    "pycryptodome>=3.19",
+    "qrcode>=7.4",
+    "lark-oapi>=1.0",
+    "wecom-aibot-sdk>=1.0",
+    "dingtalk-stream>=0.20",
+    "ultralytics>=8.0",
+    "numpy>=1.24",
+    "yara-python>=4.2",
+    "rapidocr-onnxruntime>=1.3",
+    "opencv-python-headless>=4.8",
+    "httpx>=0.25",
+    "APScheduler>=3.10",
+    "GitPython>=3.1",
+    "langfuse>=2.0",
 ]
 
 [build-system]

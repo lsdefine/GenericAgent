@@ -10,6 +10,23 @@ if not exist .git (
 )
 
 echo Applying patches from .git_patches\ ...
+REM First: restore any full-file backups under .git_patches\files
+if exist .git_patches\files (
+    echo Restoring files from .git_patches\files ...
+    for /r .git_patches\files %%F in (*) do (
+        set "src=%%~fF"
+        set "rel=%%~pF"
+        REM remove leading \ from rel and .git_patches\files\ prefix
+        set "rel=%%F:.git_patches\\files\\=%"
+        REM ensure destination directory exists
+        for %%I in ("%%~dpF") do set "d=%%~fI"
+        REM compute destination path
+        set "dst=%cd%\%%F:.git_patches\\files\\=%"
+        xcopy "%%~fF" "%%~dpF\..\..\..\.." >nul 2>nul
+    )
+    REM Stage restored files
+    git add .git_patches\files\* >nul 2>nul || true
+)
 for %%f in (".git_patches\*.patch") do (
     echo --------------------------------------------------
     echo Applying patch: %%~nxf

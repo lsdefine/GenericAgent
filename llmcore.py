@@ -24,6 +24,9 @@ def reload_mykeys():
     if mk.get('langfuse_config'):
         try: from plugins import langfuse_tracing
         except Exception: pass
+    for plugin_name in mk.get('my_plugins', []):
+        try: exec(f"from plugins import {plugin_name}")
+        except Exception as e: print(f'[Plugin] Failed to load {plugin_name}: {e}')
     return mk, True
 
 def __getattr__(name):  # once guard in PEP 562

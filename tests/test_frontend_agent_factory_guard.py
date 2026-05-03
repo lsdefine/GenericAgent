@@ -9,6 +9,7 @@ FRONTENDS_DIR = os.path.join(PROJECT_ROOT, 'frontends')
 # stapp has dedicated auto-routing wiring; chatapp_common intentionally patches GeneraticAgent.
 SKIP_FILES = {'stapp.py', 'chatapp_common.py'}
 TARGET_FILES = {
+    'dcapp.py',
     'dingtalkapp.py',
     'fsapp.py',
     'qqapp.py',

@@ -168,7 +168,9 @@ native_oai_config_copilot_gemini25 = {
 
 
 
-
+my_plugins = [
+    'my_auto_route_plugin',
+]
 
 
 # ══════飞书配置══════════════════

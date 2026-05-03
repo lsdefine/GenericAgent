@@ -7,7 +7,7 @@ import asyncio, os, re, sys, threading, time
 from collections import OrderedDict
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from agentmain import GeneraticAgent
+from agent_factory import create_agent
 from chatapp_common import (
     AgentChatMixin, build_done_text, ensure_single_instance, extract_files,
     public_access, redirect_log, require_runtime, split_text, strip_files, clean_reply,
@@ -20,7 +20,7 @@ except Exception:
     print("Please install discord.py to use Discord: pip install discord.py")
     sys.exit(1)
 
-agent = GeneraticAgent(); agent.verbose = False
+agent = create_agent(); agent.verbose = False
 BOT_TOKEN = str(mykeys.get("discord_bot_token", "") or "").strip()
 ALLOWED = {str(x).strip() for x in mykeys.get("discord_allowed_users", []) if str(x).strip()}
 USER_TASKS = {}

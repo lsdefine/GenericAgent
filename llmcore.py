@@ -681,6 +681,7 @@ class NativeClaudeSession(BaseSession):
         try:
             while True: yield next(gen)
         except StopIteration as e: content_blocks = e.value or []
+        if content_blocks and (_injected := _ensure_text_block(content_blocks)): yield _injected
         if content_blocks and not (len(content_blocks) == 1 and content_blocks[0].get("text", "").startswith("!!!Error:")):
             self.history.append({"role": "assistant", "content": content_blocks})
         text_parts = [b["text"] for b in content_blocks if b.get("type") == "text"]
@@ -851,6 +852,16 @@ def _parse_text_tool_calls(content):
         except: pass
     if tcs: content = re.sub(_xp, "", content, flags=re.DOTALL).strip()
     return tcs, content
+
+def _ensure_text_block(blocks):
+    """If response has thinking but no text block, inject a synthetic summary from thinking's first line."""
+    if any(b.get("type") == "text" for b in blocks): return None
+    th = next((b.get("thinking", "") for b in blocks if b.get("type") == "thinking"), "")
+    if not th: return None
+    line = th.strip().split('\n', 1)[0]
+    txt = "<summary>" + (line[:60] + '...' if len(line) > 60 else line) + "</summary>"
+    blocks.insert(1, {"type": "text", "text": txt})
+    return txt
 
 def _write_llm_log(label, content):
     log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'temp/model_responses')

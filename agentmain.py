@@ -147,7 +147,7 @@ class GeneraticAgent:
             display_queue.put({'done': smart_format(f"✅ session.{k} = {repr(v)}", max_str_len=500), 'source': 'system'})
             return None
         if raw_query.strip() == '/resume':
-            return r'扫temp/model_responses/下时间最近的10个文件(除本PID)，读取每个文件content后先replace("\\n","\n").replace("\\r","\r")统一为真换行，再用re.findall(r"<history>\n\[(?:USER|Agent)\].*?</history>", content, re.DOTALL)提取，取每文件最后一个匹配作为该会话内容，按mtime倒序，每个用一句话总结聊了什么让我选择；选定后再简单读该文件末尾作为聊天基础'
+            return r'帮我看看最近有哪些会话可以恢复。读model_responses/目录，按修改时间取最近10个文件，从每个文件里找最后一个<history>...</history>块，用一句话总结每个会话在聊什么，列表给我选。注意读文件后要把字面的\n替换成真换行才能正确匹配。'
         return raw_query
 
     def run(self):

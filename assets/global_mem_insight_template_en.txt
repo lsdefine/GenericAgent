@@ -1,15 +1,15 @@
 # [Global Memory Insight]
-Browser special ops: tmwebdriver_sop(file upload/image search/PDF blob/physical coords/HttpOnly Cookie/autofill bypass/cross-origin iframe/CDP/cross-tab)
-Keyboard & Mouse: ljqCtrl_sop(no pyautogui/activate first) Screenshot/Vision: ocr/vision_sop | No fullscreen capture, prefer window
-Scheduling: scheduled_task_sop | Autonomous: autonomous_operation_sop | watchdog/reflect: agentmain --reflect
-Mobile: adb_ui.py
-
 Read L2 or ls ../memory/ for L3 when needed
 L0(META-SOP): memory_management_sop
 L2: currently empty
 L3: memory_cleanup_sop(memory cleanup) | skill_search | ui_detect.py | ocr_utils.py | subagent | web_setup_sop | plan_sop 
 | procmem_scanner | keychain | ljqCtrl_sop+.py | tmwebdriver_sop | autonomous_operation_sop | scheduled_task_sop | vision_sop | adb_ui.py
-L4: L4_raw_sessions/
+L4: L4_raw_sessions/ historical sessions
+
+Browser special ops: tmwebdriver_sop(file upload/image search/PDF blob/physical coords/HttpOnly Cookie/autofill bypass/cross-origin iframe/CDP/cross-tab)
+Keyboard & Mouse: ljqCtrl_sop(no pyautogui/activate first) Screenshot/Vision: ocr/vision_sop | No fullscreen capture, prefer window
+Scheduling: scheduled_task_sop | Autonomous: autonomous_operation_sop | watchdog/reflect: agentmain --reflect
+Mobile: adb_ui.py
 
 [RULES]
 1. Search first: must use es for filename search (no PS recursion/no dir traversal), always prefer Google for web search (no duckduckgo etc), check cwd first, no guessing paths

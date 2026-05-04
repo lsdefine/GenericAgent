@@ -279,9 +279,6 @@ class TMWebDriver:
         return self.default_session_id  
     
     def jump(self, url, timeout=10): self.execute_js(f"window.location.href='{url}'", timeout=timeout)
-    def newtab(self, url=None):
-        if url is None: url = "http://www.baidu.com/robots.txt"
-        return self.execute_js(f'GM_openInTab("{url}");')
     
 if __name__ == "__main__":
     driver = TMWebDriver(host='127.0.0.1', port=18765)

@@ -119,7 +119,9 @@ def fold_turns(text):
                 title = matches[0].strip()
                 title = title.split('\n')[0]
                 if len(title) > 50: title = title[:50] + '...'
-            else: title = marker.strip('*')
+            else:
+                _plain = _c.strip().split('\n', 1)[0]
+                title = (_plain[:50] + '...') if len(_plain) > 50 else (_plain or marker.strip('*'))
             segments.append({'type': 'fold', 'title': title, 'content': content})
         else: segments.append({'type': 'text', 'content': marker + content})
     return segments

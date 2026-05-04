@@ -66,6 +66,25 @@ def _last_summary(pairs):
 def _preview_text(pairs):
     return _last_summary(pairs) or _first_user(pairs)
 
+def _recent_context(my_pid, n=5):
+    """扫描最近 n 个 model_response 文件（排除自身），提取 lastQ / lastA。"""
+    out = []
+    for f in sorted(glob.glob(_LOG_GLOB), key=os.path.getmtime, reverse=True):
+        m = re.search(r'model_responses_(\d+)', os.path.basename(f))
+        if not m or m.group(1) == str(my_pid): continue
+        try: c = open(f, encoding='utf-8', errors='ignore').read()
+        except Exception: continue
+        q = s = ""
+        for hm in re.finditer(r'<history>(.*?)</history>', c, re.DOTALL):
+            u = re.search(r'\[USER\]:\s*(.+?)(?:\\n|<)', hm.group(1))
+            if u: q = u.group(1)
+        sm = _SUMMARY_RE.search(c)
+        if sm: s = sm.group(1).strip()
+        q, s = q[:60].strip(), s[:60].replace('\n', ' ').strip()
+        out.append(f'· {m.group(1)} | lastQ: {q or "-"} | lastA: {s or "-"}')
+        if len(out) >= n: break
+    return ('[RecentContext] 近期并行会话（非当前）:\n' + '\n'.join(out) + '\n[/RecentContext]') if out else ""
+
 def _parse_native_history(pairs):
     history = []
     for p, r in pairs:

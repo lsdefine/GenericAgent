@@ -1,15 +1,15 @@
 # [Global Memory Insight]
-浏览器特殊操作: tmwebdriver_sop(文件上传/图搜/PDF blob/物理坐标/HttpOnly Cookie/autofill突破/跨域iframe/CDP/跨tab)
-键鼠: ljqCtrl_sop(禁pyautogui/先activate) 截图/视觉: ocr/vision_sop | 禁全屏截图，优先窗口
-定时:scheduled_task_sop | 自主:autonomous_operation_sop | watchdog/反射:agentmain --reflect
-手机:adb_ui.py
-
 需要时read L2 或 ls ../memory/ 查L3
 L0(META-SOP): memory_management_sop
 L2: 现空
 L3: memory_cleanup_sop(记忆整理) | skill_search | ui_detect.py | ocr_utils.py | subagent | web_setup_sop | plan_sop 
 | procmem_scanner | keychain | ljqCtrl_sop+.py | tmwebdriver_sop | autonomous_operation_sop | scheduled_task_sop | vision_sop | adb_ui.py
-L4: L4_raw_sessions/
+L4: L4_raw_sessions/ 历史会话
+
+浏览器特殊操作: tmwebdriver_sop(文件上传/图搜/PDF blob/物理坐标/HttpOnly Cookie/autofill突破/跨域iframe/CDP/跨tab)
+键鼠: ljqCtrl_sop(禁pyautogui/先activate) 截图/视觉: ocr/vision_sop | 禁全屏截图，优先窗口
+定时:scheduled_task_sop | 自主:autonomous_operation_sop | watchdog/反射:agentmain --reflect
+手机:adb_ui.py
 
 [RULES]
 1. 搜索先行: 搜文件名严禁不用es(禁PS递归/禁dir遍历), 搜索一定优先使用web工具的google(严禁duckduckgo等), 优先看cwd，禁猜路径

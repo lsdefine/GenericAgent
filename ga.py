@@ -371,31 +371,100 @@ class GenericAgentHandler(BaseHandler):
         path = self._get_abs_path(args.get("path", ""))
         mode = args.get("mode", "overwrite")  # overwrite/append/prepend
         action_str = {"prepend": "Prepending to", "append": "Appending to"}.get(mode, "Overwriting")
-        yield f"[Action] {action_str} file: {os.path.basename(path)}\n"
 
+        # --- Truncation-aware content extraction ---
         def extract_robust_content(text):
+            """Extract file content, tolerating truncated (unclosed) <file_content> tags."""
+            # 1. Normal closed tag
             tags = re.findall(r"<file_content[^>]*>(.*?)</file_content>", text, re.DOTALL)
-            if tags: return tags[-1].strip()
+            if tags: return tags[-1].strip(), False
+            # 2. Unclosed <file_content> — likely truncated
+            m = re.search(r"<file_content[^>]*>([\s\S]*)", text)
+            if m:
+                raw = m.group(1)
+                # Strip trailing truncation markers appended by llmcore
+                raw = re.sub(r'\s*\[!!! [^\]]*!!!\]\s*$', '', raw)
+                raw = re.sub(r'\s*!!!Error:[^\n]*$', '', raw)
+                return raw.rstrip(), True
+            # 3. Fallback: code block
             blocks = re.findall(r"```[^\n]*\n([\s\S]*?)```", text)
-            if blocks: return blocks[-1].strip()
-            return None
-        
-        blocks = extract_robust_content(response.content)
-        if not blocks:
+            if blocks: return blocks[-1].strip(), False
+            return None, False
+
+        # Check if this is a continuation of a previously truncated write
+        pending = self.working.get('_file_write_resume')
+        is_continuation = pending and pending.get('path') == path
+
+        if is_continuation:
+            mode = "append"  # force append for continuation
+            action_str = "Resuming write to"
+            yield f"[Action] {action_str} file: {os.path.basename(path)} (continuation #{pending.get('round', 1)})\n"
+        else:
+            yield f"[Action] {action_str} file: {os.path.basename(path)}\n"
+
+        content, was_truncated = extract_robust_content(response.content)
+        if not content:
             yield f"[Status] ❌ 失败: 未在回复中找到<file_content>代码块内容\n"
+            self.working.pop('_file_write_resume', None)
             return StepOutcome({"status": "error", "msg": "No content found. Put content inside <file_content>...</file_content> tags in your reply body before call file_write."}, next_prompt="\n")
+
         try:
-            new_content = expand_file_refs(blocks, base_dir=self.cwd)
-            if mode == "prepend":
+            new_content = expand_file_refs(content, base_dir=self.cwd)
+
+            # Overlap dedup for continuation: remove repeated prefix
+            if is_continuation and pending.get('tail'):
+                tail = pending['tail']
+                # Find longest overlap between stored tail and new content start
+                overlap_len = 0
+                check_len = min(len(tail), len(new_content), 200)
+                for k in range(check_len, 0, -1):
+                    if new_content[:k] == tail[-k:]:
+                        overlap_len = k; break
+                if overlap_len > 0:
+                    new_content = new_content[overlap_len:]
+                    yield f"[Info] Dedup: removed {overlap_len} overlapping chars\n"
+
+            # Write
+            if is_continuation:
+                with open(path, 'a', encoding="utf-8") as f: f.write(new_content)
+            elif mode == "prepend":
                 old = open(path, 'r', encoding="utf-8").read() if os.path.exists(path) else ""
                 open(path, 'w', encoding="utf-8").write(new_content + old)
             else:
                 with open(path, 'a' if mode == "append" else 'w', encoding="utf-8") as f: f.write(new_content)
-            yield f"[Status] ✅ {mode.capitalize()} 成功 ({len(new_content)} bytes)\n"
-            next_prompt = self._get_anchor_prompt(skip=args.get('_index', 0) > 0)
-            return StepOutcome({"status": "success", 'writed_bytes': len(new_content)}, next_prompt=next_prompt)
+
+            total_bytes = pending.get('total_bytes', 0) + len(new_content) if is_continuation else len(new_content)
+
+            if was_truncated:
+                round_no = (pending.get('round', 0) if is_continuation else 0) + 1
+                if round_no >= 8:
+                    yield f"[Status] ⚠️ 已续写 {round_no} 轮仍未完成，停止续写 (已写入 {total_bytes} bytes)\n"
+                    self.working.pop('_file_write_resume', None)
+                    return StepOutcome({"status": "partial", "writed_bytes": total_bytes, "msg": "Max continuation rounds reached"}, next_prompt="\n")
+
+                # Store tail for overlap dedup
+                tail_anchor = new_content[-80:] if len(new_content) >= 80 else new_content
+                self.working['_file_write_resume'] = {'path': path, 'round': round_no, 'total_bytes': total_bytes, 'tail': tail_anchor}
+                yield f"[Status] ⏳ 输出被截断，已写入 {len(new_content)} bytes (累计 {total_bytes})，自动请求续写...\n"
+                resume_prompt = (
+                    f"[System] file_write 输出因长度截断，已将已收到的内容写入 {path} ({total_bytes} bytes)。\n"
+                    f"请**立即**继续输出剩余文件内容。要求：\n"
+                    f"1. 从上次中断处继续（最后80字符为: `{tail_anchor[-60:]}`）\n"
+                    f"2. 内容放在 <file_content>...</file_content> 标签内\n"
+                    f"3. 再次调用 file_write 工具（path=\"{path}\"）\n"
+                    f"4. 禁止重复已写入内容，禁止输出任何解释文字，只输出续写内容和工具调用"
+                )
+                return StepOutcome({"status": "truncated_continuing", "writed_bytes": total_bytes, "round": round_no}, next_prompt=resume_prompt)
+            else:
+                # Completed successfully (or final continuation chunk)
+                self.working.pop('_file_write_resume', None)
+                rounds_info = f", {pending['round']+1} rounds" if is_continuation else ""
+                yield f"[Status] ✅ {('Overwrite' if not is_continuation else 'Write')} 成功 ({total_bytes} bytes{rounds_info})\n"
+                next_prompt = self._get_anchor_prompt(skip=args.get('_index', 0) > 0)
+                return StepOutcome({"status": "success", 'writed_bytes': total_bytes}, next_prompt=next_prompt)
         except Exception as e:
             yield f"[Status] ❌ 写入异常: {str(e)}\n"
+            self.working.pop('_file_write_resume', None)
             return StepOutcome({"status": "error", "msg": str(e)}, next_prompt="\n")
         
     def do_file_read(self, args, response):

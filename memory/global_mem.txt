@@ -45,6 +45,7 @@ deep_research_sop: memory/deep_research_sop.md (DAG规划框架)
 github_learning_sop: memory/github_learning_sop.md (项目分析方法)
 code_review_principles: memory/code_review_principles.md (代码质量标准)
 remote_deploy_sop: memory/remote_deploy_sop.md (SSH部署运维)
+sop_add_free_model_auto_route: memory/sop_add_free_model_auto_route.md (免费模型纳入自动路由/闭环验证SOP)
 
 ## [D8-SECURITY-EVOLUTION]
 # 安全进化闭环：建设 → 攻击 → 发现漏洞 → 修复 → 验证
@@ -99,3 +100,28 @@ pitfall:
 #   - 执行文件操作前必须校验路径: 调用 is_path_safe(path) 确认在白名单内
 #   - 工具层封装: memory/utils.py 已提供 is_path_safe() 函数可直接调用
 
+
+## [PATH-ARCHITECTURE] (2026-05-04 新增)
+# 根因: file工具相对路径基于 cwd=E:\AI\GenericAgent\temp 解析，
+# 而非项目根 E:\AI\GenericAgent\
+# 我的代码/脚本中的 __file__ 基于模块位置，与 file 工具行为独立
+# 两者均正确，但必须理解区分
+
+AGENT_ROOT: E:\AI\GenericAgent\
+CODE_ROOT:  E:\AI\GenericAgent\ (../)  
+cwd:       E:\AI\GenericAgent\temp\ (当前工作目录)
+memory:    E:\AI\GenericAgent\memory\ (../memory/)
+scripts:   E:\AI\GenericAgent\scripts\ (../scripts/)
+logs:      E:\AI\GenericAgent\logs\
+temp:      E:\AI\GenericAgent\temp\
+
+# 路径使用规则:
+# 1. file_read/write/patch: 相对路径基于 cwd（temp）解析，故 memory 入口用 ../memory/xxx
+# 2. Python脚本: 优先用 __file__ / pathlib.Path(__file__).parent 自动解析（基于模块位置）
+# 3. 绝对路径: 推荐使用 os.path.realpath() 或 os.path.abspath() 避免歧义
+# 4. 跨组件调用: 需要共享路径时，统一用 AGENT_ROOT 常量拼接
+# 5. 路径安全: 调用 memory/utils.py 的 is_path_safe() 做白名单校验
+# 6. 禁止: 禁止硬编码 E:\AI\GenericAgent\temp\memory\xxx（这是影子目录）
+# 7. 错误迁移: 若发现文件在 temp/memory/ 下，需迁移到 memory/ 并备份
+
+utils: scripts/resolve_path.py (resolve_path/realpath_safe/validate_path/write_with_backup)

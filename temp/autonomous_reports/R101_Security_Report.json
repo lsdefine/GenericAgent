@@ -1,0 +1,715 @@
+{
+  "findings": [
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/mykey.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "fs_app_secret = '8sc8UzAYrF6xqCIBbpI2EgzttGZWPbpK'"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/README.md",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "fs_app_secret = \"xxx\""
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/temp/model_responses/model_responses_24037.txt",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "[{'type': 'thinking', 'thinking': '\u4eceglobal_mem.txt\u4e2d\u627e\u5230\u4e86\u98de\u4e66\u53d1\u9001\u7684\u6d41\u7a0b\uff1a\\n\\n```\\n## [FEISHU_SEND]\\n- \u98de\u4e66API\u53d1\u9001: "
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/temp/model_responses/model_responses_24037.txt",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "[{'type': 'thinking', 'thinking': '\u7528\u6237\u8981\u56fe\u7247\uff0c\u4f46\u98de\u4e66API\u8c03\u7528\u5931\u8d25\u4e86\uff08token\u8fd4\u56deNone\uff09\u3002\u6211\u9700\u8981\uff1a\\n1. \u4fee\u590d\u98de\u4e66API\u8c03\u7528\u95ee\u9898\\n2. \u6216\u8005\u76f4\u63a5\u7528\u6d4f\u89c8\u5668\u5c55"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/temp/model_responses/model_responses_8664.txt",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "[{'type': 'thinking', 'thinking': '\u7528\u6237\u8981\u6c42\u628a\u56fe\u7247\u901a\u8fc7\u98de\u4e66\u53d1\u9001\u3002\u6839\u636e global_mem.txt (L25-31) \u7684 FEISHU_SEND \u90e8\u5206\uff0c\u6211\u77e5\u9053\uff1a\\n-"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/temp/model_responses/model_responses_8664.txt",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "[{'type': 'thinking', 'thinking': '\u7528\u6237\u8981\u6c42\u628a\u56fe\u7247\u901a\u8fc7\u98de\u4e66\u53d1\u9001\u3002\u6839\u636e global_mem.txt (L25-31) \u7684 FEISHU_SEND \u90e8\u5206\uff0c\u6211\u77e5\u9053\uff1a\\n-"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/Crypto/SelfTest/PublicKey/test_import_ECC.py",
+      "type": "Private Key",
+      "snippet": "mismatch = \"\"\"-----BEGIN PRIVATE KEY-----"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/Crypto/SelfTest/PublicKey/test_import_ECC.py",
+      "type": "Private Key",
+      "snippet": "pem1 = \"\"\"-----BEGIN EC PRIVATE KEY-----"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/Crypto/SelfTest/PublicKey/test_import_ECC.py",
+      "type": "Private Key",
+      "snippet": "pem2 = \"\"\"-----BEGIN EC PRIVATE KEY-----"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/Crypto/SelfTest/PublicKey/test_import_ECC.py",
+      "type": "Private Key",
+      "snippet": "pem1 = \"\"\"-----BEGIN EC PRIVATE KEY-----"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/Crypto/SelfTest/PublicKey/test_import_ECC.py",
+      "type": "Private Key",
+      "snippet": "pem2 = \"\"\"-----BEGIN EC PRIVATE KEY-----"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/Crypto/SelfTest/PublicKey/test_import_ECC.py",
+      "type": "Private Key",
+      "snippet": "pem1 = \"\"\"-----BEGIN EC PRIVATE KEY-----"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/Crypto/SelfTest/PublicKey/test_import_ECC.py",
+      "type": "Private Key",
+      "snippet": "pem2 = \"\"\"-----BEGIN EC PRIVATE KEY-----"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/Crypto/SelfTest/PublicKey/test_import_ECC.py",
+      "type": "Private Key",
+      "snippet": "pem1 = \"\"\"-----BEGIN EC PRIVATE KEY-----"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/Crypto/SelfTest/PublicKey/test_import_ECC.py",
+      "type": "Private Key",
+      "snippet": "pem2 = \"\"\"-----BEGIN EC PRIVATE KEY-----"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/Crypto/SelfTest/PublicKey/test_import_ECC.py",
+      "type": "Private Key",
+      "snippet": "pem1 = \"\"\"-----BEGIN EC PRIVATE KEY-----"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/Crypto/SelfTest/PublicKey/test_import_ECC.py",
+      "type": "Private Key",
+      "snippet": "pem2 = \"\"\"-----BEGIN EC PRIVATE KEY-----"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/Crypto/SelfTest/PublicKey/test_import_RSA.py",
+      "type": "Private Key",
+      "snippet": "rsaKeyPEM = u'''-----BEGIN RSA PRIVATE KEY-----"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/Crypto/SelfTest/PublicKey/test_import_RSA.py",
+      "type": "Private Key",
+      "snippet": "rsaKeyPEM8 = u'''-----BEGIN PRIVATE KEY-----"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/Crypto/SelfTest/PublicKey/test_import_RSA.py",
+      "type": "Private Key",
+      "snippet": "('test', u'''-----BEGIN RSA PRIVATE KEY-----"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/Crypto/SelfTest/PublicKey/test_import_DSA.py",
+      "type": "Private Key",
+      "snippet": "-----BEGIN PRIVATE KEY-----"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/Crypto/SelfTest/Signature/test_pss.py",
+      "type": "Private Key",
+      "snippet": "rsa_key = b'-----BEGIN RSA PRIVATE KEY-----\\nMIIEowIBAAKCAQEAsvI34FgiTK8+txBvmooNGpNwk23YTU51dwNZi5y"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/Crypto/SelfTest/Signature/test_pkcs1_15.py",
+      "type": "Private Key",
+      "snippet": "rsakey = \"\"\"-----BEGIN RSA PRIVATE KEY-----"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/Crypto/SelfTest/Cipher/test_pkcs1_15.py",
+      "type": "Private Key",
+      "snippet": "'''-----BEGIN RSA PRIVATE KEY-----"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/Crypto/SelfTest/Protocol/test_ecdh.py",
+      "type": "Private Key",
+      "snippet": "static_priv = ECC.import_key('-----BEGIN PRIVATE KEY-----\\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wa"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/Crypto/SelfTest/Protocol/test_ecdh.py",
+      "type": "Private Key",
+      "snippet": "static_pub = ECC.import_key('-----BEGIN PRIVATE KEY-----\\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0waw"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/Crypto/SelfTest/Protocol/test_ecdh.py",
+      "type": "Private Key",
+      "snippet": "eph_priv = ECC.import_key('-----BEGIN PRIVATE KEY-----\\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIB"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/Crypto/SelfTest/Protocol/test_ecdh.py",
+      "type": "Private Key",
+      "snippet": "eph_pub = ECC.import_key('-----BEGIN PRIVATE KEY-----\\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBA"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/streamlit/user_info.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "cookie_secret = \"xxx\""
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/streamlit/user_info.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "client_secret = \"xxx\""
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/streamlit/user_info.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "cookie_secret = \"xxx\""
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/streamlit/user_info.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "client_secret = \"xxx\""
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/streamlit/user_info.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "cookie_secret = \"xxx\""
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/streamlit/user_info.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "client_secret = \"xxx\""
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/streamlit/user_info.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "client_secret = \"xxx\""
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/streamlit/user_info.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "cookie_secret = \"xxx\""
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/streamlit/user_info.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "client_secret = \"xxx\""
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/streamlit/user_info.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": ">>> cookie_secret = \"xxx\""
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/streamlit/user_info.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": ">>> client_secret = \"xxx\""
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/streamlit/user_info.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "cookie_secret = \"xxx\""
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/streamlit/user_info.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "client_secret = \"xxx\""
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/streamlit/user_info.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "cookie_secret = \"xxx\""
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/streamlit/user_info.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "client_secret = \"xxx\""
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/streamlit/user_info.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "client_secret = \"xxx\""
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/streamlit/runtime/connection_factory.py",
+      "type": "Hardcoded Password",
+      "snippet": "password = \"xxx\""
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/streamlit/runtime/connection_factory.py",
+      "type": "Hardcoded Password",
+      "snippet": "password = \"xxx\""
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/streamlit/runtime/connection_factory.py",
+      "type": "Hardcoded Password",
+      "snippet": "password = \"yyy\""
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/streamlit/connections/sql_connection.py",
+      "type": "Hardcoded Password",
+      "snippet": ">>> password = \"xxx\""
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/streamlit/connections/snowflake_connection.py",
+      "type": "Hardcoded Password",
+      "snippet": "password = \"xxx\""
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/streamlit/connections/snowflake_connection.py",
+      "type": "Hardcoded Password",
+      "snippet": "password = \"xxx\""
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/pygments/styles/onedark.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "Token:                  '#ABB2BF',"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/pygments/styles/gruvbox.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "Token:              '#dddddd',"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/pygments/styles/monokai.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "Token:                     \"#f8f8f2\", # class:  ''"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/pygments/styles/staroffice.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "Token:                  '#000080',   # Blue"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/pygments/styles/native.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "Token:              '#d0d0d0',"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/pygments/styles/zenburn.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "Token: '#dcdccc',"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/pygments/styles/stata_dark.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "Token:                 '#cccccc',"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/pygments/styles/vim.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "Token:                     \"#cccccc\","
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/pygments/styles/coffee.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "Token: \"#ddd0c0\","
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/pygments/styles/fruity.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "Token:              '#ffffff',"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/pygments/styles/rrt.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "Token:              '#dddddd',"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/pygments/styles/nord.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "Token:                      \"#d8dee9\","
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/pygments/styles/nord.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "Token:                      \"#d8dee9\","
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/onnxruntime/transformers/models/phi2/inference_example.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "self.tokenizer.pad_token = \"[PAD]\""
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/jinja2/lexer.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "def describe_token(token: \"Token\") -> str:"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/cryptography/hazmat/_oid.py",
+      "type": "Hardcoded Password",
+      "snippet": "AttributeOID.CHALLENGE_PASSWORD: \"challengePassword\","
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/soupsieve/css_parser.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "print(f\"TOKEN: '{name}' --> {m.group(0)!r} at position {m.start(0)}\")"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/google/protobuf/text_format.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "expanded_any_end_token = '>'"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/google/protobuf/text_format.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "expanded_any_end_token = '}'"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/google/protobuf/text_format.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "end_token = '>'"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/google/protobuf/text_format.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "end_token = '}'"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/starlette/datastructures.py",
+      "type": "Hardcoded Password",
+      "snippet": "url = str(self.replace(password=\"********\"))"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/webview/js/api.js",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "token: '%(token)s',"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/playwright/driver/package/lib/tools/cli-client/skill/references/request-mocking.md",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "route.fulfill({ body: JSON.stringify({ token: 'mock-token' }) });"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/playwright/driver/package/lib/vite/traceViewer/assets/defaultSettingsView-GTWI-W_B.js",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "rgb(0 0 0 / 25%) 0px 6px 12px`},x_=({diff:n,noTargetBlank:e,hideDetails:i})=>{const[r,l]=R.useState("
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/playwright/driver/package/lib/vite/recorder/assets/index-CqAYX1I3.js",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "`).replace(Y0,\"\")}function ym(e,t){return t=pm(t),pm(e)===t}function Ce(e,t,n,a,r,f){switch(n){case\""
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/playwright/driver/package/lib/vite/htmlReport/report.js",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "`).replace(Lg,\"\")}function Ld(t,e){return e=Yd(e),Yd(t)===e}function wt(t,e,n,l,a,s){switch(n){case\""
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/playwright/driver/package/lib/vite/htmlReport/report.js",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "`).replace(Lg,\"\")}function Ld(t,e){return e=Yd(e),Yd(t)===e}function wt(t,e,n,l,a,s){switch(n){case\""
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/playwright/driver/package/lib/vite/htmlReport/report.js",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "`).replace(Lg,\"\")}function Ld(t,e){return e=Yd(e),Yd(t)===e}function wt(t,e,n,l,a,s){switch(n){case\""
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/playwright/driver/package/lib/vite/htmlReport/report.js",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "`).replace(Lg,\"\")}function Ld(t,e){return e=Yd(e),Yd(t)===e}function wt(t,e,n,l,a,s){switch(n){case\""
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/PIL/ImageFont.py",
+      "type": "AWS Access Key",
+      "snippet": "QAHAEwAAQAAAAAAAgAHAGQAAQAAAAAAAwAaAKIAAQAAAAAABAAHAM0AAQAAAAAABQA8AU8AAQAAAA"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/pip/_internal/network/auth.py",
+      "type": "Hardcoded Password",
+      "snippet": "password = ask_password(\"Password: \")\n        return username, password, True\n\n    # Factored out to"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/pip/_internal/utils/misc.py",
+      "type": "Hardcoded Password",
+      "snippet": "password = \":****\""
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/httpx/_urls.py",
+      "type": "Hardcoded Password",
+      "snippet": "username=\"jo@gmail.com\", password=\"a secret\""
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/narwhals/_dask/expr.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "{col_token: \"min\"}"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/narwhals/_dask/expr.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "{col_token: \"max\"}"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/tqdm/contrib/telegram.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": ">>> for i in trange(10, token='{token}', chat_id='{chat_id}'):"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/tqdm/contrib/telegram.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": ">>> for i in tqdm(iterable, token='{token}', chat_id='{chat_id}'):"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/tqdm/contrib/discord.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": ">>> for i in trange(10, token='{token}', channel_id='{channel_id}'):"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/tqdm/contrib/discord.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": ">>> for i in tqdm(iterable, token='{token}', channel_id='{channel_id}'):"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/tqdm/contrib/slack.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": ">>> for i in trange(10, token='{token}', channel='{channel}'):"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/tqdm/contrib/slack.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": ">>> for i in tqdm(iterable, token='{token}', channel='{channel}'):"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/AppKit/_metadata.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "b\"accessibilityElementWithToken:\",\n        {\"required\": True, \"retval\": {\"type\": b\"@\"}, \"arguments\":"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/AppKit/_metadata.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "b\"accessibilityRangeInTargetElementWithToken:\",\n        {\n            \"required\": False,"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/AppKit/_metadata.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "b\"application:didRegisterForRemoteNotificationsWithDeviceToken:\",\n        {\n            \"required\": "
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/Quartz/PDFKit/_metadata.py",
+      "type": "Hardcoded Password",
+      "snippet": "r(b\"PDFDocument\", b\"unlockWithPassword:\", {\"retval\": {\"type\": b\"Z\"}})"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/pydantic/types.py",
+      "type": "Hardcoded Password",
+      "snippet": "user = User(username='scolvin', password='password1')"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/pydantic/types.py",
+      "type": "Hardcoded Password",
+      "snippet": "model = Model(password='IAmSensitive', password_bytes=b'IAmSensitiveBytes')"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/lark_oapi/ws/pb/google/protobuf/text_format.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "expanded_any_end_token = '>'"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/lark_oapi/ws/pb/google/protobuf/text_format.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "expanded_any_end_token = '}'"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/lark_oapi/ws/pb/google/protobuf/text_format.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "end_token = '>'"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/lark_oapi/ws/pb/google/protobuf/text_format.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "end_token = '}'"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/git/cmd.py",
+      "type": "Hardcoded Password",
+      "snippet": "old_env = self.update_environment(PWD='/tmp')"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/git/remote.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "split_token = \"...\""
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/git/remote.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "split_token = \"..\""
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/git/remote.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "split_token = \"...\""
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/git/remote.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "token = \" * [would prune] \""
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/git/util.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "DONE_TOKEN = \"done.\""
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/dateutil/parser/_parser.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "token = ' '"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/openai/resources/webhooks/webhooks.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "\"on the client class, OpenAI(webhook_secret='123'), or passed to this function\""
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/openai/resources/webhooks/webhooks.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "\"on the client class, OpenAI(webhook_secret='123'), or passed to this function\""
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/pydeck/nbextension/static/index.js",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "\"use strict\";var __exports__=(()=>{var Cwe=Object.create;var iM=Object.defineProperty;var Mwe=Object"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/pydeck/nbextension/static/index.js",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "\"use strict\";var __exports__=(()=>{var Cwe=Object.create;var iM=Object.defineProperty;var Mwe=Object"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/pyarrow/tests/test_fs.py",
+      "type": "Hardcoded API Key",
+      "snippet": "access_key='test_fs_limited_user',"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/pyarrow/tests/test_fs.py",
+      "type": "Hardcoded API Key",
+      "snippet": "fs = S3FileSystem(access_key='access', secret_key='secret',"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/pyarrow/tests/test_fs.py",
+      "type": "Hardcoded API Key",
+      "snippet": "S3FileSystem(access_key='access')"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/pyarrow/tests/test_fs.py",
+      "type": "Hardcoded API Key",
+      "snippet": "S3FileSystem(access_key='access', session_token='token')"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/pyarrow/tests/test_fs.py",
+      "type": "Hardcoded API Key",
+      "snippet": "access_key='access', secret_key='secret', role_arn='arn'"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/pyarrow/tests/test_fs.py",
+      "type": "Hardcoded API Key",
+      "snippet": "access_key='access', secret_key='secret', anonymous=True"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/pyarrow/tests/test_fs.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "fs = GcsFileSystem(access_token='abc',"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/pyarrow/tests/test_fs.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "GcsFileSystem(access_token='access')"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/pyarrow/tests/test_fs.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "GcsFileSystem(anonymous=True, access_token='secret')"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/pyarrow/tests/test_fs.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "session_token='token', region='us-east-2',"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/pyarrow/tests/test_fs.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "S3FileSystem(access_key='access', session_token='token')"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/pyarrow/tests/test_fs.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "S3FileSystem(secret_key='secret', session_token='token')"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/pyarrow/tests/test_fs.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "sas_token='fakesastoken')"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/pyarrow/tests/test_fs.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "client_secret='fake-client-secret'"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/pyarrow/tests/test_fs.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "client_secret='fake-client-secret'"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/pyarrow/tests/test_fs.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "client_secret='fake-client-secret'"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/pyarrow/tests/test_fs.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "client_secret='fake-client-secret'"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/pyarrow/tests/test_fs.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "sas_token='fakesastoken')"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/pyarrow/tests/test_dataset.py",
+      "type": "Hardcoded API Key",
+      "snippet": "access_key='test_dataset_limited_user',"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/pyarrow/tests/test_dataset.py",
+      "type": "Hardcoded API Key",
+      "snippet": "access_key='limited',"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/pyarrow/tests/test_flight.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "outgoing.write(base64.b64encode(b'secret:' + username))\n        else:\n            raise flight.Fligh"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/pyarrow/tests/test_flight.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "if not token.startswith(b'secret:'):\n            raise flight.FlightUnauthenticatedError(\"invalid to"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/pyarrow/tests/test_flight.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "token = 'token1234'"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/pyarrow/tests/parquet/test_encryption.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "key_access_token=\"MyToken\","
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/pyarrow/tests/parquet/test_encryption.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "kms_connection_config_1.key_access_token = \"MyToken\""
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/lib/python3.12/site-packages/pyarrow/tests/parquet/test_encryption.py",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "kms_connection_config = pe.KmsConnectionConfig(key_access_token=\"1\")"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/share/jupyter/nbextensions/pydeck/index.js",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "\"use strict\";var __exports__=(()=>{var Cwe=Object.create;var iM=Object.defineProperty;var Mwe=Object"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/GenericAgent/share/jupyter/nbextensions/pydeck/index.js",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "\"use strict\";var __exports__=(()=>{var Cwe=Object.create;var iM=Object.defineProperty;var Mwe=Object"
+    },
+    {
+      "file": "/Users/loujohn/opencode/GenericAgent/assets/SETUP_FEISHU.md",
+      "type": "Hardcoded Token/Secret",
+      "snippet": "fs_app_secret = \"xxxxxxxxxxxxxxxx\"       # \u66ff\u6362\u4e3a\u4f60\u7684 App Secret"
+    }
+  ],
+  "files_scanned": 18749
+}

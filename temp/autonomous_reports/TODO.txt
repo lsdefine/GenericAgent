@@ -1,0 +1,5 @@
+[x] 产出 | 验证 Webhook -> Event Engine 联调 | 模拟 POST 请求触发任务并验证状态日志
+[x] 环境 | 验证 Playwright 浏览器环境可用性 | 成功运行 Playwright 脚本打开网页并截图
+[x] 产出 | 审查 memory/ 下的 SOP 与 L2 一致性 | 产出记忆健康报告，标记过时条目
+[x] 产出 | 测试 workflow_engine 编排能力 | 使用 yaml/json 配置并成功运行一个包含 2 个步骤的简单工作流
+[x] 产出 | 扫描项目中的潜在敏感信息泄露 | 使用 grep 扫描密钥/令牌模式，产出安全报告

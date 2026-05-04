@@ -294,3 +294,38 @@ def audit_integrity_check() -> dict:
             ok, curr, stored = verify_file_integrity(fpath, audit_dir)
             results[fname] = {"valid": ok, "current": (curr[:16] + "...") if curr else None, "stored": (stored[:16] + "...") if stored else None}
     return results
+
+# Added safe_file_write_wrapper
+def safe_file_write_wrapper(path: str, content: str, encoding: str='utf-8', use_tool: bool=False) -> dict:
+    '''Safe write wrapper used by agent automation.'''
+    from pathlib import Path
+    import hashlib, json, time
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    h = hashlib.sha256(content.encode(encoding)).hexdigest()
+    journal = Path('memory') / 'file_write_journal.log'
+    entry = {'ts': time.time(), 'path': str(path), 'len': len(content), 'sha256': h, 'use_tool': use_tool}
+    try:
+        if not use_tool:
+            with p.open('w', encoding=encoding) as f:
+                f.write(content)
+            with p.open('r', encoding=encoding) as f:
+                got = f.read()
+            ok = (got == content)
+            entry.update({'ok': ok, 'method': 'direct'})
+            journal.parent.mkdir(parents=True, exist_ok=True)
+            with journal.open('a', encoding='utf-8') as jf:
+                jf.write(json.dumps(entry, ensure_ascii=False) + '\n')
+            return {'ok': ok, 'method': 'direct', 'sha256': h}
+        else:
+            block = '<file_content>\n' + content + '\n</file_content>'
+            entry.update({'ok': None, 'method': 'tool', 'block_preview': block[:200]})
+            journal.parent.mkdir(parents=True, exist_ok=True)
+            with journal.open('a', encoding='utf-8') as jf:
+                jf.write(json.dumps(entry, ensure_ascii=False) + '\n')
+            return {'ok': None, 'method': 'tool', 'sha256': h, 'block': block}
+    except Exception as e:
+        entry.update({'ok': False, 'error': str(e)})
+        with journal.open('a', encoding='utf-8') as jf:
+            jf.write(json.dumps(entry, ensure_ascii=False) + '\n')
+        return {'ok': False, 'error': str(e)}

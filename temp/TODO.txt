@@ -75,7 +75,14 @@
 - [x] R156: 产出 | 性能分析器 - 函数级profiling+内存分析+热点检测 | 产出profiler.py
 - [x] R157: 产出 | 异步任务队列 - 基于asyncio的任务分发+重试+优先级 | 产出task_queue.py
 - [x] R158: 产出 | 安全审计工具 - 代码静态分析+常见漏洞检测 | 产出security_auditor.py
-- [ ] R159: 产出 | 缓存系统 - 多级缓存(LRU/内存/磁盘)带TTL | 产出cache_system.py
-- [ ] R160: 产出 | 事件总线 - 发布/订阅模式+事件过滤+异步分发 | 产出event_bus.py
-- [ ] R161: 产出 | 数据管道 - ETL流水线+数据验证+转换链 | 产出data_pipeline.py
-- [ ] R162: 产出 | 插件系统 - 动态加载+生命周期管理+钩子 | 产出plugin_system.py
+- [x] R159: 产出 | 缓存系统 - 多级缓存(LRU/内存/磁盘)带TTL | 产出cache_system.py
+- [x] R160: 产出 | 事件总线 - 发布/订阅模式+事件过滤+异步分发 | 产出event_bus.py
+- [x] R161: 产出 | 数据管道 - ETL流水线+数据验证+转换链 | 产出data_pipeline.py
+- [x] R162: 产出 | 插件系统 - 动态加载+生命周期管理+钩子 | 产出plugin_system.py
+
+- [x] R163: 产出 | 规则引擎 - 条件/动作DSL+优先级执行 | 产出rule_engine.py
+- [x] R164: 产出 | 消息队列 - 持久化消息+消费者组+ACK机制 | 产出message_queue.py
+- [x] R165: 产出 | 定时任务扩展 - Cron解析+时区支持+并发控制 | 产出cron_scheduler.py
+- [x] R166: 产出 | 状态机 - 通用FSM+条件转换+状态持久化 | 产出state_machine.py
+- [ ] R167: 产出 | 模板引擎 - 变量替换+条件/循环块+继承 | 产出template_engine.py
+- [ ] R168: 产出 | 分布式锁 - Redis/文件锁+租约+重试 | 产出distributed_lock.py

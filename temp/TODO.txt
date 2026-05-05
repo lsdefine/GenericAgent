@@ -164,4 +164,5 @@
 - [x] R239: 产出 | Outbox模式 - 事务消息/可靠传递/去重/轮询
 - [x] R240: 产出 | Circuit Breaker 熔断器增强版 - 半开状态/滑动窗口/指标/熔断策略
 - [x] R241: 产出 | Retry Strategy Engine 重试策略引擎 - 指数退避/抖动/条件重试/重试链
-- [ ] R242: 产出 | Enhanced Rate Limiter 限流器增强版 - 令牌桶/漏桶/滑动窗口/分布式限流
+- [x] R242: 产出 | Enhanced Rate Limiter 限流器增强版 - 令牌桶/漏桶/滑动窗口/分布式限流
+- [ ] R243: 产出 | Enhanced Health Checker 健康检查增强版 - 级联检查/依赖拓扑/自动恢复/SLA监控

@@ -166,4 +166,7 @@
 - [x] R241: 产出 | Retry Strategy Engine 重试策略引擎 - 指数退避/抖动/条件重试/重试链
 - [x] R242: 产出 | Enhanced Rate Limiter 限流器增强版 - 令牌桶/漏桶/滑动窗口/分布式限流
 - [x] R243: 产出 | Enhanced Health Checker 健康检查增强版 - 级联检查/依赖拓扑/自动恢复/SLA监控
-- [ ] R244: 产出 | Feature Toggle Engine 特性开关增强版 - 用户分群/灰度发布/AB测试/动态规则
+- [x] R244: 产出 | Feature Toggle Engine 特性开关增强版 - 用户分群/灰度发布/AB测试/动态规则
+- [x] R245: 产出 | Dependency Injection Container 依赖注入容器增强版 - 生命周期管理/自动装配/装饰器注入
+- [x] R246: 产出 | Object Mapper Enhanced 对象映射器增强版 - 嵌套映射/类型转换/集合映射
+- [ ] R247: 产出 | Specification Pattern 规范模式增强版 - 组合规范/可重用规则/查询生成

@@ -137,4 +137,10 @@
 - [x] R209: 产出 | 构建缓存策略管理器 - 多级缓存/淘汰策略/预热/缓存一致性 | 产出cache_manager.py
 - [x] R210: 产出 | 构建查询优化器 - 执行计划/索引建议/查询重写/性能预测 | 产出query_optimizer.py
 - [x] R211: 产出 | 构建服务发现与负载均衡 - 健康检查/服务注册/多种负载均衡算法 | 产出service_discovery.py
-- [ ] R212: 产出 | 构建分布式锁管理器 - 互斥锁/读写锁/租约机制/死锁检测 | 产出distributed_lock.py
+- [x] R212: 产出 | 构建分布式锁管理器 - 互斥锁/读写锁/租约机制/死锁检测 | 产出distributed_lock.py
+
+## R213-R216 新规划 (Auto-planned 2026-05-05)
+- [ ] R213: 产出 | 构建分布式追踪系统 - Trace ID传递/Span收集/拓扑分析 | 产出distributed_tracing.py
+- [ ] R214: 产出 | 构建流量控制引擎 - 令牌桶/漏桶/自适应限流 | 产出traffic_controller.py
+- [ ] R215: 产出 | 构建数据脱敏工具 - 字段级脱敏策略/格式保留/审计追踪 | 产出data_masking.py
+- [ ] R216: 产出 | 构建API契约测试框架 - OpenAPI校验/兼容性检查/Mock生成 | 产出api_contract_tester.py

@@ -165,4 +165,5 @@
 - [x] R240: 产出 | Circuit Breaker 熔断器增强版 - 半开状态/滑动窗口/指标/熔断策略
 - [x] R241: 产出 | Retry Strategy Engine 重试策略引擎 - 指数退避/抖动/条件重试/重试链
 - [x] R242: 产出 | Enhanced Rate Limiter 限流器增强版 - 令牌桶/漏桶/滑动窗口/分布式限流
-- [ ] R243: 产出 | Enhanced Health Checker 健康检查增强版 - 级联检查/依赖拓扑/自动恢复/SLA监控
+- [x] R243: 产出 | Enhanced Health Checker 健康检查增强版 - 级联检查/依赖拓扑/自动恢复/SLA监控
+- [ ] R244: 产出 | Feature Toggle Engine 特性开关增强版 - 用户分群/灰度发布/AB测试/动态规则

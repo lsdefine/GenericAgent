@@ -143,4 +143,4 @@
 - [x] R213: 产出 | 构建分布式追踪系统 - Trace ID传递/Span收集/拓扑分析 | 产出distributed_tracing.py
 - [x] R214: 产出 | 构建流量控制引擎 - 令牌桶/漏桶/自适应限流 | 产出traffic_controller.py
 - [x] R215: 产出 | 构建数据脱敏工具 - 字段级脱敏策略/格式保留/审计追踪 | 产出data_masking.py
-- [ ] R216: 产出 | 构建API契约测试框架 - OpenAPI校验/兼容性检查/Mock生成 | 产出api_contract_tester.py
+- [x] R216: 产出 | 构建API契约测试框架 - OpenAPI校验/兼容性检查/Mock生成 | 产出api_contract_tester.py

@@ -7,6 +7,14 @@
     "coding": "copilot-free",
     "fast": "copilot-free"
   },
+  "allowed_free_models": [
+    "copilot-free",
+    "copilot-free-gpt41",
+    "copilot-free-gpt4o",
+    "opencode-minimax",
+    "opencode-big-pickle",
+    "NIM-deepseek-v4-pro"
+  ],
   "thresholds": {
     "long_query_chars": 800,
     "long_history_entries": 12

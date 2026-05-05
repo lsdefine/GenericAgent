@@ -7,6 +7,7 @@
 手机:adb_ui.py
 
 安全: D8治理(68分) | 退化测试: rt_regression_*.md | 路径安全: utils.is_path_safe()
+路径: AGENT_ROOT=E:\AI\GenericAgent\ | cwd=E:\AI\GenericAgent\temp\ | memory=../memory/ | 相对路径基于cwd解析,禁止写temp\memory\
 需要时read L2 或 ls ../memory/ 查L3
 L0(META-SOP): memory_management_sop
 L2: 飞书:lark-cli | D8安全进化闭环 | (按section扩展)

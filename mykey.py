@@ -9,6 +9,7 @@ import os
 #         # 0x 免费（不消耗 premium requests）
 #         'copilot-free',        # GPT-5 mini，快速通用
 #         'opencode-minimax',
+#         'NIM-deepseek-v4-pro', # NVIDIA NIM DeepSeek 免费备用
 #         'copilot-free-gpt41',  # GPT-4.1，稳定通用
 #         'copilot-free-gpt4o',  # GPT-4o，多模态备用
 #         # 0.33x 低成本
@@ -37,6 +38,16 @@ native_oai_config_opencode_minimax = {
     'model': 'minimax-m2.5-free',
     'api_mode': 'chat_completions',
     'proxy': None,
+    'stream': True,
+}
+
+# deepseek-v4-pro - 0x 免费，
+native_oai_config_NIM_deepseekv4pro = {
+    'name': 'copilot-free-nim-deepseek-v4-pro',
+    'apikey': os.environ.get('NVIDIA_NIM_API_KEY', ''),
+    'apibase': 'https://integrate.api.nvidia.com/v1',
+    'model': 'deepseek-v4-pro',
+    'api_mode': 'chat_completions',
     'stream': True,
 }
 
@@ -82,6 +93,7 @@ native_oai_config_copilot_free_gpt4o = {
     'api_mode': 'chat_completions',
     'stream': True,
 }
+
 
 # ── Copilot 低成本模型（0.33x）────────────────────────────────────────────────
 
@@ -156,15 +168,6 @@ native_oai_config_copilot_gemini25 = {
     'api_mode': 'chat_completions',
     'stream': True,
 }
-
-
-
-
-
-
-
-
-
 
 
 

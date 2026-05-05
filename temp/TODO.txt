@@ -171,4 +171,5 @@
 - [x] R246: 产出 | Object Mapper Enhanced 对象映射器增强版 - 嵌套映射/类型转换/集合映射
 - [x] R247: 产出 | Specification Pattern 规范模式增强版 - 组合规范/可重用规则/查询生成
 - [x] R248: 产出 | Mediator Pattern Enhanced 中介者模式增强版 - 异步消息/事件路由/通道隔离
-- [ ] R249: 产出 | Visitor Pattern Enhanced 访问者模式增强版 - 动态注册/类型分发/聚合计算
+- [x] R249: 产出 | Visitor Pattern Enhanced 访问者模式增强版 - 动态注册/类型分发/聚合计算
+- [ ] R250: 产出 | Interpreter Pattern Enhanced 解释器模式增强版 - 表达式解析/自定义语法/AST求值

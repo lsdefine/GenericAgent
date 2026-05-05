@@ -1,107 +1,235 @@
-#!/usr/bin/env python3
-"""Feature Flags - Feature toggle system with targeting, rollout, and A/B testing"""
-import time
-import random
-from typing import Dict, Any, Optional, List, Callable
+"""R219: Feature Flags Management System - Dynamic Toggle + A/B Testing + User Segmentation + Gradual Rollout.
+Demonstrates feature flag management.
+"""
+import time, hashlib
+from typing import Dict, List, Any, Optional, Callable
+from dataclasses import dataclass, field
+from enum import Enum
 
+class FlagType(Enum):
+    BOOLEAN = "boolean"
+    PERCENTAGE = "percentage"
+    AB_TEST = "ab_test"
+    SEGMENT = "segment"
+
+class FlagStatus(Enum):
+    ENABLED = "enabled"
+    DISABLED = "disabled"
+    SCHEDULED = "scheduled"
+    ARCHIVED = "archived"
+
+@dataclass
 class FeatureFlag:
-    def __init__(self, key: str, enabled: bool = False, description: str = ""):
-        self.key = key
-        self.enabled = enabled
-        self.description = description
-        self.rollout_percentage = 100.0 if enabled else 0.0
-        self.targeting_rules: List[Dict] = []
-        self.created_at = time.time()
-        self.variants: Dict[str, float] = {}
+    key: str
+    name: str
+    flag_type: FlagType
+    status: FlagStatus = FlagStatus.DISABLED
+    default_value: bool = False
+    rollout_percentage: float = 0.0
+    segments: Dict[str, Any] = field(default_factory=dict)
+    ab_variants: Dict[str, float] = field(default_factory=dict)  # variant -> weight
+    scheduled_start: float = None
+    scheduled_end: float = None
+    description: str = ""
+
+class FeatureFlagManager:
+    """Manages feature flags with dynamic toggles, A/B testing, and user segmentation."""
     
-    def set_rollout(self, percentage: float):
-        self.rollout_percentage = max(0.0, min(100.0, percentage))
+    def __init__(self):
+        self.flags: Dict[str, FeatureFlag] = {}
+        self.evaluation_log: List[Dict] = []
     
-    def add_variant(self, name: str, weight: float):
-        self.variants[name] = weight
+    def create_flag(self, flag: FeatureFlag):
+        self.flags[flag.key] = flag
     
-    def evaluate(self, context: Optional[Dict] = None) -> bool:
-        for rule in self.targeting_rules:
-            if self._match_rule(rule, context):
-                return rule.get("value", True)
-        if self.variants:
-            return self._select_variant(context)
-        return random.uniform(0, 100) < self.rollout_percentage
+    def enable_flag(self, key: str):
+        if key in self.flags:
+            self.flags[key].status = FlagStatus.ENABLED
     
-    def _match_rule(self, rule: Dict, context: Optional[Dict]) -> bool:
-        conditions = rule.get("conditions", [])
-        for cond in conditions:
-            attr = cond.get("attribute")
-            operator = cond.get("operator")
-            value = cond.get("value")
-            ctx_val = (context or {}).get(attr)
-            if operator == "eq" and ctx_val != value:
+    def disable_flag(self, key: str):
+        if key in self.flags:
+            self.flags[key].status = FlagStatus.DISABLED
+    
+    def set_rollout(self, key: str, percentage: float):
+        if key in self.flags:
+            self.flags[key].rollout_percentage = max(0.0, min(100.0, percentage))
+    
+    def evaluate(self, key: str, user_context: Dict = None) -> Any:
+        """Evaluate flag for a user."""
+        if key not in self.flags:
+            return None
+        
+        flag = self.flags[key]
+        result = False
+        reason = ""
+        
+        # Check status
+        if flag.status == FlagStatus.DISABLED:
+            result = flag.default_value
+            reason = "disabled"
+        elif flag.status == FlagStatus.ARCHIVED:
+            result = flag.default_value
+            reason = "archived"
+        elif flag.status == FlagStatus.SCHEDULED:
+            now = time.time()
+            if flag.scheduled_start and now < flag.scheduled_start:
+                result = flag.default_value
+                reason = "not_started"
+            elif flag.scheduled_end and now > flag.scheduled_end:
+                result = flag.default_value
+                reason = "expired"
+            else:
+                result = self._evaluate_by_type(flag, user_context)
+                reason = "scheduled_active"
+        else:  # ENABLED
+            result = self._evaluate_by_type(flag, user_context)
+            reason = "enabled"
+        
+        # Log evaluation
+        self.evaluation_log.append({
+            "flag": key,
+            "user_id": user_context.get("user_id") if user_context else None,
+            "result": result,
+            "reason": reason,
+            "timestamp": time.time()
+        })
+        
+        return result
+    
+    def _evaluate_by_type(self, flag: FeatureFlag, user_context: Dict) -> Any:
+        """Evaluate flag based on its type."""
+        if flag.flag_type == FlagType.BOOLEAN:
+            return True
+        
+        elif flag.flag_type == FlagType.PERCENTAGE:
+            # Use user_id for consistent hashing
+            user_id = user_context.get("user_id", "anonymous")
+            hash_val = int(hashlib.md5(f"{flag.key}:{user_id}".encode()).hexdigest(), 16) % 100
+            return hash_val < flag.rollout_percentage
+        
+        elif flag.flag_type == FlagType.AB_TEST:
+            user_id = user_context.get("user_id", "anonymous")
+            hash_val = int(hashlib.md5(f"{flag.key}:{user_id}".encode()).hexdigest(), 16)
+            total_weight = sum(flag.ab_variants.values())
+            cumulative = 0
+            for variant, weight in flag.ab_variants.items():
+                cumulative += weight
+                if (hash_val % total_weight) < cumulative:
+                    return variant
+            return list(flag.ab_variants.keys())[0]
+        
+        elif flag.flag_type == FlagType.SEGMENT:
+            if not user_context:
                 return False
-            elif operator == "contains" and value not in (ctx_val or []):
+            # Check if user matches any segment
+            for segment_name, condition in flag.segments.items():
+                if self._matches_segment(user_context, condition):
+                    return True
+            return False
+        
+        return False
+    
+    def _matches_segment(self, user_context: Dict, condition: Dict) -> bool:
+        """Check if user context matches segment condition."""
+        for key, value in condition.items():
+            if key not in user_context:
                 return False
-            elif operator == "gte" and (ctx_val is None or ctx_val < value):
+            if isinstance(value, dict):
+                # Support operators like {"gt": 18}
+                if "gt" in value and user_context[key] <= value["gt"]:
+                    return False
+                if "lt" in value and user_context[key] >= value["lt"]:
+                    return False
+                if "in" in value and user_context[key] not in value["in"]:
+                    return False
+            elif user_context[key] != value:
                 return False
         return True
     
-    def _select_variant(self, context: Optional[Dict]) -> bool:
-        seed = hash(str(context)) % 1000 if context else random.randint(0, 999)
-        threshold = 0
-        total = sum(self.variants.values())
-        pos = (seed / 1000) * total
-        for variant, weight in self.variants.items():
-            threshold += weight
-            if pos <= threshold:
-                return True
-        return False
+    def get_flag_status(self) -> Dict:
+        return {
+            key: {
+                "name": flag.name,
+                "type": flag.flag_type.value,
+                "status": flag.status.value,
+                "rollout": flag.rollout_percentage,
+                "segments": list(flag.segments.keys())
+            }
+            for key, flag in self.flags.items()
+        }
+    
+    def get_stats(self) -> Dict:
+        total_evaluations = len(self.evaluation_log)
+        enabled_count = sum(1 for f in self.flags.values() if f.status == FlagStatus.ENABLED)
+        return {
+            "total_flags": len(self.flags),
+            "enabled_flags": enabled_count,
+            "total_evaluations": total_evaluations
+        }
 
-class FeatureFlagManager:
-    def __init__(self):
-        self.flags: Dict[str, FeatureFlag] = {}
+def run_feature_flag_demo():
+    print("=== R219 Feature Flags Management System ===")
     
-    def register(self, flag: FeatureFlag):
-        self.flags[flag.key] = flag
+    manager = FeatureFlagManager()
     
-    def is_enabled(self, key: str, context: Optional[Dict] = None) -> bool:
-        flag = self.flags.get(key)
-        if not flag:
-            return False
-        return flag.evaluate(context)
+    # Create flags
+    manager.create_flag(FeatureFlag(
+        key="dark_mode",
+        name="Dark Mode",
+        flag_type=FlagType.BOOLEAN,
+        description="Enable dark mode UI"
+    ))
     
-    def get_flag(self, key: str) -> Optional[FeatureFlag]:
-        return self.flags.get(key)
+    manager.create_flag(FeatureFlag(
+        key="new_checkout",
+        name="New Checkout Flow",
+        flag_type=FlagType.PERCENTAGE,
+        rollout_percentage=50.0,
+        description="Gradual rollout of new checkout"
+    ))
     
-    def list_flags(self) -> Dict[str, dict]:
-        return {k: {"enabled": f.enabled, "rollout": f.rollout_percentage,
-                     "variants": f.variants, "rules": len(f.targeting_rules)}
-                for k, f in self.flags.items()}
+    manager.create_flag(FeatureFlag(
+        key="homepage_layout",
+        name="Homepage A/B Test",
+        flag_type=FlagType.AB_TEST,
+        ab_variants={"control": 50, "variant_a": 25, "variant_b": 25},
+        description="A/B test for homepage layout"
+    ))
     
-    def add_targeting_rule(self, key: str, conditions: List[Dict], value: bool = True):
-        flag = self.flags.get(key)
-        if flag:
-            flag.targeting_rules.append({"conditions": conditions, "value": value})
+    manager.create_flag(FeatureFlag(
+        key="premium_features",
+        name="Premium Features",
+        flag_type=FlagType.SEGMENT,
+        segments={
+            "premium_users": {"plan": "premium"},
+            "enterprise": {"plan": "enterprise"},
+            "beta_testers": {"is_beta": True}
+        },
+        description="Features for premium users"
+    ))
+    
+    # Enable flags
+    manager.enable_flag("dark_mode")
+    manager.enable_flag("new_checkout")
+    manager.enable_flag("homepage_layout")
+    manager.enable_flag("premium_features")
+    
+    # Test evaluations
+    user1 = {"user_id": "user_001", "plan": "premium", "is_beta": False}
+    user2 = {"user_id": "user_002", "plan": "free", "is_beta": True}
+    user3 = {"user_id": "user_003", "plan": "enterprise"}
+    
+    print(f"1. Dark mode for user1: {manager.evaluate('dark_mode', user1)}")
+    print(f"2. New checkout for user1: {manager.evaluate('new_checkout', user1)}")
+    print(f"3. Homepage layout for user2: {manager.evaluate('homepage_layout', user2)}")
+    print(f"4. Premium features for user1: {manager.evaluate('premium_features', user1)}")
+    print(f"   Premium features for user2: {manager.evaluate('premium_features', user2)}")
+    print(f"   Premium features for user3: {manager.evaluate('premium_features', user3)}")
+    
+    # Stats
+    stats = manager.get_stats()
+    print(f"5. Stats: {stats}")
+    
+    print("\nR219 Feature Flags Management System ready.")
 
-
-if __name__ == "__main__":
-    mgr = FeatureFlagManager()
-    
-    dark_mode = FeatureFlag("dark_mode", enabled=True)
-    mgr.register(dark_mode)
-    print(f"dark_mode: {mgr.is_enabled('dark_mode')}")
-    
-    new_ui = FeatureFlag("new_ui", enabled=False)
-    new_ui.set_rollout(50)
-    mgr.register(new_ui)
-    enabled_count = sum(1 for _ in range(100) if mgr.is_enabled("new_ui"))
-    print(f"new_ui rollout ~50%: {enabled_count}/100 enabled")
-    
-    beta = FeatureFlag("beta_feature", enabled=False)
-    beta.add_variant("control", 80)
-    beta.add_variant("treatment", 20)
-    mgr.register(beta)
-    
-    mgr.add_targeting_rule("beta_feature", [{"attribute": "user_id", "eq": "vip123"}], value=True)
-    print(f"beta for vip: {mgr.is_enabled('beta_feature', {'user_id': 'vip123'})}")
-    print(f"beta for regular: {mgr.is_enabled('beta_feature', {'user_id': 'user456'})}")
-    
-    print(f"All flags: {mgr.list_flags()}")
-    print("Feature flags ready.")
+run_feature_flag_demo()

@@ -86,3 +86,49 @@
 - [x] R166: 产出 | 状态机 - 通用FSM+条件转换+状态持久化 | 产出state_machine.py
 - [x] R167: 产出 | 模板引擎 - 变量替换+条件/循环块+继承 | 产出template_engine.py
 - [x] R168: 产出 | 分布式锁 - Redis/文件锁+租约+重试 | 产出distributed_lock.py
+
+
+## R175-R180 批量
+- [x] R175: 对象映射 (Object Mapper)
+- [x] R176: 规格模式 (Specification Pattern)
+- [x] R177: 策略注册表 (Strategy Registry)
+- [x] R178: 配置验证器 (Config Validator)
+- [x] R179: 中间件管道 (Middleware Pipeline)
+- [x] R180: 事件溯源 (Event Sourcing)
+
+
+## 高价值组合实战 (Auto-planned 2026-05-05)
+- [x] R185: 产出 | 构建CRUD服务 - 组合DI+ORM+UoW+Repo模式实现用户管理 | 产出crud_service.py + 测试脚本
+- [x] R186: 产出 | 构建事件驱动订单流 - 组合Observer+Mediator+Command+FSM | 产出order_workflow.py
+- [x] R187: 环境 | 扫描macOS系统API缺口 - 测试组件对通知中心/Spotlight/Core Data适配 | 产出macos_api_scan.md
+- [x] R188: 审查 | 记忆库审计 - 审查R147-R184索引完整性 | 产出memory_audit.md
+
+## R189-R192 新规划 (Auto-planned 2026-05-05)
+- [x] R189: 产出 | 构建API网关 - 组合限流器+熔断器+消息队列实现服务网关 | 产出api_gateway.py + 测试
+- [x] R190: 产出 | 构建数据验证管道 - 组合规范模式+数据管道+规则引擎实现数据校验 | 产出data_validator.py
+- [x] R191: 产出 | 构建异步工作流引擎 - 组合异步任务队列+状态机+插件系统 | 产出async_workflow.py
+- [x] R192: 审查 | 组件依赖关系分析 - 分析84个组件间的依赖关系和调用链 | 产出dependency_analysis.md
+
+## R193-R196 新规划 (Auto-planned 2026-05-05)
+- [x] R193: 产出 | 构建端到端集成测试场景 - 串联CRUD+订单流+API网关验证全流程 | 产出integration_test.py + 测试报告
+- [x] R194: 产出 | 性能优化分析 - 对关键组件进行profiling并输出优化建议 | 产出performance_optimization.md
+- [x] R195: 产出 | 安全中间件 - 构建认证/授权/输入过滤中间件链 | 产出security_middleware.py
+- [x] R196: 产出 | 聚合文档生成 - 从所有组件生成统一的API参考文档 | 产出api_reference.md
+
+## R197-R200 新规划 (Auto-planned 2026-05-05)
+- [x] R197: 产出 | 构建实时数据流处理引擎 - 组合事件总线+窗口聚合+流式转换 | 产出stream_processor.py
+- [x] R198: 产出 | 构建分布式配置同步 - 多节点配置版本管理+冲突解决+热加载 | 产出config_sync.py
+- [x] R199: 产出 | 构建可观测性框架 - Metrics/Tracing/Logging三支柱集成 | 产出observability.py
+- [x] R200: 产出 | 构建服务网格侧车代理 - 流量拦截+熔断+重试+遥测 | 产出service_mesh_proxy.py
+
+## R201-R204 新规划 (Auto-planned 2026-05-05)
+- [x] R201: 产出 | 构建数据质量监控引擎 - 异常检测/缺失值分析/数据漂移监控 | 产出data_quality_monitor.py
+- [x] R202: 产出 | 构建API版本管理器 - 版本路由/弃用策略/向后兼容检查 | 产出api_version_manager.py
+- [x] R203: 产出 | 构建灰度发布系统 - 流量分割/A-B测试/自动回滚 | 产出canary_release.py
+- [x] R204: 产出 | 构建混沌工程框架 - 故障注入/恢复验证/韧性测试 | 产出chaos_engineering.py
+
+## R205-R208 新规划 (Auto-planned 2026-05-05)
+- [ ] R205: 产出 | 构建API网关聚合器 - 统一路由/限流/认证集成/请求转换 | 产出api_gateway.py
+- [ ] R206: 产出 | 构建分布式任务调度器 - 定时任务/依赖编排/故障转移 | 产出distributed_scheduler.py
+- [ ] R207: 产出 | 构建实时告警引擎 - 阈值监控/通知路由/告警抑制/升级策略 | 产出alert_engine.py
+- [ ] R208: 产出 | 构建数据管道编排器 - ETL流程/数据转换/质量检查/血缘追踪 | 产出data_pipeline.py

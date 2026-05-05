@@ -11,7 +11,8 @@
     "scripting",
     "alarms",
     "declarativeNetRequest",
-    "management"
+    "management",
+    "contentSettings"
   ],
   "host_permissions": ["<all_urls>"],
   "background": {

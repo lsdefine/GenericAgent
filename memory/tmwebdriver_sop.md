@@ -54,6 +54,10 @@ web_execute_js script='{"cmd": "batch", "commands": [...]}'
 通信方式：⭐JSON字符串直传(首选) | TID DOM方式(TID元素+MutationObserver，web_scan/execute_js底层依赖)
 单命令：`{cmd:'tabs'}` | `{cmd:'cookies'}` | `{cmd:'cdp', tabId:N, method:'...', params:{...}}` | `{cmd:'management', method:'list|reload|disable|enable', extId:'...'}`
 - management：list返回所有扩展信息；reload/disable/enable需传extId
+- contentSettings：`{cmd:'contentSettings', type:'automaticDownloads', pattern:'https://*/*', setting:'allow'}`
+  - 绕过Chrome"下载多个文件"对话框（该对话框会阻塞整个浏览器JS执行）
+  - type可选：automaticDownloads/popups/notifications等；setting：allow/block/ask
+  - ⚠CDP的Browser.setDownloadBehavior在扩展中不可用（chrome.debugger仅tab级），此为替代方案
 - ⭐batch混合：`{cmd:'batch', commands:[{cmd:'cookies'},{cmd:'tabs'},{cmd:'cdp',...},...]}`
   - 返回`{ok:true, results:[...]}`，一次请求多命令，CDP懒attach复用session
   - 子命令会自动继承外层batch的tabId（如cookies命令可正确获取当前页面URL）

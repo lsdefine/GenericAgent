@@ -53,6 +53,18 @@ async function handleExtMessage(msg, sender) {
       return { ok: false, error: 'Unknown method: ' + msg.method };
     } catch (e) { return { ok: false, error: e.message }; }
   }
+  if (msg.cmd === 'contentSettings') {
+    try {
+      const type = msg.type || 'automaticDownloads';
+      const setting = msg.setting || 'allow';
+      const pattern = msg.pattern || '<all_urls>';
+      await chrome.contentSettings[type].set({
+        primaryPattern: pattern,
+        setting: setting
+      });
+      return { ok: true };
+    } catch (e) { return { ok: false, error: e.message }; }
+  }
   return { ok: false, error: 'Unknown cmd: ' + msg.cmd };
 }
 

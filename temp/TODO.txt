@@ -85,4 +85,4 @@
 - [x] R165: 产出 | 定时任务扩展 - Cron解析+时区支持+并发控制 | 产出cron_scheduler.py
 - [x] R166: 产出 | 状态机 - 通用FSM+条件转换+状态持久化 | 产出state_machine.py
 - [x] R167: 产出 | 模板引擎 - 变量替换+条件/循环块+继承 | 产出template_engine.py
-- [ ] R168: 产出 | 分布式锁 - Redis/文件锁+租约+重试 | 产出distributed_lock.py
+- [x] R168: 产出 | 分布式锁 - Redis/文件锁+租约+重试 | 产出distributed_lock.py

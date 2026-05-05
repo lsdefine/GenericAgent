@@ -173,4 +173,12 @@
 - [x] R248: 产出 | Mediator Pattern Enhanced 中介者模式增强版 - 异步消息/事件路由/通道隔离
 - [x] R249: 产出 | Visitor Pattern Enhanced 访问者模式增强版 - 动态注册/类型分发/聚合计算
 - [x] R250: 产出 | Interpreter Pattern Enhanced 解释器模式增强版 - 表达式解析/自定义语法/AST求值
-- [ ] R251: 产出 | Strategy Pattern Enhanced 策略模式增强版 - 动态切换/权重路由/上下文感知
+- [x] R251: 产出 | Strategy Pattern Enhanced 策略模式增强版 - 动态切换/权重路由/上下文感知
+- [x] R252: 产出 | Observer Pattern Enhanced 观察者模式增强版 - 异步通知/优先级/过滤订阅
+- [x] R253: 产出 | Factory Method Enhanced 工厂方法增强版 - 动态注册/参数推断/懒加载
+- [x] R254: 产出 | Builder Pattern Enhanced 建造者模式增强版 - 链式调用/验证/预设模板
+- [x] R255: 产出 | Prototype Pattern Enhanced 原型模式增强版 - 深拷贝/注册表/可变克隆
+- [x] R256: 产出 | Command Pattern Enhanced 命令模式增强版 - 撤销/重做/宏命令/事务
+- [x] R257: 产出 | State Machine Enhanced 状态机模式增强版 - 守卫条件/动作/持久化
+- [x] R258: 产出 | Decorator Pattern Enhanced 装饰器模式增强版 - 动态组合/参数化/元数据
+- [ ] R259: 产出 | Mediator Pattern Enhanced 中介者模式增强版 - 通道隔离/消息过滤/事件总线集成

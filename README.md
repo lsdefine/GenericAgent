@@ -80,14 +80,18 @@ After a few weeks, your agent instance will have a skill tree no one else in the
 git clone https://github.com/lsdefine/GenericAgent.git
 cd GenericAgent
 
-# 2. Install minimal dependencies
+# 2. Create and activate a virtual environment
+python -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
+
+# 3. Install minimal dependencies
 pip install requests streamlit pywebview
 
-# 3. Configure API Key
+# 4. Configure API Key
 cp mykey_template.py mykey.py
 # Edit mykey.py and fill in your LLM API Key
 
-# 4. Launch
+# 5. Launch
 python launch.pyw
 ```
 

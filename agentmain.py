@@ -49,6 +49,7 @@ class GenericAgent:
         self.is_running = False; self.stop_sig = False
         self.llm_no = 0;  self.inc_out = False; self.verbose = True
         self.peer_hint = True
+        self._recall_done = False
         self.load_llm_sessions()
 
     def load_llm_sessions(self):
@@ -134,6 +135,15 @@ class GenericAgent:
             self.is_running = True
             rquery = smart_format(raw_query.replace('\n', ' '), max_str_len=200)
             self.history.append(f"[USER]: {rquery}")
+            # --- startup recall: inject recent session context on first user message ---
+            if not self._recall_done and source == 'user':
+                self._recall_done = True
+                from frontends.startup_recall import build_startup_recall, is_trivial_message
+                if not is_trivial_message(raw_query):
+                    recall = build_startup_recall()
+                    if recall:
+                        raw_query = f"{recall}\n\n---\n[当前用户消息]\n{raw_query}"
+                        print(f'[GA] startup_recall injected ({len(recall)} chars)')
             
             sys_prompt = get_system_prompt() + getattr(self.llmclient.backend, 'extra_sys_prompt', '')
             if self.peer_hint: sys_prompt += f"\n[Peer] 用户提及其他会话/后台任务状态时: temp/model_responses/ (只找近期修改的文件尾部)\n"

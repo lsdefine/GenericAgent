@@ -73,7 +73,14 @@ def idle_monitor():
             last_reply = get_last_reply_time()
             if now - last_reply > 1800:
                 print('[Idle Monitor] Detected idle state, injecting task...')
-                inject("[AUTO]🤖 用户已经离开超过30分钟，作为自主智能体，请阅读自动化sop，执行自动任务。")
+                import importlib.util
+                spec = importlib.util.spec_from_file_location('autonomous', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'reflect', 'autonomous.py'))
+                mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+                try:
+                    task = mod.check()
+                except Exception:
+                    task = "[AUTO]用户已离开超过30分钟，作为自主智能体，请阅读 autonomous_operation_sop.md，执行自动任务"
+                inject(task)
                 last_trigger_time = now
         except Exception as e:
             print(f'[Idle Monitor] Error: {e}')

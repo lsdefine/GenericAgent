@@ -1,4 +1,4 @@
-import os, sys, subprocess
+import os, sys, subprocess, atexit
 from urllib.request import urlopen
 from urllib.parse import quote
 if sys.stdout is None: sys.stdout = open(os.devnull, "w")
@@ -71,25 +71,48 @@ def render_sidebar():
             st.toast(f"Tools injected")
         except Exception as e: st.toast(f"Injected tools failed: {e}")
     if st.button(T('desktop_pet')):
-        kwargs = {'creationflags': 0x08} if sys.platform == 'win32' else {}
-        pet_script = os.path.join(script_dir, 'desktop_pet_v2.pyw')
-        if not os.path.exists(pet_script): pet_script = os.path.join(script_dir, 'desktop_pet.pyw')
-        subprocess.Popen([sys.executable, pet_script], **kwargs)
-        def _pet_req(q):
-            def _do():
-                try: urlopen(f'http://127.0.0.1:41983/?{q}', timeout=2)
-                except Exception: pass
-            threading.Thread(target=_do, daemon=True).start()
-        agent._pet_req = _pet_req
-        if not hasattr(agent, '_turn_end_hooks'): agent._turn_end_hooks = {}
-        def _pet_hook(ctx):
-            parts = [f"Turn {ctx.get('turn','?')}"]
-            if ctx.get('summary'): parts.append(ctx['summary'])
-            if ctx.get('exit_reason'): parts.append('DONE')
-            _pet_req(f'msg={quote(chr(10).join(parts))}')
-            if ctx.get('exit_reason'): _pet_req('state=idle')
-        agent._turn_end_hooks['pet'] = _pet_hook
-        st.toast("Desktop pet started")
+        if not getattr(agent, '_pet_running', False):
+            kwargs = {'creationflags': 0x08} if sys.platform == 'win32' else {}
+            pet_script = os.path.join(script_dir, 'desktop_pet_v2.pyw')
+            if not os.path.exists(pet_script): pet_script = os.path.join(script_dir, 'desktop_pet.pyw')
+            proc = subprocess.Popen([sys.executable, pet_script], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, **kwargs)
+            atexit.register(proc.kill)
+
+            def _listen_port():
+                if proc.stdout:
+                    for line in iter(proc.stdout.readline, b''):
+                        try:
+                            line_str = line.decode('utf-8', errors='replace').strip()
+                            if line_str.startswith('__PET_PORT_READY__:'):
+                                agent._pet_port = int(line_str.split(':')[1])
+                                break
+                            if '⚠ Failed to bind' in line_str:
+                                break
+                        except: pass
+                    if getattr(agent, '_pet_port', 0) > 0:
+                        proc.wait()  # 等待子进程退出
+                        agent._pet_port = 0
+                        agent._pet_running = False  # 重置标志，允许重新开启
+            threading.Thread(target=_listen_port, daemon=True).start()
+
+            def _pet_req(q):
+                def _do():
+                    p = getattr(agent, '_pet_port', 41983)
+                    try: urlopen(f'http://127.0.0.1:{p}/?{q}', timeout=2)
+                    except Exception: pass
+                threading.Thread(target=_do, daemon=True).start()
+            agent._pet_req = _pet_req
+
+            if not hasattr(agent, '_turn_end_hooks'): agent._turn_end_hooks = {}
+            def _pet_hook(ctx):
+                parts = [f"Turn {ctx.get('turn','?')}"]
+                if ctx.get('summary'): parts.append(ctx['summary'])
+                if ctx.get('exit_reason'): parts.append('DONE')
+                _pet_req(f'msg={quote(chr(10).join(parts))}')
+                if ctx.get('exit_reason'): _pet_req('state=idle')
+            agent._turn_end_hooks['pet'] = _pet_hook
+            agent._pet_running = True
+            st.toast("Desktop pet started")
     
     if LANG == 'zh':
         st.divider()

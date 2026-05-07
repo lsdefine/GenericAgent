@@ -4,7 +4,6 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
-PORT = 41983
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_DIR = os.path.dirname(SCRIPT_DIR)
 SKINS_DIR = os.path.join(SCRIPT_DIR, 'skins')
@@ -240,7 +239,7 @@ class PetBase:
         self._schedule_main(lambda m=message: self.show_toast(m))
 
     def _start_server(self):
-        """Start HTTP control server."""
+        """Start HTTP control server with dynamic port allocation."""
         pet = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -280,16 +279,29 @@ class PetBase:
             def log_message(self, *a):
                 pass
 
-        try:
-            HTTPServer.allow_reuse_address = True
-            srv = HTTPServer(('127.0.0.1', PORT), Handler)
+        # Find an available port starting from 41983
+        HTTPServer.allow_reuse_address = True
+        assigned_port = None
+        for p in range(41983, 42000):
+            try:
+                srv = HTTPServer(('127.0.0.1', p), Handler)
+                assigned_port = p
+                break
+            except OSError as e:
+                if e.errno == 48:
+                    print(f'⚠ Port {p} already in use, try next port')
+                    continue
+                else:
+                    raise
+
+        if assigned_port:
             threading.Thread(target=srv.serve_forever, daemon=True).start()
-            print(f'✓ Server: http://127.0.0.1:{PORT}/?state=walk')
-        except OSError as e:
-            if e.errno == 48:
-                print(f'⚠ Port {PORT} already in use')
-            else:
-                raise
+            print(f'✓ Server: http://127.0.0.1:{assigned_port}/?state=walk')
+            print(f'__PET_PORT_READY__:{assigned_port}')
+            sys.stdout.flush()
+        else:
+            print('⚠ Failed to bind any port')
+            raise
 
 
 # ============================================================================
@@ -1068,17 +1080,6 @@ else:
                 self.app.exec()
 
 if __name__ == '__main__':
-    # Singleton: if port already in use, another instance is running
-    import socket
-    _s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        _s.connect(('127.0.0.1', PORT))
-        _s.close()
-        print(f'⚠ Pet already running on port {PORT}, exiting.')
-        sys.exit(0)
-    except ConnectionRefusedError:
-        pass
-
     if sys.platform == 'darwin':
         pet = MacPet('vita')
         pet.run()

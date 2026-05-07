@@ -246,6 +246,11 @@ if __name__ == '__main__':
             log_dir = os.path.join(script_dir, 'temp/reflect_logs'); os.makedirs(log_dir, exist_ok=True)
             script_name = os.path.splitext(os.path.basename(args.reflect))[0]
             open(os.path.join(log_dir, f'{script_name}_{datetime.now():%Y-%m-%d}.log'), 'a', encoding='utf-8').write(f'[{datetime.now():%m-%d %H:%M}]\n{result}\n\n')
+            try:
+                from scheduled_context import record_scheduled_output
+                record_scheduled_output(task, result, script_dir)
+            except Exception as e:
+                print(f'[Reflect] scheduled context error: {e}')
             if (on_done := getattr(mod, 'on_done', None)):
                 try: on_done(result)
                 except Exception as e: print(f'[Reflect] on_done error: {e}')

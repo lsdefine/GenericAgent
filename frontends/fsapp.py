@@ -4,7 +4,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 os.chdir(PROJECT_ROOT)
 from agentmain import GeneraticAgent
-from frontends.chatapp_common import format_restore
+from frontends.chatapp_common import format_restore, with_scheduled_context
 from frontends.continue_cmd import handle_frontend_command as handle_continue_frontend, reset_conversation
 from llmcore import mykeys
 
@@ -604,7 +604,7 @@ def handle_message(data):
         if not hasattr(agent, '_turn_end_hooks'): agent._turn_end_hooks = {}
         agent._turn_end_hooks[hook_key] = _make_task_hook(card, done_event, on_final)
         try:
-            agent.put_task(user_input, source="feishu", images=image_paths)
+            agent.put_task(with_scheduled_context(user_input), source="feishu", images=image_paths)
             start = time.time()
             while not done_event.wait(timeout=3):
                 if not user_tasks.get(open_id, {}).get("running", True):

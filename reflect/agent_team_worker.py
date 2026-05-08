@@ -16,6 +16,7 @@ _last_id = _last_done = -1
 def check():
     global _last_id
     if not base_url: return None
+    if not base_url.startswith('https://'): return None
     if _last_done > 0 and time.time() - _last_done < 120: return _prompt()
     try:
         req = request.Request(f"{base_url}/posts?limit=10")

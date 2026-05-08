@@ -18,7 +18,8 @@ def get_screen_width():
 
 def start_streamlit(port):
     global proc
-    cmd = [sys.executable, "-m", "streamlit", "run", os.path.join(frontends_dir, "stapp.py"), "--server.port", str(port), "--server.address", "localhost", "--server.headless", "true"]
+    # cmd = [sys.executable, "-m", "streamlit", "run", os.path.join(frontends_dir, "stapp.py"), "--server.port", str(port), "--server.address", "localhost", "--server.headless", "true"]
+    cmd = [sys.executable, "-m", "streamlit", "run", os.path.join(frontends_dir, "stapp.py"), "--server.port", str(port), "--server.address", "0.0.0.0", "--server.headless", "true"]
     proc = subprocess.Popen(cmd)
     atexit.register(proc.kill)
 

@@ -84,14 +84,28 @@ def agent_runner_loop(client, system_prompt, user_input, handler, tools_schema, 
             if outcome.should_exit: 
                 exit_reason = {'result': 'EXITED', 'data': outcome.data}; break
             if not outcome.next_prompt: 
-                exit_reason = {'result': 'CURRENT_TASK_DONE', 'data': outcome.data}; break
+                # 关键修复：next_prompt 为空时强制退出，防止死循环
+                # 这解决了输出截断导致任务完成信号丢失的问题
+                exit_reason = {'result': 'CURRENT_TASK_DONE', 'data': outcome.data}
+                # 添加调试信息
+                if verbose:
+                    yield f"\n[DEBUG] next_prompt is empty, exiting with: {exit_reason}\n"
+                break
             if outcome.next_prompt.startswith('未知工具'): client.last_tools = ''
             if outcome.data is not None and tool_name != 'no_tool': 
                 datastr = json.dumps(outcome.data, ensure_ascii=False, default=json_default) if type(outcome.data) in [dict, list] else str(outcome.data) 
                 tool_results.append({'tool_use_id': tid, 'content': datastr})
             next_prompts.add(outcome.next_prompt)
-        if len(next_prompts) == 0 or exit_reason:
-            if len(handler._done_hooks) == 0 or exit_reason.get('result', '') == 'EXITED': break
+        # 关键修复：检查是否所有 next_prompt 都是 None 或空
+        # 如果都是空的，说明任务完成或输出被截断，应该退出
+        all_empty = all(p is None or p == '' for p in next_prompts)
+        if all_empty or exit_reason:
+            if all_empty and len(handler._done_hooks) == 0:
+                # 所有 next_prompt 都为空，且没有 done_hooks，强制退出
+                exit_reason = {'result': 'ALL_NEXT_PROMPTS_EMPTY', 'data': '所有 next_prompt 都为空，任务完成'}
+                break
+            if exit_reason.get('result', '') == 'EXITED':
+                break
             next_prompts.add(handler._done_hooks.pop(0))
         next_prompt = handler.turn_end_callback(response, tool_calls, tool_results, turn, '\n'.join(next_prompts), exit_reason)
         messages = [{"role": "user", "content": next_prompt, "tool_results": tool_results}]   # just new message, history is kept in *Session

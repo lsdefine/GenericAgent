@@ -17,6 +17,7 @@ TurnHookFn = Callable[[TurnContext], None]
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from agentmain import GeneraticAgent
+from ask_user_render import extract_ask_user_event, format_ask_user_message, summarize_tool_args
 from chatapp_common import (AgentChatMixin, FILE_HINT, build_done_text, clean_reply,
                             ensure_single_instance, extract_files, public_access,
                             redirect_log, require_runtime, split_text, strip_files)
@@ -52,7 +53,12 @@ def _tprint(*a, **kw):
 def _fmt_tool(tc):
     name = tc.get("tool_name", "?")
     args = {k: v for k, v in (tc.get("args") or {}).items() if not k.startswith("_")}
-    return f"{name}({str(args)[:120]})"
+    preview = summarize_tool_args(name, args, max_len=120)
+    if not preview:
+        return name
+    if name == "ask_user":
+        return f"{name}: {preview}"
+    return f"{name}({preview})"
 
 # ── WeComApp ────────────────────────────────────────────────────────
 class WeComApp(AgentChatMixin):
@@ -162,6 +168,7 @@ class WeComApp(AgentChatMixin):
             """Turn-end callback injected into agent. ctx = locals() from ga.py."""
             try:
                 if ctx.get("exit_reason"):
+                    result["ask_user"] = extract_ask_user_event(ctx.get("exit_reason"))
                     resp = ctx.get("response")
                     result["raw"] = resp.content if hasattr(resp, "content") else str(resp)
                     result["summary"] = ctx.get("summary")
@@ -198,7 +205,10 @@ class WeComApp(AgentChatMixin):
 
             if result.get("raw") is not None:
                 self._stats["completed"] += 1
-                await self.send_done(chat_id, result["raw"])
+                if result.get("ask_user"):
+                    await self.send_text(chat_id, format_ask_user_message(result["ask_user"]))
+                else:
+                    await self.send_done(chat_id, result["raw"])
                 label = result.get("summary") or f'{len(result["raw"])} 字'
                 _tprint(f"[{_ts()}] ✅ Done ({chat_id}) — {label}")
             elif not state["running"]:

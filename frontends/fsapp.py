@@ -4,6 +4,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 os.chdir(PROJECT_ROOT)
 from agentmain import GeneraticAgent
+from ask_user_render import extract_ask_user_event, format_ask_user_message, summarize_tool_args
 from frontends.chatapp_common import format_restore
 from frontends.continue_cmd import handle_frontend_command as handle_continue_frontend, reset_conversation
 from llmcore import mykeys
@@ -452,7 +453,12 @@ def _build_user_message(message):
 def _fmt_tool_call(tc):
     name = tc.get('tool_name', '?')
     args = {k: v for k, v in (tc.get('args') or {}).items() if not k.startswith('_')}
-    return f"- `{name}`({json.dumps(args, ensure_ascii=False)[:200]})"
+    preview = summarize_tool_args(name, args, max_len=200)
+    if not preview:
+        return f"- `{name}`"
+    if name == 'ask_user':
+        return f"- `{name}` · {preview}"
+    return f"- `{name}`({preview})"
 
 
 def _build_step_detail(resp, tool_calls):
@@ -551,6 +557,17 @@ class _TaskCard:
             self.final = (text or "_(无文本输出)_")[:self._FINAL_LIMIT]
             self._push()
 
+    def ask_user(self, text):
+        self.status = "🙋 等待用户回复"
+        self.final = (text or "_(等待用户输入)_")[:self._FINAL_LIMIT]
+        ok, limit = self._push()
+        if limit:
+            self._rollover()
+            self.steps = []
+            self.turn_base = self.turn_no + 1
+            self.final = (text or "_(等待用户输入)_")[:self._FINAL_LIMIT]
+            self._push()
+
     def fail(self, msg):
         self.status = f"❌ {msg}"
         self._push()
@@ -561,6 +578,11 @@ def _make_task_hook(card, done_event, on_final):
     def hook(ctx):
         try:
             if ctx.get('exit_reason'):
+                ask_user_event = extract_ask_user_event(ctx.get('exit_reason'))
+                if ask_user_event:
+                    card.ask_user(format_ask_user_message(ask_user_event))
+                    done_event.set()
+                    return
                 resp = ctx.get('response')
                 raw = resp.content if hasattr(resp, 'content') else str(resp)
                 card.done(_display_text(raw))

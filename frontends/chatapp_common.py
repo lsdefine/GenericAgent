@@ -1,5 +1,7 @@
 import ast, asyncio, glob, json, os, queue as Q, re, socket, sys, time
 
+from ask_user_render import extract_ask_user_event, extract_ask_user_event_from_text, format_ask_user_message
+
 HELP_COMMANDS = (
     ("/help", "显示帮助"),
     ("/status", "查看状态"),
@@ -193,6 +195,9 @@ def format_restore():
 
 
 def build_done_text(raw_text):
+    ask_user_event = extract_ask_user_event_from_text(raw_text)
+    if ask_user_event:
+        return format_ask_user_message(ask_user_event)
     files = [p for p in extract_files(raw_text) if os.path.exists(p)]
     body = strip_files(clean_reply(raw_text))
     if files:
@@ -305,6 +310,17 @@ class AgentChatMixin:
     async def run_agent(self, chat_id, text, **ctx):
         state = {"running": True}
         self.user_tasks[chat_id] = state
+        ask_user_state = {}
+        hook_key = f"{self.source}_ask_user_{chat_id}_{time.time_ns()}"
+        if not hasattr(self.agent, "_turn_end_hooks"):
+            self.agent._turn_end_hooks = {}
+
+        def _capture_ask_user(ctx_data):
+            event = extract_ask_user_event((ctx_data or {}).get("exit_reason"))
+            if event:
+                ask_user_state["event"] = event
+
+        self.agent._turn_end_hooks[hook_key] = _capture_ask_user
         try:
             await self.send_text(chat_id, "思考中...", **ctx)
             dq = self.agent.put_task(f"{FILE_HINT}\n\n{text}", source=self.source)
@@ -318,7 +334,11 @@ class AgentChatMixin:
                         last_ping = time.time()
                     continue
                 if "done" in item:
-                    await self.send_done(chat_id, item.get("done", ""), **ctx)
+                    ask_user_event = ask_user_state.get("event")
+                    if ask_user_event:
+                        await self.send_text(chat_id, format_ask_user_message(ask_user_event), **ctx)
+                    else:
+                        await self.send_done(chat_id, item.get("done", ""), **ctx)
                     break
             if not state["running"]:
                 await self.send_text(chat_id, "⏹️ 已停止", **ctx)
@@ -328,6 +348,7 @@ class AgentChatMixin:
             traceback.print_exc()
             await self.send_text(chat_id, f"❌ 错误: {e}", **ctx)
         finally:
+            self.agent._turn_end_hooks.pop(hook_key, None)
             self.user_tasks.pop(chat_id, None)
 
 

@@ -544,7 +544,14 @@ class GenericAgentHandler(BaseHandler):
         else:
             tc = tool_calls[0]; tool_name, args = tc['tool_name'], tc['args']   # at least one because no_tool
             clean_args = {k: v for k, v in args.items() if not k.startswith('_')}
-            summary = f"调用工具{tool_name}, args: {clean_args}"
+            if tool_name == 'ask_user':
+                question = str(clean_args.get('question') or '请提供输入：').strip() or '请提供输入：'
+                candidates = [str(c).strip() for c in (clean_args.get('candidates') or []) if str(c).strip()]
+                summary = f"等待用户回复：{question}"
+                if candidates:
+                    summary += f"（{len(candidates)} 个选项）"
+            else:
+                summary = f"调用工具{tool_name}, args: {clean_args}"
             if tool_name == 'no_tool': summary = "直接回答了用户问题"
             next_prompt += "\n\n\nUSER: <summary>呢？？？！\n\n"
         summary = smart_format(summary.replace('\n', ''), max_str_len=80)

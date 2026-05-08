@@ -1,13 +1,19 @@
 """Keychain: save key to a file, then keys.set("name", file="path"); keys.name.use() to retrieve (use but no print)."""
-import json, os, hashlib, pathlib, getpass
+import json, os, pathlib, getpass
+from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+import base64
 
 _PATH = pathlib.Path.home() / "ga_keychain.enc"
 try: _user = os.getlogin()
 except OSError: _user = getpass.getuser()
-_MASK = hashlib.sha256(f"{_user}@ga_keychain".encode()).digest()
 
-def _xor(data: bytes) -> bytes:
-    return bytes(b ^ _MASK[i % len(_MASK)] for i, b in enumerate(data))
+def _get_fernet(password: str) -> Fernet:
+    salt = b"ga_keychain_salt_v1"
+    kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt, iterations=480000)
+    key = base64.urlsafe_b64encode(kdf.derive(password.encode()))
+    return Fernet(key)
 
 class SecretStr:
     def __init__(self, name: str, val: str):
@@ -26,9 +32,14 @@ class SecretStr:
 class _Keys:
     def __init__(self):
         self._d = {}
+        self._fernet = None
         if _PATH.exists():
             try:
-                self._d = json.loads(_xor(_PATH.read_bytes()))
+                data = _PATH.read_bytes()
+                if data:
+                    password = getpass.getpass("[keychain] Enter password to decrypt: ")
+                    self._fernet = _get_fernet(password)
+                    self._d = json.loads(self._fernet.decrypt(data))
             except Exception as e:
                 print(f"[keychain] WARNING: failed to load {_PATH}: {e}")
                 print(f"[keychain] Starting with empty keychain. Old file kept as .bak")
@@ -40,7 +51,10 @@ class _Keys:
     def set(self, k, v=None, *, file=None):
         if file: v = pathlib.Path(file).read_text().strip()
         self._d[k] = v
-        _PATH.write_bytes(_xor(json.dumps(self._d).encode()))
+        if self._fernet is None:
+            password = getpass.getpass("[keychain] Set a password for encryption: ")
+            self._fernet = _get_fernet(password)
+        _PATH.write_bytes(self._fernet.encrypt(json.dumps(self._d).encode()))
     def ls(self): return list(self._d.keys())
 
 keys = _Keys()

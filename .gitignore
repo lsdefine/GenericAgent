@@ -13,6 +13,9 @@ dist/
 
 .streamlit/
 
+node_modules/
+frontends/uploads/
+
 .vscode/
 .idea/
 *.swp

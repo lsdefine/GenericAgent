@@ -1,0 +1,17 @@
+{
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 5173",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "4.3.4",
+    "vite": "5.4.21",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "lucide-react": "0.468.0",
+    "marked": "15.0.12",
+    "dompurify": "3.2.4"
+  },
+  "devDependencies": {}
+}

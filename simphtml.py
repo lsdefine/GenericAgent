@@ -83,21 +83,24 @@ function createEnhancedDOMCopy() {
       const hasVisualBg = bgAlpha > 0.1 || style.backgroundImage !== 'none' || (style.backdropFilter && style.backdropFilter !== 'none') || style.boxShadow !== 'none';
       
       if (!hasVisualBg && childrenInfos.length > 0) {
-        let minL = Infinity, minT = Infinity, maxR = -Infinity, maxB = -Infinity;
-        for (const cInfo of childrenInfos) {
-          minL = Math.min(minL, cInfo.rect.left);
-          minT = Math.min(minT, cInfo.rect.top);
-          maxR = Math.max(maxR, cInfo.rect.right);
-          maxB = Math.max(maxB, cInfo.rect.bottom);
+        // Skip fixed/absolute children when computing parent's merged rect (they're out of flow)
+        const flowChildren = childrenInfos.filter(cInfo => cInfo.style && cInfo.style.position !== 'fixed' && cInfo.style.position !== 'absolute');
+        if (flowChildren.length > 0) {
+          let minL = Infinity, minT = Infinity, maxR = -Infinity, maxB = -Infinity;
+          for (const cInfo of flowChildren) {
+            minL = Math.min(minL, cInfo.rect.left);
+            minT = Math.min(minT, cInfo.rect.top);
+            maxR = Math.max(maxR, cInfo.rect.right);
+            maxB = Math.max(maxB, cInfo.rect.bottom);
+          }
+          info.rect = { left: minL, top: minT, right: maxR, bottom: maxB, width: maxR - minL, height: maxB - minT };
+          info.area = info.rect.width * info.rect.height;
+        } else {
+          const maxC = childrenInfos.filter(i => i.isVisible).sort((a, b) => b.area - a.area)[0];
+          if (maxC && maxC.area > 10000 && (!isVisible || maxC.area > info.area * 5)) info = maxC;
         }
-        info.rect = { left: minL, top: minT, right: maxR, bottom: maxB, width: maxR - minL, height: maxB - minT };
-        info.area = info.rect.width * info.rect.height;
-      } else {
-        const maxC = childrenInfos.filter(i => i.isVisible).sort((a, b) => b.area - a.area)[0];
-        if (maxC && maxC.area > 10000 && (!isVisible || maxC.area > info.area * 5)) info = maxC;
       }
     }
-    nodeInfo.set(clone, info);
 
     if (sourceNode.nodeType === 1 && sourceNode.tagName === 'DIV') {    
       if (!hasValidChildren && !sourceNode.textContent.trim()) return null; 

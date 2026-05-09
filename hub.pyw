@@ -17,10 +17,11 @@ def acquire_singleton():
 
 def discover_services():
     services = []
+    EXCLUDES = {'goal_mode.py', 'chatapp_common.py', 'tuiapp.py'}
     reflect_dir = os.path.join(BASE_DIR, 'reflect')
     if os.path.isdir(reflect_dir):
         for f in sorted(os.listdir(reflect_dir)):
-            if f.endswith('.py') and not f.startswith('_'):
+            if f.endswith('.py') and not f.startswith('_') and f not in EXCLUDES:
                 services.append({
                     'name': 'reflect/' + f,
                     'cmd': [sys.executable, 'agentmain.py', '--reflect', 'reflect/' + f],
@@ -28,7 +29,7 @@ def discover_services():
     frontends_dir = os.path.join(BASE_DIR, 'frontends')
     if os.path.isdir(frontends_dir):
         for f in sorted(os.listdir(frontends_dir)):
-            if 'app' in f and f.endswith('.py') and f != 'chatapp_common.py':
+            if 'app' in f and f.endswith('.py') and f not in EXCLUDES:
                 if 'stapp' in f: cmd = [sys.executable, '-m', 'streamlit', 'run', 'frontends/' + f, '--server.headless=true']
                 else: cmd = [sys.executable, 'frontends/' + f]
                 services.append({'name': 'frontends/' + f, 'cmd': cmd})

@@ -58,6 +58,8 @@ python3 --version
 
 用任意文本编辑器打开 `mykey.py`，填入你的 API 信息。**选一种填就行**，不用的配置删掉或留着不管都行。
 
+> 💡 也可以运行交互式向导 `python assets/configure_mykey.py`，按提示选择厂商、填入 Key 即可自动生成 `mykey.py`。
+
 ### 配置示例
 
 **最常见的用法：**

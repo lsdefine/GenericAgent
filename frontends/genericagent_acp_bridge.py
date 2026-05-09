@@ -159,6 +159,7 @@ class GenericAgentAcpBridge:
         agent = GeneraticAgent()
         agent.next_llm(self.llm_no)
         agent.verbose = True
+        agent.inc_out = True
         threading.Thread(target=agent.run, daemon=True).start()
         return agent
 
@@ -264,28 +265,47 @@ class GenericAgentAcpBridge:
         threading.Thread(target=run_prompt, daemon=True).start()
 
     def _drain_agent_queue(self, session: SessionState, dq: "queue.Queue[Dict[str, Any]]") -> None:
-        last_sent = ""
+        sent_any = False
         while True:
             item = dq.get()
             if not isinstance(item, dict):
                 continue
-            text = item.get("done") or item.get("next") or ""
-            if isinstance(text, str) and len(text) > len(last_sent):
-                delta = text[len(last_sent):]
-                last_sent = text
-                try:
-                    self.write_message(
-                        make_session_update(
-                            session.session_id,
-                            {
-                                "sessionUpdate": "agent_message_chunk",
-                                "content": make_text_block(delta),
-                            },
+            # With inc_out=True, "next" items are already incremental deltas.
+            if "next" in item and "done" not in item:
+                delta = item["next"]
+                if isinstance(delta, str) and delta:
+                    sent_any = True
+                    try:
+                        self.write_message(
+                            make_session_update(
+                                session.session_id,
+                                {
+                                    "sessionUpdate": "agent_message_chunk",
+                                    "content": make_text_block(delta),
+                                },
+                            )
                         )
-                    )
-                except Exception as e:
-                    eprint(f"[ACP-BRIDGE] ERROR writing update: {e}")
+                    except Exception as e:
+                        eprint(f"[ACP-BRIDGE] ERROR writing update: {e}")
             if "done" in item:
+                # "done" text has post-processing (</summary>\n\n insertion)
+                # that shifts offsets — cannot safely compute a tail delta.
+                # Only use "done" content if nothing was streamed (error case).
+                if not sent_any:
+                    done_text = item["done"]
+                    if isinstance(done_text, str) and done_text:
+                        try:
+                            self.write_message(
+                                make_session_update(
+                                    session.session_id,
+                                    {
+                                        "sessionUpdate": "agent_message_chunk",
+                                        "content": make_text_block(done_text),
+                                    },
+                                )
+                            )
+                        except Exception as e:
+                            eprint(f"[ACP-BRIDGE] ERROR writing done: {e}")
                 break
 
     def handle_session_cancel(self, params: Dict[str, Any]) -> None:

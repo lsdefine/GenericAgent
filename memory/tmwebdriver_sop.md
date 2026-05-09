@@ -11,7 +11,8 @@
 ## 限制(isTrusted)
 - JS事件`isTrusted=false`，敏感操作（如文件上传/部分按钮）可能被拦截；这类场景首选**CDP桥**
 - ⚠JS点击按钮打不开新tab→可能是浏览器弹窗拦截，换CDP点击试试
-- 文件上传：JS无法填充`<input type=file>`；首选CDP batch：getDocument→querySelector→DOM.setFileInputFiles，备选ljqCtrl物理点击
+- Vue3自定义组件(Select/Dropdown)：⭐优先vnode实例调用(无视口限制)→见**vue3_component_sop**；CDP坐标点击仅适合选项少且可见的场景
+- 文件上传：⭐首选**DataTransfer API**（纯JS，无CDP依赖）：`new File([content],name,{type}) → new DataTransfer().items.add(file) → input.files=dt.files → dispatch input+change`；CDP `DOM.setFileInputFiles` 在tmwd桥环境nodeId跨调用失效，不推荐；备选ljqCtrl物理点击
 - 需转物理坐标时：`physX = (screenX + rect中心x) * dpr`，`physY = (screenY + chromeH + rect中心y) * dpr`；其中 `chromeH = outerHeight - innerHeight`
 
 ## 导航
@@ -73,10 +74,20 @@ web_execute_js script='{"cmd": "batch", "commands": [...]}'
   - ⚠tabId：CDP默认sender.tab.id(当前注入页)，跨tab需显式tabId或先batch内tabs查
 - ⭐跨tab无需前台：指定tabId即可操作后台标签页
 
-## CDP点击完整生命周期（未验证，BBS#23）
+## CDP点击完整生命周期（✅已验证）
 - 通用点击需**三事件序列**：mouseMoved → mousePressed → mouseReleased（间隔50-100ms）
   - 省略mouseMoved会导致MUI Tooltip/Ant Design Dropdown等hover依赖组件失效
   - ⚠autofill释放是特例，只需mousePressed即可（见下方autofill章节）
+- ⭐**坐标系结论**：稳定状态下 CDP坐标 = `getBoundingClientRect()` 坐标，**无需修正**
+  - ⚠**首次attach陷阱**：CDP debugger首次attach时Chrome弹出infobar("正在受自动化控制"，~20px高)，页面内容被推下
+  - 如果在attach前测量坐标、attach后发送点击 → 坐标偏移！（之前Currency下拉失败的根因）
+  - ✅**解决**：确保测量坐标在CDP已attach稳定之后（即infobar已出现后再getBoundingClientRect）
+  - 实践：首次CDP操作前先发一个无害的`mouseMoved(0,0)`预热，之后坐标系就稳定了
+- ⭐**下拉框(Vue3 oxd-select等)CDP操作流程**：
+  1. 获取select元素rect → CDP点击打开下拉
+  2. 获取option元素rect → CDP点击选中（option是动态DOM，打开后才能测量）
+  - 已验证：CDP点击对自定义下拉框有效，无isTrusted问题
+  - ⚠**限制**：选项多时底部option超出视口，CDP坐标够不着→此时应优先vnode方案(见vue3_component_sop)
 - 坐标修正（页面有transform:scale/zoom时）：
   ```js
   var scale = window.visualViewport ? window.visualViewport.scale : 1;

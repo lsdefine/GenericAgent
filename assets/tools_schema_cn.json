@@ -29,9 +29,10 @@
   }},
   {"type": "function", "function": {
     "name": "file_write",
-    "description": "用于文件的新建、全量覆盖或追加写入。对于精细的代码修改，应优先使用 file_patch。注意：要写入的内容必须放在回复正文的 <file_content> 标签或代码块中。写入内容支持 {{file:路径:起始行:结束行}} 语法引用文件片段，写入前自动展开",
+    "description": "用于文件的新建、全量覆盖或追加写入。对于精细的代码修改，应优先使用 file_patch。写入内容支持 {{file:路径:起始行:结束行}} 语法引用文件片段，写入前自动展开",
     "parameters": {"type": "object", "properties": {
       "path": {"type": "string", "description": "文件路径"},
+      "content": {"type": "string"},
       "mode": {"type": "string", "enum": ["overwrite", "append", "prepend"], "description": "写入模式覆盖、追加或在开头追加", "default": "overwrite"}}}
   }},
   {"type": "function", "function": {

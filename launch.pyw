@@ -18,7 +18,7 @@ def get_screen_width():
 
 def start_streamlit(port):
     global proc
-    cmd = [sys.executable, "-m", "streamlit", "run", os.path.join(frontends_dir, "stapp.py"), "--server.port", str(port), "--server.address", "localhost", "--server.headless", "true"]
+    cmd = [sys.executable, "-m", "streamlit", "run", os.path.join(frontends_dir, "stapp.py"), "--server.port", str(port), "--server.address", "localhost", "--server.headless", "true", "--client.toolbarMode", "viewer"]
     proc = subprocess.Popen(cmd)
     atexit.register(proc.kill)
 
@@ -85,6 +85,7 @@ if __name__ == '__main__':
     parser.add_argument('--tg', action='store_true', help='启动 Telegram Bot'); 
     parser.add_argument('--qq', action='store_true', help='启动 QQ Bot');
     parser.add_argument('--feishu', '--fs', dest='feishu', action='store_true', help='启动 Feishu Bot');
+    parser.add_argument('--wechat', '--wx', dest='wechat', action='store_true', help='启动 WeChat Bot');
     parser.add_argument('--wecom', action='store_true', help='启动 WeCom Bot');
     parser.add_argument('--dingtalk', '--dt', dest='dingtalk', action='store_true', help='启动 DingTalk Bot');
     parser.add_argument('--sched', action='store_true', help='启动计划任务调度器')
@@ -111,6 +112,12 @@ if __name__ == '__main__':
         atexit.register(fsproc.kill)
         print('[Launch] Feishu Bot started')
     else: print('[Launch] Feishu Bot not enabled (use --feishu to start)')
+
+    if args.wechat:
+        wxproc = subprocess.Popen([sys.executable, os.path.join(frontends_dir, 'wechatapp.py')], creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
+        atexit.register(wxproc.kill)
+        print('[Launch] WeChat Bot started')
+    else: print('[Launch] WeChat Bot not enabled (use --wechat to start)')
 
     if args.wecom:
         wcproc = subprocess.Popen([sys.executable, os.path.join(frontends_dir, "wecomapp.py")], creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)

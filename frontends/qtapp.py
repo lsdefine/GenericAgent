@@ -29,6 +29,7 @@ from PySide6.QtGui import (
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from agentmain import GeneraticAgent
+from chatapp_common import FILE_HINT, HELP_TEXT, clean_reply, build_done_text, format_restore
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -289,6 +290,9 @@ TEXT_FILE_EXTS = {
     ".log", ".ini", ".toml", ".xml", ".html", ".js", ".ts", ".sql",
 }
 MAX_INLINE_CHARS = 6000
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
+AUTO_IDLE_THRESHOLD = 1800  # seconds before autonomous trigger
+AUTO_COOLDOWN = 120         # seconds between triggers
 
 C = {
     "bg":       QColor(14, 14, 18),
@@ -304,6 +308,9 @@ C = {
     "send_g0":  QColor(220, 38, 38),
     "send_g1":  QColor(239, 68, 68),
     "green":    "#22c55e",
+    "hover_bg": "rgba(63,63,70,0.6)",
+    "accent_bg":"rgba(124,58,237,0.25)",
+    "accent_bdr":"rgba(124,58,237,0.5)",
 }
 
 SCROLLBAR_STYLE = """
@@ -539,6 +546,28 @@ class _StreamingBadge(QLabel):
         self.hide()
 
 
+class _FoldableTextBrowser(QTextBrowser):
+    """QTextBrowser subclass that reliably detects clicks on fold anchors."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.viewport().installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        from PySide6.QtCore import QEvent
+        if obj is self.viewport() and event.type() == QEvent.MouseButtonRelease:
+            href = self.anchorAt(event.pos())
+            if href and href.startswith("#fold_"):
+                from urllib.parse import unquote
+                title = unquote(href[6:])
+                p = self.parent()
+                while p and not isinstance(p, _MsgRow):
+                    p = p.parent()
+                if p and hasattr(p, '_toggle_fold'):
+                    p._toggle_fold(title)
+                    return True
+        return super().eventFilter(obj, event)
+
+
 class _MsgRow(QWidget):
     """A single message row – flat layout with avatar, inspired by ChatGPT / Qwen."""
 
@@ -546,27 +575,28 @@ class _MsgRow(QWidget):
         QPushButton {
             background: transparent; border: none; border-radius: 4px; padding: 3px;
         }
-        QPushButton:hover { background: rgba(63,63,70,0.6); }
-    """
-
-    def __init__(self, text: str, role: str, parent=None, on_resend=None):
+        QPushButton:hover { background: %s; }
+    """ % C["hover_bg"]
+    def __init__(self, text: str, role: str, parent=None, on_resend=None, on_delete=None, on_rewrite=None, created_at: str = None):
         super().__init__(parent)
         self._text = text
         self._role = role
         self._on_resend = on_resend
+        self._on_delete = on_delete
+        self._on_rewrite = on_rewrite
+        self._created_at = created_at
         self._action_row = None
         self._finished = True
 
         is_user = role == "user"
-        self.setStyleSheet(
-            "background: rgba(255,255,255,0.03);" if is_user else "background: transparent;"
-        )
+        self.setStyleSheet("background: transparent;")
 
         outer = QHBoxLayout(self)
-        outer.setContentsMargins(20, 10, 20, 10)
-        outer.setSpacing(12)
+        outer.setContentsMargins(12, 10, 12, 10)
+        outer.setSpacing(10)
         outer.setAlignment(Qt.AlignTop)
 
+        # ── avatar ──
         avatar = QLabel()
         avatar.setFixedSize(30, 30)
         avatar.setAlignment(Qt.AlignCenter)
@@ -584,31 +614,107 @@ class _MsgRow(QWidget):
             "QLabel { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.10);"
             " border-radius: 15px; }"
         )
-        outer.addWidget(avatar, 0, Qt.AlignTop)
 
-        right = QVBoxLayout()
-        right.setContentsMargins(0, 0, 0, 0)
-        right.setSpacing(2)
+        # ── content column ──
+        content_col = QVBoxLayout()
+        content_col.setContentsMargins(0, 0, 0, 0)
+        content_col.setSpacing(2)
 
         role_lbl = QLabel("你" if is_user else "助手")
         role_lbl.setStyleSheet(
             "color: #d4d4d8; font-size: 12px; font-weight: 700; background: transparent;"
         )
-        right.addWidget(role_lbl)
+        if is_user:
+            role_lbl.setAlignment(Qt.AlignRight)
+        content_col.addWidget(role_lbl)
 
         if is_user:
+            # ── user: right-aligned bubble ──
+            bubble = QWidget()
+            bubble.setStyleSheet(
+                "background: rgba(63,63,70,0.4); border-radius: 12px;"
+            )
+            bubble_ly = QVBoxLayout(bubble)
+            bubble_ly.setContentsMargins(12, 8, 12, 8)
+            bubble_ly.setSpacing(0)
+
             label = QLabel(text)
             label.setWordWrap(True)
             label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-            label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+            label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
             label.setStyleSheet(
                 "QLabel { background: transparent; color: #e4e4e7;"
-                " padding: 2px 0; font-size: 14px; line-height: 1.6; }"
+                " padding: 0; font-size: 14px; line-height: 1.6; }"
             )
-            right.addWidget(label)
+            bubble_ly.addWidget(label)
             self._label = label
+
+            # Size bubble to text: measure longest line, cap at 420
+            fm = label.fontMetrics()
+            text_w = max((fm.horizontalAdvance(ln) for ln in text.split('\n')), default=0)
+            bubble.setMinimumWidth(min(text_w + 24, 420))
+            bubble.setMaximumWidth(420)
+            content_col.addWidget(bubble, 0, Qt.AlignRight)
+
+            # ── user message action row ──
+            self._action_row = QWidget()
+            self._action_row.setStyleSheet("background: transparent;")
+            alayout = QHBoxLayout(self._action_row)
+            alayout.setContentsMargins(0, 4, 0, 0)
+            alayout.setSpacing(4)
+            alayout.setAlignment(Qt.AlignRight)
+
+            icon_sz = QSize(15, 15)
+
+            copy_btn = QPushButton()
+            copy_btn.setIcon(_svg_icon("copy", _SVG_COPY))
+            copy_btn.setIconSize(icon_sz)
+            copy_btn.setFixedSize(26, 24)
+            copy_btn.setStyleSheet(self._ACTION_BTN)
+            copy_btn.setToolTip("复制")
+            copy_btn.setCursor(QCursor(Qt.PointingHandCursor))
+            copy_btn.clicked.connect(self._copy_text)
+            alayout.addWidget(copy_btn)
+
+            if on_delete:
+                delete_btn = QPushButton()
+                delete_btn.setIcon(_svg_icon("delete", _SVG_TRASH))
+                delete_btn.setIconSize(icon_sz)
+                delete_btn.setFixedSize(26, 24)
+                delete_btn.setStyleSheet(self._ACTION_BTN)
+                delete_btn.setToolTip("删除")
+                delete_btn.setCursor(QCursor(Qt.PointingHandCursor))
+                delete_btn.clicked.connect(self._do_delete)
+                alayout.addWidget(delete_btn)
+
+            if on_rewrite:
+                rewrite_btn = QPushButton()
+                rewrite_btn.setIcon(_svg_icon("rewrite", _SVG_RESET))
+                rewrite_btn.setIconSize(icon_sz)
+                rewrite_btn.setFixedSize(26, 24)
+                rewrite_btn.setStyleSheet(self._ACTION_BTN)
+                rewrite_btn.setToolTip("重写")
+                rewrite_btn.setCursor(QCursor(Qt.PointingHandCursor))
+                rewrite_btn.clicked.connect(self._do_rewrite)
+                alayout.addWidget(rewrite_btn)
+
+            alayout.addStretch()
+
+            if created_at:
+                from datetime import datetime
+                try:
+                    dt = datetime.fromisoformat(created_at)
+                    time_lbl = QLabel(dt.strftime("%Y-%m-%d %H:%M"))
+                    time_lbl.setStyleSheet("color: #a1a1aa; font-size: 11px; background: transparent;")
+                    alayout.addWidget(time_lbl)
+                except:
+                    pass
+
+            self._action_row.hide()
+            content_col.addWidget(self._action_row, 0, Qt.AlignRight)
         else:
-            browser = QTextBrowser()
+            # ── assistant: left-aligned, no bubble ──
+            browser = _FoldableTextBrowser()
             browser.setReadOnly(True)
             browser.setOpenExternalLinks(True)
             browser.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -619,9 +725,11 @@ class _MsgRow(QWidget):
                 "QTextBrowser { background: transparent; color: #e4e4e7;"
                 " border: none; padding: 0; font-size: 14px; }"
             )
-            browser.setHtml(_md_to_html(text))
+            self._folded_ids = set()  # 记录被折叠的块
+            self._auto_fold_new_blocks(text)
+            browser.setHtml(self._render_with_folds(text))
             self._label = browser
-            right.addWidget(browser)
+            content_col.addWidget(browser)
             self._adjust_browser_height()
 
             self._action_row = QWidget()
@@ -642,6 +750,17 @@ class _MsgRow(QWidget):
             copy_btn.clicked.connect(self._copy_text)
             alayout.addWidget(copy_btn)
 
+            if on_delete:
+                delete_btn = QPushButton()
+                delete_btn.setIcon(_svg_icon("delete", _SVG_TRASH))
+                delete_btn.setIconSize(icon_sz)
+                delete_btn.setFixedSize(26, 24)
+                delete_btn.setStyleSheet(self._ACTION_BTN)
+                delete_btn.setToolTip("删除")
+                delete_btn.setCursor(QCursor(Qt.PointingHandCursor))
+                delete_btn.clicked.connect(self._do_delete)
+                alayout.addWidget(delete_btn)
+
             if on_resend:
                 regen_btn = QPushButton()
                 regen_btn.setIcon(_svg_icon("regen", _SVG_REGEN))
@@ -653,11 +772,39 @@ class _MsgRow(QWidget):
                 regen_btn.clicked.connect(self._do_resend)
                 alayout.addWidget(regen_btn)
 
-            alayout.addStretch()
-            self._action_row.hide()
-            right.addWidget(self._action_row)
+            export_btn = QPushButton()
+            export_btn.setIcon(_svg_icon("save", _SVG_SAVE))
+            export_btn.setIconSize(icon_sz)
+            export_btn.setFixedSize(26, 24)
+            export_btn.setStyleSheet(self._ACTION_BTN)
+            export_btn.setToolTip("导出为md")
+            export_btn.setCursor(QCursor(Qt.PointingHandCursor))
+            export_btn.clicked.connect(self._export_as_md)
+            alayout.addWidget(export_btn)
 
-        outer.addLayout(right, 1)
+            alayout.addStretch()
+
+            if created_at:
+                from datetime import datetime
+                try:
+                    dt = datetime.fromisoformat(created_at)
+                    time_lbl = QLabel(dt.strftime("%Y-%m-%d %H:%M"))
+                    time_lbl.setStyleSheet("color: #a1a1aa; font-size: 11px; background: transparent;")
+                    alayout.addWidget(time_lbl)
+                except:
+                    pass
+
+            self._action_row.hide()
+            content_col.addWidget(self._action_row)
+
+        # ── assemble: assistant left, user right ──
+        if is_user:
+            outer.addStretch(1)
+            outer.addLayout(content_col, 0)
+            outer.addWidget(avatar, 0, Qt.AlignTop)
+        else:
+            outer.addWidget(avatar, 0, Qt.AlignTop)
+            outer.addLayout(content_col, 1)
 
     def _copy_text(self):
         QApplication.clipboard().setText(self._text)
@@ -665,6 +812,30 @@ class _MsgRow(QWidget):
     def _do_resend(self):
         if self._on_resend:
             self._on_resend()
+
+    def _do_delete(self):
+        if self._on_delete:
+            self._on_delete()
+
+    def _do_rewrite(self):
+        if self._on_rewrite:
+            self._on_rewrite()
+
+    def _export_as_md(self):
+        from PySide6.QtWidgets import QFileDialog
+        import os
+        from datetime import datetime
+        default_name = f"msg_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "导出为 Markdown", default_name, "Markdown 文件 (*.md);;所有文件 (*)"
+        )
+        if file_path:
+            try:
+                with open(file_path, "w", encoding="utf-8") as f:
+                    f.write(self._text)
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
 
     def enterEvent(self, event):
         if self._action_row and self._finished:
@@ -700,7 +871,8 @@ class _MsgRow(QWidget):
             self._label.setText(text)
             self._label.adjustSize()
         else:
-            self._label.setHtml(_md_to_html(text))
+            self._auto_fold_new_blocks(text)
+            self._label.setHtml(self._render_with_folds(text))
             self._adjust_browser_height()
 
     def highlight(self, keyword: str):
@@ -742,8 +914,83 @@ class _MsgRow(QWidget):
             self._label.setText(self._text)
             self._label.adjustSize()
         else:
-            self._label.setHtml(_md_to_html(self._text))
+            self._label.setHtml(self._render_with_folds(self._text))
             self._adjust_browser_height()
+
+
+    def _parse_foldable_blocks(self, text: str):
+        """解析文本为可折叠块，返回 [(type, title_or_None, content), ...]"""
+        import re
+        lines = text.split('\n')
+        blocks = []
+        current_type = "normal"
+        current_title = None
+        current_lines = []
+
+        for line in lines:
+            # 检查是否是折叠块开始
+            llm_match = re.match(r'^\s*\*\*LLM Running \(Turn \d+\) \.\.\.\*\*\s*$', line)
+            tool_match = re.match(r'^\s*🛠️\s*Tool:', line)
+            tool_compact_match = re.match(r'^\s*🛠️\s+\w+\(', line)
+
+            is_foldable_start = llm_match or tool_match or tool_compact_match
+
+            if is_foldable_start:
+                if current_lines:
+                    blocks.append((current_type, current_title, '\n'.join(current_lines)))
+
+                title = line.strip()
+                if llm_match:
+                    title = line.strip().replace('**', '')
+                current_type = "foldable"
+                current_title = title
+                current_lines = [line]
+            else:
+                current_lines.append(line)
+
+        if current_lines:
+            blocks.append((current_type, current_title, '\n'.join(current_lines)))
+
+        return blocks
+
+    def _auto_fold_new_blocks(self, text: str):
+        """将新出现的折叠块加入 _folded_ids（仅在此处修改集合）"""
+        for _, title, _ in self._parse_foldable_blocks(text):
+            if title is not None and title not in self._folded_ids:
+                self._folded_ids.add(title)
+
+    def _render_with_folds(self, text: str) -> str:
+        """渲染文本为带折叠的 HTML（纯渲染，不修改 _folded_ids）"""
+        from urllib.parse import quote
+        blocks = self._parse_foldable_blocks(text)
+        html_parts = []
+
+        for i, (block_type, title, content) in enumerate(blocks):
+            if block_type == "normal":
+                html_parts.append(f'<div>{_md_to_html(content)}</div>')
+            else:
+                safe_title = quote(title, safe='')
+                display_title = title.replace('**', '')
+                if title in self._folded_ids:
+                    # 折叠状态：只显示标题 + 展开链接
+                    html_parts.append(
+                        f'<div><p><a href="#fold_{safe_title}" style="color: #a1a1aa; text-decoration: none;">▶ {display_title} (点击展开)</a></p></div>'
+                    )
+                else:
+                    # 展开状态：显示标题 + 折叠链接 + 内容
+                    html_parts.append(
+                        f'<div><p><a href="#fold_{safe_title}" style="color: #a1a1aa; text-decoration: none;">▼ {display_title} (点击折叠)</a></p>{_md_to_html(content)}</div>'
+                    )
+        return '\n'.join(html_parts)
+
+    def _toggle_fold(self, title):
+        """折叠/展开切换"""
+        if title in self._folded_ids:
+            self._folded_ids.remove(title)
+        else:
+            self._folded_ids.add(title)
+        self._label.setHtml(self._render_with_folds(self._text))
+        self._adjust_browser_height()
 
 
 class _TabButton(QPushButton):
@@ -754,12 +1001,12 @@ class _TabButton(QPushButton):
         padding: 0 14px; font-size: 12px; font-weight: 700;
     }}
     QPushButton:hover {{
-        background: rgba(63,63,70,0.6); color: {text};
+        background: {hover_bg}; color: {text};
     }}
     QPushButton:checked {{
-        background: #7c3aed; color: white;
+        background: {accent}; color: white;
     }}
-    """.format(muted=C["muted"], text=C["text"])
+    """.format(muted=C["muted"], text=C["text"], hover_bg=C["hover_bg"], accent=C["accent"])
 
     def __init__(self, text: str, parent=None):
         super().__init__(text, parent)
@@ -832,11 +1079,9 @@ class ChatPanel(QWidget):
         path = QPainterPath()
         path.addRect(0.5, 0.5, self.width() - 1.0, self.height() - 1.0)
         grad = QLinearGradient(0, 0, 0, self.height())
-        grad.setColorAt(0.0, QColor(20, 20, 28, 228))
-        grad.setColorAt(1.0, QColor(10, 10, 14, 242))
+        grad.setColorAt(0.0, QColor(20, 20, 28, 255))
+        grad.setColorAt(1.0, QColor(10, 10, 14, 255))
         p.fillPath(path, grad)
-        p.setPen(QPen(QColor(99, 102, 241, 80), 1.0))
-        p.drawPath(path)
 
     def resizeEvent(self, event):
         path = QPainterPath()
@@ -1140,14 +1385,11 @@ class ChatPanel(QWidget):
                 font-size: 12px;
             }}
             QMenu::item:selected {{
-                background: rgba(63,63,70,0.6);
+                background: {C['hover_bg']};
             }}
         """)
         for i, client in enumerate(self.agent.llmclients):
-            try:
-                name = client.name or "未知"
-            except Exception:
-                name = "未知"
+            name = getattr(client, 'name', None) or "未知"
             act = menu.addAction(f"{name}  #{i + 1}")
             act.triggered.connect(lambda _, idx=i: self._do_switch_to(idx))
         menu.exec(QCursor.pos())
@@ -1236,12 +1478,57 @@ class ChatPanel(QWidget):
 
         self._scroll.setWidget(self._msg_container)
         self._scroll.verticalScrollBar().valueChanged.connect(self._on_scroll)
-        ly.addWidget(self._scroll, 1)
+
+        # ── scroll navigation buttons (centered at bottom of message area) ──
+        scroll_wrapper = QWidget()
+        scroll_wrapper.setStyleSheet("background: transparent;")
+        wrap_ly = QVBoxLayout(scroll_wrapper)
+        wrap_ly.setContentsMargins(0, 0, 0, 0)
+        wrap_ly.setSpacing(0)
+        wrap_ly.addWidget(self._scroll)
+
+        self._nav_widget = QWidget()
+        self._nav_widget.setFixedSize(68, 28)
+        self._nav_widget.setStyleSheet("background: transparent; border: none;")
+        nav_ly = QHBoxLayout(self._nav_widget)
+        nav_ly.setContentsMargins(6, 2, 6, 2)
+        nav_ly.setSpacing(8)
+
+        self._nav_up = QPushButton("∧")
+        self._nav_up.setFixedWidth(26)
+        self._nav_up.setCursor(QCursor(Qt.PointingHandCursor))
+        self._nav_up.setStyleSheet("""
+            QPushButton { background: transparent; color: #71717a; border: none; font-size: 14px; }
+            QPushButton:hover { color: #a1a1aa; }
+            QPushButton:disabled { color: #27272a; }
+        """)
+        self._nav_up.clicked.connect(self._scroll_to_top)
+
+        self._nav_down = QPushButton("∨")
+        self._nav_down.setFixedWidth(26)
+        self._nav_down.setCursor(QCursor(Qt.PointingHandCursor))
+        self._nav_down.setStyleSheet("""
+            QPushButton { background: transparent; color: #71717a; border: none; font-size: 14px; }
+            QPushButton:hover { color: #a1a1aa; }
+            QPushButton:disabled { color: #27272a; }
+        """)
+        self._nav_down.clicked.connect(self._scroll_to_bottom)
+
+        nav_ly.addWidget(self._nav_up)
+        nav_ly.addWidget(self._nav_down)
+
+        wrap_ly.addWidget(self._nav_widget, 0, Qt.AlignHCenter | Qt.AlignBottom)
+        self._nav_widget.setContentsMargins(0, 0, 0, 8)
+        self._nav_widget.hide()
+
+        ly.addWidget(scroll_wrapper, 1)
 
         ly.addWidget(_Separator())
 
         # ── input area ──
         ly.addWidget(self._build_input_area())
+
+        QTimer.singleShot(200, self._update_nav_visibility)
         return page
 
     def _build_input_area(self) -> QWidget:
@@ -1275,7 +1562,14 @@ class ChatPanel(QWidget):
         card_ly.setContentsMargins(14, 10, 10, 10)
         card_ly.setSpacing(6)
 
-        self._input = QTextEdit()
+        class _PlainTextEdit(QTextEdit):
+            def insertFromMimeData(self, source):
+                text = source.text() or source.data("text/plain")
+                if text:
+                    self.insertPlainText(text)
+
+        self._input = _PlainTextEdit()
+        self._input.setAutoFormatting(QTextEdit.AutoNone)
         self._input.setFixedHeight(64)
         self._input.setPlaceholderText("给助手发送消息... Enter发送，Shift+Enter换行")
         self._input.setStyleSheet(f"""
@@ -1362,7 +1656,7 @@ class ChatPanel(QWidget):
             }}
             QListWidget::item:hover {{ background: rgba(55,55,65,0.8);
                 border-color: rgba(124,58,237,0.4); }}
-            QListWidget::item:selected {{ background: rgba(124,58,237,0.25);
+            QListWidget::item:selected {{ background: {C["accent_bg"]};
                 border-color: rgba(124,58,237,0.6); }}
             {SCROLLBAR_STYLE}
         """)
@@ -1456,7 +1750,7 @@ class ChatPanel(QWidget):
         sep.setStyleSheet("color: #f4f4f5; font-weight: 600; font-size: 13px;")
         ly.addWidget(sep)
 
-        self._auto_btn = _action_btn("开启自主行动 (idle > 30 min 自动触发)", "#f59e0b",
+        self._auto_btn = _action_btn(f"开启自主行动 (idle > {AUTO_IDLE_THRESHOLD // 60} min 自动触发)", "#f59e0b",
                                       _svg_icon("bolt", _SVG_BOLT))
         self._auto_btn.setCheckable(True)
         self._auto_btn.clicked.connect(self._do_toggle_auto)
@@ -1544,6 +1838,7 @@ class ChatPanel(QWidget):
     def _start_health_checks(self):
         self._health_results.clear()
         self._health_pending = 0
+        self._health_result_queue = _queue.Queue()
         for entry in self._model_row_widgets:
             entry["dot"].setStyleSheet("color: #71717a; font-size: 11px;")
             entry["dot"].setText("◌")
@@ -1557,6 +1852,12 @@ class ChatPanel(QWidget):
         self._health_poll_timer.start(500)
 
     def _poll_health_results(self):
+        while True:
+            try:
+                idx, ok = self._health_result_queue.get_nowait()
+                self._health_results[idx] = ok
+            except _queue.Empty:
+                break
         self._refresh_model_rows_style()
         if len(self._health_results) >= self._health_pending:
             self._health_poll_timer.stop()
@@ -1576,7 +1877,7 @@ class ChatPanel(QWidget):
             ok = False
         if hasattr(backend, 'raw_msgs') and backend.raw_msgs:
             backend.raw_msgs = [m for m in backend.raw_msgs if m.get("prompt") != "你好"]
-        self._health_results[idx] = ok
+        self._health_result_queue.put((idx, ok))
 
     # ── event filter (Enter key in text edit, Escape to close search) ──────────
     def eventFilter(self, obj, event):
@@ -1618,6 +1919,9 @@ class ChatPanel(QWidget):
             try:
                 with open(path, "rb") as fh:
                     raw = fh.read()
+                if len(raw) > MAX_UPLOAD_BYTES:
+                    print(f"[Attach] 文件过大，已跳过: {name} ({len(raw)} bytes)")
+                    continue
                 self._pending_files.append({"name": name, "type": mime, "raw": raw})
             except Exception as e:
                 print(f"[Attach] Failed to read {path}: {e}")
@@ -1680,6 +1984,13 @@ class ChatPanel(QWidget):
         if not text and not files:
             return
 
+        if text.startswith("/"):
+            self._input.clear()
+            self._pending_files.clear()
+            self._refresh_chips()
+            self._handle_command(text)
+            return
+
         prompt = text or "请分析我上传的附件。"
         full_prompt, display_prompt, _ = _build_prompt_with_uploads(prompt, files)
 
@@ -1692,20 +2003,70 @@ class ChatPanel(QWidget):
         if self._session["title"] == "新对话" and prompt:
             self._session["title"] = prompt[:20] + ("..." if len(prompt) > 20 else "")
 
-        self._add_msg_row("user", display_prompt)
-        self._messages.append({"role": "user", "content": display_prompt})
+        from datetime import datetime
+        now_iso = datetime.now().isoformat()
+        user_idx = len(self._messages)
+        self._messages.append({"role": "user", "content": display_prompt, "created_at": now_iso})
+        self._add_msg_row(
+            "user",
+            display_prompt,
+            created_at=now_iso,
+            on_delete=lambda idx=user_idx: self._delete_message(idx),
+            on_rewrite=lambda idx=user_idx: self._rewrite_message(idx)
+        )
         self._update_token_usage()
 
         # Start streaming — reset scroll lock so new output auto-scrolls
         self._user_scrolled_up = False
         self._streaming_text = ""
+        # The streaming row will be replaced when done, it doesn't need deletion/export
         self._streaming_row = self._add_msg_row("assistant", "▌")
         self._streaming_row.set_finished(False)
         self._set_stop_mode()
         self._streaming_badge.show()
 
-        self._display_queue = self.agent.put_task(full_prompt, source="user")
+        self._display_queue = self.agent.put_task(f"{FILE_HINT}\n\n{full_prompt}", source="user")
         self._poll_timer.start(40)
+
+    def _handle_command(self, cmd: str):
+        parts = cmd.split()
+        op = parts[0].lower() if parts else ""
+        if op == "/help":
+            self._add_system_notice(HELP_TEXT)
+        elif op == "/stop":
+            self._do_stop()
+            self._add_system_notice("⏹️ 已停止")
+        elif op == "/status":
+            llm = self._model_name()
+            state = "🔴 运行中" if self.agent.is_running else "🟢 空闲"
+            self._add_system_notice(f"状态: {state}\nLLM: [{self.agent.llm_no}] {llm}")
+        elif op == "/llm":
+            if not self.agent.llmclient:
+                self._add_system_notice("❌ 当前没有可用的 LLM 配置")
+            elif len(parts) > 1:
+                try:
+                    idx = int(parts[1])
+                    self._do_switch_to(idx)
+                except Exception:
+                    self._add_system_notice(f"用法: /llm <0-{len(self.agent.llmclients) - 1}>")
+            else:
+                lines = [f"{'→' if i == self.agent.llm_no else '  '} [{i}] {getattr(c, 'name', type(c.backend).__name__ + '/' + c.backend.model)}"
+                         for i, c in enumerate(self.agent.llmclients)]
+                self._add_system_notice("LLMs:\n" + "\n".join(lines))
+        elif op == "/restore":
+            restored_info, err = format_restore()
+            if err:
+                self._add_system_notice(err)
+            else:
+                restored, fname, count = restored_info
+                self.agent.abort()
+                self.agent.history.extend(restored)
+                self._add_system_notice(f"✅ 已恢复 {count} 轮对话\n来源: {fname}")
+        elif op == "/new":
+            self._do_clear()
+            self._add_system_notice("✅ 已开启新对话")
+        else:
+            self._add_system_notice(f"未知命令: {cmd}\n{HELP_TEXT}")
 
     def _poll_queue(self):
         if not self._display_queue:
@@ -1713,6 +2074,9 @@ class ChatPanel(QWidget):
         try:
             while True:
                 item = self._display_queue.get_nowait()
+                if not isinstance(item, dict) or ("next" not in item and "done" not in item):
+                    print(f"[Queue] 跳过异常项: {item}")
+                    continue
                 if "next" in item:
                     self._streaming_text = item["next"]
                     if self._streaming_row:
@@ -1721,11 +2085,35 @@ class ChatPanel(QWidget):
                     self._scroll_bottom()
                 if "done" in item:
                     final = item["done"]
+                    from datetime import datetime
+                    now_iso = datetime.now().isoformat()
+                    # Remove the temporary streaming row
                     if self._streaming_row:
-                        self._streaming_row.set_text(final)
-                        self._streaming_row.set_finished(True)
-                    self._messages.append({"role": "assistant", "content": final})
-                    self._streaming_row = None
+                        # Find its position in the layout to replace it
+                        idx = self._msg_layout.indexOf(self._streaming_row)
+                        self._streaming_row.deleteLater()
+                        self._streaming_row = None
+                    # Add the final message with proper buttons
+                    assist_idx = len(self._messages)
+                    self._messages.append({"role": "assistant", "content": final, "created_at": now_iso})
+                    # Insert at the same position where the streaming row was, or before the stretch
+                    insert_pos = idx if idx >= 0 else self._msg_layout.count() - 1
+                    row = _MsgRow(
+                        final,
+                        "assistant",
+                        on_resend=self._regenerate_response,
+                        on_delete=lambda idx=assist_idx: self._delete_message(idx),
+                        on_rewrite=None,
+                        created_at=now_iso
+                    )
+                    # 自动展开最后一个 LLM Running 块，方便用户直接看到结果
+                    for _, title, _ in reversed(row._parse_foldable_blocks(final)):
+                        if title is not None and title in row._folded_ids and 'LLM Running' in title:
+                            row._folded_ids.remove(title)
+                            row._label.setHtml(row._render_with_folds(final))
+                            row._adjust_browser_height()
+                            break
+                    self._msg_layout.insertWidget(insert_pos, row)
                     self._poll_timer.stop()
                     self._set_send_mode()
                     self._streaming_badge.hide()
@@ -1737,8 +2125,15 @@ class ChatPanel(QWidget):
         except _queue.Empty:
             pass
 
-    def _add_msg_row(self, role: str, text: str) -> _MsgRow:
-        row = _MsgRow(text, role, on_resend=self._regenerate_response if role != "user" else None)
+    def _add_msg_row(self, role: str, text: str, created_at: str = None, on_delete=None, on_rewrite=None) -> _MsgRow:
+        row = _MsgRow(
+            text,
+            role,
+            on_resend=self._regenerate_response if role != "user" else None,
+            on_delete=on_delete,
+            on_rewrite=on_rewrite,
+            created_at=created_at
+        )
         self._msg_layout.insertWidget(self._msg_layout.count() - 1, row)
         self._scroll_bottom()
         return row
@@ -1753,9 +2148,62 @@ class ChatPanel(QWidget):
                 self._handle_send()
                 break
 
+    def _delete_message(self, index: int):
+        """Delete the message at the given index."""
+        if index < 0 or index >= len(self._messages):
+            return
+        # Remove from data
+        self._messages.pop(index)
+        # Rebuild all rows to ensure on_delete indices are correct
+        self._rebuild_messages()
+        # Update
+        self._update_token_usage()
+        self._auto_save()
+
+    def _rewrite_message(self, index: int):
+        """Rewrite the user message at the given index."""
+        if index < 0 or index >= len(self._messages):
+            return
+        if self._messages[index]["role"] != "user":
+            return
+        # Get the content and fill it into the input
+        content = self._messages[index]["content"]
+        self._input.setPlainText(content)
+        # Remove this message and everything after it
+        self._messages = self._messages[:index]
+        # Rebuild UI
+        self._rebuild_messages()
+        self._update_token_usage()
+        self._auto_save()
+
     def _on_scroll(self, value):
         sb = self._scroll.verticalScrollBar()
         self._user_scrolled_up = value < sb.maximum() - 30
+        self._update_nav_visibility()
+
+    def _update_nav_visibility(self):
+        sb = self._scroll.verticalScrollBar()
+        max_val = sb.maximum()
+        vp_h = self._scroll.viewport().height()
+        total_h = max_val + vp_h
+        show_nav = max_val > 0 and total_h >= vp_h * 1.5
+
+        if show_nav:
+            self._nav_widget.show()
+            self._nav_up.setEnabled(sb.value() > 2)
+            self._nav_down.setEnabled(max_val > 0 and sb.value() < max_val - 2)
+        else:
+            self._nav_widget.hide()
+
+    def _scroll_to_top(self):
+        self._user_scrolled_up = True
+        self._scroll.verticalScrollBar().setValue(0)
+
+    def _scroll_to_bottom(self):
+        self._user_scrolled_up = False
+        QTimer.singleShot(60, lambda: self._scroll.verticalScrollBar().setValue(
+            self._scroll.verticalScrollBar().maximum()
+        ))
 
     def _scroll_bottom(self):
         if self._user_scrolled_up:
@@ -1810,8 +2258,15 @@ class ChatPanel(QWidget):
             it = self._msg_layout.takeAt(0)
             if it.widget():
                 it.widget().deleteLater()
-        for m in self._messages:
-            self._add_msg_row(m["role"], m["content"])
+        for i, m in enumerate(self._messages):
+            rewrite_cb = (lambda idx=i: self._rewrite_message(idx)) if m["role"] == "user" else None
+            self._add_msg_row(
+                m["role"],
+                m["content"],
+                created_at=m.get("created_at"),
+                on_delete=lambda idx=i: self._delete_message(idx),
+                on_rewrite=rewrite_cb
+            )
         self._update_token_usage()
 
     def _update_token_usage(self):
@@ -1853,6 +2308,8 @@ class ChatPanel(QWidget):
 
     # ── settings actions ───────────────────────────────────────────────────────
     def _model_name(self) -> str:
+        if self.agent.llmclient is None:
+            return "未配置"
         try:
             return self.agent.get_llm_name()
         except Exception:
@@ -1882,10 +2339,8 @@ class ChatPanel(QWidget):
         self._update_token_usage()
 
     def _do_reset_prompt(self):
-        try:
+        if self.agent.llmclient and hasattr(self.agent.llmclient, 'last_tools'):
             self.agent.llmclient.last_tools = ""
-        except Exception:
-            pass
 
     def _auto_save(self):
         if not self._messages:
@@ -1996,17 +2451,18 @@ def main():
     print(f"  关闭面板后可点击右下角发光按钮重新打开")
 
     # ── Idle monitor (autonomous mode) ────────────────────
-    _last_trigger = [0.0]
+    _last_trigger = 0.0
 
     def idle_check():
+        nonlocal _last_trigger
         if not panel.autonomous_enabled:
             return
         now = time.time()
-        if now - _last_trigger[0] < 120:
+        if now - _last_trigger < AUTO_COOLDOWN:
             return
         idle = now - panel.last_reply_time
-        if idle > 1800:
-            _last_trigger[0] = now
+        if idle > AUTO_IDLE_THRESHOLD:
+            _last_trigger = now
             panel.inject_message(
                 "[AUTO]🤖 用户已经离开超过30分钟，作为自主智能体，请阅读自动化sop，执行自动任务。"
             )

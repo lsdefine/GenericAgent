@@ -257,13 +257,16 @@ def _card(text):
 
 
 def _send_raw(receive_id, payload, msg_type, rtype):
-    body = CreateMessageRequest.builder().receive_id_type(rtype).request_body(
-        CreateMessageRequestBody.builder().receive_id(receive_id).msg_type(msg_type).content(payload).build()
-    ).build()
-    r = client.im.v1.message.create(body)
-    if r.success():
-        return r.data.message_id if r.data else None
-    print(f"发送失败: {r.code}, {r.msg}")
+    try:
+        body = CreateMessageRequest.builder().receive_id_type(rtype).request_body(
+            CreateMessageRequestBody.builder().receive_id(receive_id).msg_type(msg_type).content(payload).build()
+        ).build()
+        r = client.im.v1.message.create(body)
+        if r.success():
+            return r.data.message_id if r.data else None
+        print(f"发送失败: {r.code}, {r.msg}")
+    except Exception as e:
+        print(f"[ERROR] _send_raw 网络异常: {e}")
     return None
 
 
@@ -272,14 +275,18 @@ def _patch_card(message_id, card_json):
 
 
 def _patch_card_result(message_id, card_json):
-    body = PatchMessageRequest.builder().message_id(message_id).request_body(
-        PatchMessageRequestBody.builder().content(card_json).build()
-    ).build()
-    r = client.im.v1.message.patch(body)
-    if not r.success():
-        print(f"[ERROR] patch_card 失败: {r.code}, {r.msg}")
-    msg = f"{getattr(r, 'code', '')} {getattr(r, 'msg', '')}".lower()
-    return r.success(), ("230099" in msg or "11310" in msg or "element exceeds the limit" in msg)
+    try:
+        body = PatchMessageRequest.builder().message_id(message_id).request_body(
+            PatchMessageRequestBody.builder().content(card_json).build()
+        ).build()
+        r = client.im.v1.message.patch(body)
+        if not r.success():
+            print(f"[ERROR] patch_card 失败: {r.code}, {r.msg}")
+        msg = f"{getattr(r, 'code', '')} {getattr(r, 'msg', '')}".lower()
+        return r.success(), ("230099" in msg or "11310" in msg or "element exceeds the limit" in msg)
+    except Exception as e:
+        print(f"[ERROR] _patch_card 网络异常: {e}")
+        return False, False
 
 
 def send_message(receive_id, content, msg_type="text", use_card=False, receive_id_type="open_id"):
@@ -680,9 +687,22 @@ def main():
         sys.exit(1)
     client = create_client()
     handler = lark.EventDispatcherHandler.builder("", "").register_p2_im_message_receive_v1(handle_message).build()
-    cli = lark.ws.Client(APP_ID, APP_SECRET, event_handler=handler, log_level=lark.LogLevel.INFO)
     print("=" * 50 + "\n飞书 Agent 已启动（长连接模式）\n" + f"App ID: {APP_ID}\n等待消息...\n" + "=" * 50)
-    cli.start()
+    retry_delay = 5
+    while True:
+        try:
+            cli = lark.ws.Client(APP_ID, APP_SECRET, event_handler=handler, log_level=lark.LogLevel.INFO)
+            cli.start()
+        except Exception as e:
+            print(f"[WARN] 飞书长连接断开或启动失败: {e}")
+        print(f"[INFO] {retry_delay}s 后重连...")
+        time.sleep(retry_delay)
+        retry_delay = min(retry_delay * 2, 120)
+        # 重连时刷新 client
+        try:
+            client = create_client()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

@@ -1,9 +1,8 @@
 import json, threading, time, uuid, queue, socket, requests, traceback
-from typing import Dict, Any, Optional, List  
-from simple_websocket_server import WebSocketServer, WebSocket  
-from bs4 import BeautifulSoup  
-import bottle, random
-from bottle import route, template, request, response
+from typing import Any
+from simple_websocket_server import WebSocketServer, WebSocket
+import bottle
+from bottle import request
 
 class Session:
     def __init__(self, session_id, info, client=None):
@@ -69,7 +68,7 @@ class TMWebDriver:
                 try:
                     msg = msgQ.get(timeout=0.2)
                     try: self.acks[json.loads(msg).get('id','')] = True
-                    except: traceback.print_exc()
+                    except Exception: traceback.print_exc()
                     return msg
                 except queue.Empty: continue
             return json.dumps({"id": "", "ret": "next long-poll"})

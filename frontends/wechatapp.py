@@ -108,6 +108,11 @@ class WxBotClient:
             'status': 2 if cancel else 1,
             'base_info': {'channel_version': VER}})
 
+    def get_typing_ticket(self, to_user_id, context_token=''):
+        payload = {'ilink_user_id': to_user_id}
+        if context_token: payload['context_token'] = context_token
+        return self._post('ilink/bot/getconfig', payload).get('typing_ticket', '')
+
     def _enc(self, raw, aes_key):
         pad = 16 - (len(raw) % 16)
         return AES.new(aes_key, AES.MODE_ECB).encrypt(raw + bytes([pad] * pad))
@@ -333,8 +338,15 @@ def on_message(bot, msg):
     def _handle():
         prompt = text if text.startswith('/') else f"If you need to show files to user, use [FILE:filepath] in your response.\n\n{text}"
         dq = agent.put_task(prompt, source="wechat")
-        try: bot.send_typing(uid)
-        except: pass
+        _typing_stop = threading.Event()
+        def _keep_typing():
+            ticket = bot.get_typing_ticket(uid, ctx)
+            if not ticket: return
+            while not _typing_stop.is_set():
+                try: bot.send_typing(uid, ticket)
+                except: pass
+                _typing_stop.wait(2.0)
+        threading.Thread(target=_keep_typing, daemon=True).start()
         result = ''; sent = 0; mi = 0; last_send = 0
         def _wx_send(text):
             s = text.strip(); t0 = time.time()
@@ -364,6 +376,7 @@ def on_message(bot, msg):
                     if _send(merged):
                         sent = len(done)
         except queue.Empty: result = '[超时]'
+        _typing_stop.set()
         done, partial = _turn_parts(result)
         rest = '\n\n'.join(done[sent:] + [partial] + ['\n\n[任务已完成]'])
         if rest.strip(): _wx_send((_clean(rest))[-2000:])

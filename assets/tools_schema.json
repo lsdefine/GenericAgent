@@ -29,9 +29,10 @@
   }},
   {"type": "function", "function": {
     "name": "file_write",
-    "description": "Create/overwrite/append files. HUGE edits ONLY. Content must in <file_content>...</file_content> in reply body BEFORE the file_write call (not args). Supports {{file:path:startLine:endLine}}, auto-expanded",
+    "description": "Create/overwrite/append files. HUGE edits ONLY. Supports {{file:path:startLine:endLine}}, auto-expanded",
     "parameters": {"type": "object", "properties": {
       "path": {"type": "string", "description": "File path"},
+      "content": {"type": "string"},	
       "mode": {"type": "string", "enum": ["overwrite", "append", "prepend"], "description": "Write mode", "default": "overwrite"}}}
   }},
   {"type": "function", "function": {

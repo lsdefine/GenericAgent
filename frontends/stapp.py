@@ -16,14 +16,31 @@ import time, json, re, threading, queue
 from agentmain import GeneraticAgent
 import chatapp_common  # activate /continue command (monkey patches GeneraticAgent)
 from continue_cmd import handle_frontend_command, reset_conversation, list_sessions, extract_ui_messages
+from btw_cmd import handle_frontend_command as btw_handle_frontend
 
 st.set_page_config(page_title="Cowork", layout="wide")
+
+LANG = os.environ.get('GA_LANG', 'zh')
+if LANG not in ('zh', 'en'): LANG = 'zh'
+I18N = {
+    'zh': {
+        'force_stop': '强行停止任务',
+        'reinject_tools': '重新注入工具',
+        'desktop_pet': '🐱 桌面宠物',
+    },
+    'en': {
+        'force_stop': 'Force Stop',
+        'reinject_tools': 'Reinject Tools',
+        'desktop_pet': '🐱 Desktop Pet',
+    },
+}
+def T(key): return I18N.get(LANG, I18N['zh']).get(key, key)
 
 @st.cache_resource
 def init():
     agent = GeneraticAgent()
     if agent.llmclient is None:
-        st.error("⚠️ 未配置任何可用的 LLM 接口，请设置mykey.py。")
+        st.error("⚠️ Please set mykey.py!")
         st.stop()
     else: threading.Thread(target=agent.run, daemon=True).start()
     return agent
@@ -40,24 +57,21 @@ def render_sidebar():
     llm_options = agent.list_llms()
     current_idx = agent.llm_no
     llm_labels = {idx: f"{idx}: {(name or '').strip()}" for idx, name, _ in llm_options}
-    st.caption(f"LLM Core: {llm_labels.get(current_idx, str(current_idx))}", help="下拉切换备用链路")
-    selected_idx = st.selectbox("备用链路", [idx for idx, _, _ in llm_options], index=next((i for i, (idx, _, _) in enumerate(llm_options) if idx == current_idx), 0), format_func=llm_labels.get, label_visibility="collapsed", key="sidebar_llm_select")
+    st.caption(f"LLM Core: {llm_labels.get(current_idx, str(current_idx))}")
+    selected_idx = st.selectbox("LLM", [idx for idx, _, _ in llm_options], index=next((i for i, (idx, _, _) in enumerate(llm_options) if idx == current_idx), 0), format_func=llm_labels.get, label_visibility="collapsed", key="sidebar_llm_select")
     if selected_idx != current_idx:
         agent.next_llm(selected_idx); st.rerun(scope="fragment")
-    last_reply_time = st.session_state.get('last_reply_time', 0)
-    if last_reply_time > 0:
-        st.caption(f"空闲时间：{int(time.time()) - last_reply_time}秒", help="当超过30分钟未收到回复时，系统会自动任务")
-    if st.button("强行停止任务"):
-        agent.abort(); st.toast("已发送停止信号"); st.rerun()
-    if st.button("重新注入工具"):
+    if st.button(T('force_stop')):
+        agent.abort(); st.toast("Stop signal sended"); st.rerun()
+    if st.button(T('reinject_tools')):
         agent.llmclient.last_tools = ''
         try:
             hist_path = os.path.join(script_dir, '..', 'assets', 'tool_usable_history.json')
             with open(hist_path, 'r', encoding='utf-8') as f: tool_hist = json.load(f)
             agent.llmclient.backend.history.extend(tool_hist)
-            st.toast(f"已重新注入工具，追加了 {len(tool_hist)} 条示范记录")
-        except Exception as e: st.toast(f"注入工具示范失败: {e}")
-    if st.button("🐱 桌面宠物"):
+            st.toast(f"Tools injected")
+        except Exception as e: st.toast(f"Injected tools failed: {e}")
+    if st.button(T('desktop_pet')):
         kwargs = {'creationflags': 0x08} if sys.platform == 'win32' else {}
         pet_script = os.path.join(script_dir, 'desktop_pet_v2.pyw')
         if not os.path.exists(pet_script): pet_script = os.path.join(script_dir, 'desktop_pet.pyw')
@@ -72,26 +86,27 @@ def render_sidebar():
         def _pet_hook(ctx):
             parts = [f"Turn {ctx.get('turn','?')}"]
             if ctx.get('summary'): parts.append(ctx['summary'])
-            if ctx.get('exit_reason'): parts.append('任务已完成')
+            if ctx.get('exit_reason'): parts.append('DONE')
             _pet_req(f'msg={quote(chr(10).join(parts))}')
             if ctx.get('exit_reason'): _pet_req('state=idle')
         agent._turn_end_hooks['pet'] = _pet_hook
-        st.toast("桌面宠物已启动")
+        st.toast("Desktop pet started")
     
-    st.divider()
-    if st.button("开始空闲自主行动"):
-        st.session_state.last_reply_time = int(time.time()) - 1800
-        st.toast("已将上次回复时间设为1800秒前"); st.rerun()
-    if st.session_state.autonomous_enabled:
-        if st.button("⏸️ 禁止自主行动"):
-            st.session_state.autonomous_enabled = False
-            st.toast("⏸️ 已禁止自主行动"); st.rerun()
-        st.caption("🟢 自主行动运行中，会在你离开它30分钟后自动进行")
-    else:
-        if st.button("▶️ 允许自主行动", type="primary"):
-            st.session_state.autonomous_enabled = True
-            st.toast("✅ 已允许自主行动"); st.rerun()
-        st.caption("🔴 自主行动已停止")
+    if LANG == 'zh':
+        st.divider()
+        if st.button("开始空闲自主行动"):
+            st.session_state.last_reply_time = int(time.time()) - 1800
+            st.toast("已将上次回复时间设为1800秒前"); st.rerun()
+        if st.session_state.autonomous_enabled:
+            if st.button("⏸️ 禁止自主行动"):
+                st.session_state.autonomous_enabled = False
+                st.toast("⏸️ 已禁止自主行动"); st.rerun()
+            st.caption("🟢 自主行动运行中，会在你离开它30分钟后自动进行")
+        else:
+            if st.button("▶️ 允许自主行动", type="primary"):
+                st.session_state.autonomous_enabled = True
+                st.toast("✅ 已允许自主行动"); st.rerun()
+            st.caption("🔴 自主行动已停止")
 with st.sidebar: render_sidebar()
 
 def fold_turns(text):
@@ -125,6 +140,8 @@ def fold_turns(text):
             segments.append({'type': 'fold', 'title': title, 'content': content})
         else: segments.append({'type': 'text', 'content': marker + content})
     return segments
+_SUMMARY_TAG_RE = re.compile(r'<summary>.*?</summary>\s*', re.DOTALL)
+
 def render_segments(segments, suffix=''):
     # 整块重画：调用方用 slot.container() 包裹，保证 DOM 路径稳定、跨 rerun 对齐（消除"灰色重影"）。
     # heartbeat 空转时 segments 不变 → Streamlit 后端 diff 无变化 → 前端零闪烁；
@@ -133,22 +150,71 @@ def render_segments(segments, suffix=''):
         if seg['type'] == 'fold':
             with st.expander(seg['title'], expanded=False): st.markdown(seg['content'])
         else:
-            st.markdown(seg['content'] + suffix)
+            # Strip <summary> meta tags from text segments — folded turns already
+            # promote them to expander titles; for the first/last segments
+            # they'd otherwise leak into the chat as raw text (esp. after /continue
+            # restores a multi-turn body).
+            st.markdown(_SUMMARY_TAG_RE.sub('', seg['content']) + suffix)
 
-def agent_backend_stream(prompt):
-    display_queue = agent.put_task(prompt, source="user")
-    response = ''
+def agent_backend_stream(prompt=None):
+    """Drain main task display_queue.
+    - prompt given:  start a fresh task; new dq is kept in session_state.
+    - prompt is None: resume a dq left in session_state by a prior run (e.g. after /btw).
+    Per-chunk progress is mirrored to session_state.partial_response so the rendered
+    bubble survives reruns. No implicit agent.abort() — explicit stop is on the Stop button."""
+    if prompt is not None:
+        st.session_state.display_queue = agent.put_task(prompt, source="user")
+        st.session_state.partial_response = ''
+    dq = st.session_state.get('display_queue')
+    if dq is None: return
+    # Drop a dangling 'LLM Running (Turn N) ...' marker if the captured partial
+    # ended right at a turn boundary with no content yet — otherwise the resume
+    # bubble flashes as a marker-only gray line. The marker reappears with
+    # content on the next chunk (raw_resp is cumulative).
+    response = re.sub(r'\**LLM Running \(Turn \d+\) \.\.\.\**\s*$',
+                      '', st.session_state.get('partial_response', '')).rstrip()
     try:
         while True:
-            try: item = display_queue.get(timeout=1)
+            try: item = dq.get(timeout=1)
             except queue.Empty:
                 yield response   # heartbeat: let outer st.markdown() run → Streamlit checks StopException
                 continue
             if 'next' in item:
-                response = item['next']; yield response
+                response = item['next']
+                st.session_state.partial_response = response
+                yield response
             if 'done' in item:
+                st.session_state.display_queue = None
+                st.session_state.partial_response = ''
                 yield item['done']; break
-    finally: agent.abort()
+    finally:
+        agent.abort()
+        try:
+            st.session_state.display_queue = None
+            st.session_state.partial_response = ''
+        except BaseException:
+            pass
+
+
+def render_main_stream(prompt=None):
+    """Render the assistant bubble for the main task (new or resumed). Saves final to messages."""
+    with st.chat_message("assistant"):
+        frozen = 0; live = st.empty(); response = ''
+        CURSOR = ' ▌'
+        for response in agent_backend_stream(prompt):
+            segs = fold_turns(response)
+            n_done = max(0, len(segs) - 1)
+            while frozen < n_done:
+                with live.container(): render_segments([segs[frozen]])
+                live = st.empty(); frozen += 1
+            with live.container(): render_segments([segs[-1]], suffix=CURSOR)   # live 区域
+        segs = fold_turns(response)
+        for i in range(frozen, len(segs)):
+            with live.container(): render_segments([segs[i]])
+            if i < len(segs) - 1: live = st.empty()
+    if response:
+        st.session_state.messages.append({"role": "assistant", "content": response})
+        st.session_state.last_reply_time = int(time.time())
 
 if "messages" not in st.session_state: st.session_state.messages = []
 for msg in st.session_state.messages:
@@ -220,26 +286,22 @@ if prompt := st.chat_input("any task?"):
             st.session_state.messages = list(st.session_state.messages) + \
                 [{"role": "user", "content": cmd, "time": ts}] + tail
         _reset_and_rerun()
+    if cmd.startswith("/btw"):
+        answer = btw_handle_frontend(agent, cmd)  # sync; bypasses put_task → main agent.run() untouched
+        st.session_state.messages = list(st.session_state.messages) + [
+            {"role": "user", "content": prompt, "time": ts},
+            {"role": "assistant", "content": answer, "time": ts},
+        ]
+        st.rerun()  # preserve display_queue/partial_response so resume path drains the running main task
+    # Regular prompt: any in-flight task will be aborted by the finally block in
+    # agent_backend_stream when StopException interrupts the prior generator.
     st.session_state.messages.append({"role": "user", "content": prompt})
     if hasattr(agent, '_pet_req') and not prompt.startswith('/'): agent._pet_req('state=walk')
     with st.chat_message("user"): st.markdown(prompt)
-
-    with st.chat_message("assistant"):
-        frozen = 0; live = st.empty(); response = ''
-        CURSOR = ' ▌'
-        for response in agent_backend_stream(prompt):
-            segs = fold_turns(response)
-            n_done = max(0, len(segs) - 1)
-            while frozen < n_done:
-                with live.container(): render_segments([segs[frozen]])
-                live = st.empty(); frozen += 1
-            with live.container(): render_segments([segs[-1]], suffix=CURSOR)   # live 区域
-        segs = fold_turns(response)
-        for i in range(frozen, len(segs)):
-            with live.container(): render_segments([segs[i]])
-            if i < len(segs) - 1: live = st.empty()
-    st.session_state.messages.append({"role": "assistant", "content": response})
-    st.session_state.last_reply_time = int(time.time())
+    render_main_stream(prompt)
+elif st.session_state.get('display_queue') is not None:
+    # No new prompt but a task is mid-flight (typically a /btw rerun) — resume drain.
+    render_main_stream()
 
 if st.session_state.autonomous_enabled:
     st.markdown(f"""<div id="last-reply-time" style="display:none">{st.session_state.get('last_reply_time', int(time.time()))}</div>""", unsafe_allow_html=True)

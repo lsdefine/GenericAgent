@@ -103,14 +103,19 @@ class QQApp(AgentChatMixin):
 
     async def start(self):
         self.client = _make_bot_class(self)()
+        delay, max_delay = 5, 300
         while True:
+            started_at = time.monotonic()
             try:
                 print(f"[QQ] bot starting... {time.strftime('%m-%d %H:%M')}")
                 await self.client.start(appid=APP_ID, secret=APP_SECRET)
             except Exception as e:
                 print(f"[QQ] bot error: {e}")
-            print("[QQ] reconnect in 5s...")
-            await asyncio.sleep(5)
+            if time.monotonic() - started_at >= 60:
+                delay = 5
+            print(f"[QQ] reconnect in {delay}s...")
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, max_delay)
 
 
 if __name__ == "__main__":

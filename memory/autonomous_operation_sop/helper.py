@@ -1,7 +1,7 @@
 """
-autonomous_task.py - 自主行动任务管理API
+helper.py - 自主行动任务管理API
 放置: memory/autonomous_operation_sop/
-用法: import autonomous_task (或 from autonomous_operation_sop import autonomous_task)
+用法: import helper (或 from autonomous_operation_sop import helper)
 
 4个函数:
   get_todo()        → 返回TODO内容

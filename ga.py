@@ -9,13 +9,88 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from agent_loop import BaseHandler, StepOutcome, json_default
 script_dir = os.path.dirname(os.path.abspath(__file__))
 
-def code_run(code, code_type="python", timeout=60, cwd=None, code_cwd=None, stop_signal=None):
+def code_run(code, code_type="python", timeout=60, cwd=None, code_cwd=None, stop_signal=[]):
     """代码执行器
     python: 运行复杂的 .py 脚本（文件模式）
     powershell/bash: 运行单行指令（命令模式）
     优先使用python，仅在必要系统操作时使用powershell"""
     preview = (code[:60].replace('\n', ' ') + '...') if len(code) > 60 else code.strip()
     yield f"[Action] Running {code_type} in {os.path.basename(cwd)}: {preview}\n"
+
+    # ── 高危命令黑名单 ──────────────────────────────────────────────
+    DANGEROUS_PATTERNS = [
+        # Unix 递归删除根目录
+        (r'\brm\s+(-[rR]+|-[rR][fF]|-[fF][rR])\s*/[/\s]', '递归删除根目录'),
+        (r'\brm\s+(-[rR]+|-[rR][fF]|-[fF][rR])\s+/\*\s*[-.]', '递归删除 /usr 等系统目录'),
+        (r'\brm\s+(-[rR]+|-[rR][fF]|-[fF][rR])\s+/\s+--no-preserve-root', '强制删除根目录'),
+        # Windows 递归删除
+        (r'\brd\s+/[sS]\s+/[qQ]\s+[A-Za-z]:\\', '递归删除驱动器'),
+        (r'\brmdir\s+/[sS]\s+/[qQ]\s+[A-Za-z]:\\', '递归删除驱动器'),
+        (r'\bdel\s+/[fF]\s+/[sS]\s+[A-Za-z]:\\', '递归删除驱动器文件'),
+        (r'\bRemove-Item\s+-Recurse\s+-Force\s+-Path\s+["\']?[A-Za-z]:\\', '递归删除驱动器'),
+        # 格式化磁盘
+        (r'\bformat\s+[A-Za-z]:', '格式化磁盘'),
+        (r'\bFormat-Volume\b', '格式化卷'),
+        (r'\bClear-Volume\b', '清空卷'),
+        # 磁盘直接写入
+        (r'\bdd\s+if=.*\s+of=\s*/dev/(sda|sdb|sdc|sdd|nvme|hd[ab])', '直接写入块设备'),
+        (r'\bdd\s+if=/dev/zero\s+of=', '用零覆盖'),
+        (r'\bdd\s+if=/dev/random\s+of=', '用随机数据覆盖'),
+        (r'[>|]\s*\\\\\.\\\\(PhysicalDrive|C:)\b', '直接写入物理驱动器'),
+        # 关机/重启
+        (r'\bshutdown\s+[/-][sprh]', '关机/重启操作'),
+        (r'\bStop-Computer\b', '关闭计算机'),
+        (r'\bRestart-Computer\b', '重启计算机'),
+        (r'\binit\s+0\b', '关机'),
+        (r'\bpoweroff\b', '关机'),
+        (r'\breboot\b', '重启'),
+        # Fork 炸弹
+        (r':\(\)\s*\{\s*:\s*\|\s*:&\s*\}\s*;?\s*:', 'fork 炸弹'),
+        # 权限破坏
+        (r'\bchmod\s+-R\s+0{2,3}\s+', '递归清除权限'),
+        (r'\bchown\s+-R\s+0:0\s+/', '递归更改根目录所有者'),
+        # 破坏性 mv
+        (r'\bmv\s+/\s+/\*?\s+/dev/null', '移动根目录到空设备'),
+        # 清空系统关键路径
+        (r'[>|]\s+/dev/sda', '直接写入块设备'),
+        (r'[>|]\s+/dev/zero\s+of=', '用零覆盖'),
+        # Diskpart (Windows)
+        (r'\bdiskpart\b', '磁盘分区操作'),
+        (r'\bclean\s+all\b', '清除整个磁盘'),
+        # 注册表删除
+        (r'\breg\s+delete\s+HK', '删除注册表项'),
+        (r'\bRemove-Item\s+-Path\s+["\']?HK', '删除注册表项'),
+        # 账户操作
+        (r'\bnet\s+user\s+[/\\]?[a-z]', '用户账户操作'),
+        (r'\bnet\s+localgroup\s+[/\\]?[a-z]', '用户组操作'),
+        # 强制杀关键进程
+        (r'\btaskkill\s+/[fF]\s+/[iI][Mm]\s+', '强制终止进程'),
+        (r'\bkill\s+-9\s+[-1\s]', '强制终止所有进程'),
+    ]
+
+    _code_lower = code.lower()
+    for pattern, desc in DANGEROUS_PATTERNS:
+        if re.search(pattern, _code_lower):
+            yield f"[Security] ⛔ 检测到高危操作: {desc}，已拦截\n"
+            return {"status": "blocked", "reason": f"高危命令被拦截: {desc}"}
+
+    # ── Python 代码中的危险模式扫描 ──
+    if code_type in ["python", "py"]:
+        PY_DANGEROUS_COMMANDS = [
+            (r'os\.system\s*\(\s*["\'].*?\brm\b.*?[/\\]', 'os.system 中调用 rm'),
+            (r'os\.system\s*\(\s*["\'].*?\brd\b.*?/s', 'os.system 中调用 rd'),
+            (r'os\.system\s*\(\s*["\'].*?\bformat\b', 'os.system 中调用 format'),
+            (r'os\.system\s*\(\s*["\'].*?\bshutdown\b', 'os.system 中调用 shutdown'),
+            (r'os\.system\s*\(\s*["\'].*?\bdd\b.*?/dev/', 'os.system 中调用 dd'),
+            (r'subprocess\.(run|Popen|call)\s*\(.*?shell=True.*?["\'].*?\brm\b.*?[/\\]', 'subprocess shell=True + rm'),
+            (r'subprocess\.(run|Popen|call)\s*\(.*?shell=True.*?["\'].*?\bshutdown\b', 'subprocess shell=True + shutdown'),
+            (r'subprocess\.(run|Popen|call)\s*\(.*?shell=True.*?["\'].*?\bformat\b', 'subprocess shell=True + format'),
+        ]
+        for pattern, desc in PY_DANGEROUS_COMMANDS:
+            if re.search(pattern, code):
+                yield f"[Security] ⛔ Python 代码检测到高危操作: {desc}，已拦截\n"
+                return {"status": "blocked", "reason": f"高危命令被拦截: {desc}"}
+
     cwd = cwd or os.path.join(script_dir, 'temp'); tmp_path = None
     if code_type in ["python", "py"]:
         tmp_file = tempfile.NamedTemporaryFile(suffix=".ai.py", delete=False, mode='w', encoding='utf-8', dir=code_cwd)

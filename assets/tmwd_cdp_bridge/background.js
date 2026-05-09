@@ -25,6 +25,12 @@ async function handleExtMessage(msg, sender) {
         const tab = await chrome.tabs.update(msg.tabId, { active: true });
         await chrome.windows.update(tab.windowId, { focused: true });
         return { ok: true };
+      } else if (msg.method === 'create') {
+        const opts = {};
+        if (msg.url) opts.url = msg.url;
+        if (msg.active !== undefined) opts.active = msg.active;
+        const tab = await chrome.tabs.create(opts);
+        return { ok: true, data: { id: tab.id, url: tab.url || (msg.url || 'about:blank'), title: tab.title || '', windowId: tab.windowId } };
       } else {
         const tabs = (await chrome.tabs.query({})).filter(t => isScriptable(t.url));
         const data = tabs.map(t => ({ id: t.id, url: t.url, title: t.title, active: t.active, windowId: t.windowId }));

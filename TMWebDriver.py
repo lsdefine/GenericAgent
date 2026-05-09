@@ -281,5 +281,11 @@ class TMWebDriver:
     
     def jump(self, url, timeout=10): self.execute_js(f"window.location.href='{url}'", timeout=timeout)
     
+    def newtab(self, url=None, active=True):
+        """Open a new browser tab via bridge extension (chrome.tabs.create)."""
+        import json
+        code = json.dumps({"cmd": "tabs", "method": "create", "url": url or "about:blank", "active": active})
+        return self.execute_js(code)
+
 if __name__ == "__main__":
     driver = TMWebDriver(host='127.0.0.1', port=18765)

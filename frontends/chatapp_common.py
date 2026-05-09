@@ -8,6 +8,7 @@ HELP_COMMANDS = (
     ("/restore", "恢复上次对话历史"),
     ("/continue", "列出可恢复会话"),
     ("/continue [n]", "恢复第 n 个会话"),
+    ("/btw <q>", "side question — 临时插问主 agent 进展，不打断主线"),
     ("/llm", "查看当前模型列表"),
     ("/llm [n]", "切换到第 n 个模型"),
 )
@@ -300,6 +301,9 @@ class AgentChatMixin:
             return await self.send_text(chat_id, _handle_continue_frontend(self.agent, cmd), **ctx)
         if op == "/new":
             return await self.send_text(chat_id, _reset_conversation(self.agent), **ctx)
+        if op == "/btw":
+            answer = await asyncio.to_thread(_handle_btw_frontend, self.agent, cmd)
+            return await self.send_text(chat_id, answer, **ctx)
         return await self.send_text(chat_id, HELP_TEXT, **ctx)
 
     async def run_agent(self, chat_id, text, **ctx):
@@ -334,3 +338,4 @@ class AgentChatMixin:
 from agentmain import GeneraticAgent as _GA
 from continue_cmd import handle_frontend_command as _handle_continue_frontend, install as _install_continue, reset_conversation as _reset_conversation
 _install_continue(_GA)
+from btw_cmd import handle_frontend_command as _handle_btw_frontend, install as _install_btw; _install_btw(_GA)

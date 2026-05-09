@@ -994,7 +994,8 @@ class NativeToolClient:
         for tid in self._pending_tool_ids:
             if tid not in tr_id_set: tool_result_blocks.append({"type": "tool_result", "tool_use_id": tid, "content": ""})
         self._pending_tool_ids = []
-        merged = {"role": "user", "content": tool_result_blocks + combined_content}
+        # Filter whitespace-only text blocks that cause 400 on strict API proxies
+        merged = {"role": "user", "content": tool_result_blocks + [c for c in combined_content if c.get("text", "").strip()]}
         _write_llm_log('Prompt', json.dumps(merged, ensure_ascii=False, indent=2), self.log_path)
         gen = self.backend.ask(merged)
         try:

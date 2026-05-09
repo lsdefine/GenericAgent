@@ -126,6 +126,48 @@ def complete_task(taskname: str, historyline: str, report_path: str) -> str:
     )
 
 
+def memory_sync() -> str:
+    """
+    自主行动收尾时自动同步L1/L2/L3索引。
+    调用memory_manager.py --check检测，如有新增则自动同步。
+    Returns:
+        同步结果摘要
+    """
+    import subprocess, sys
+    mm = _MEMORY_DIR / "memory_manager.py"
+    if not mm.exists():
+        return f"[memory_sync] memory_manager.py 不存在: {mm}"
+    
+    # 先check
+    r = subprocess.run(
+        [sys.executable, str(mm), '--check'],
+        capture_output=True, text=True, encoding='utf-8', errors='replace'
+    )
+    output = r.stdout + r.stderr
+    
+    # 解析待添加项
+    import re
+    l2_match = re.search(r'L2待添加: \[(.*?)\]', output)
+    l3_match = re.search(r'L3待添加: \[(.*?)\]', output)
+    l2_pending = l2_match.group(1).strip().strip("'") if l2_match else ''
+    l3_pending = l3_match.group(1).strip().strip("'") if l3_match else ''
+    
+    if not l2_pending and not l3_pending:
+        return "[memory_sync] ✅ L1/L2/L3已同步，无需更新"
+    
+    # 有新增，自动同步
+    r2 = subprocess.run(
+        [sys.executable, str(mm)],
+        capture_output=True, text=True, encoding='utf-8', errors='replace'
+    )
+    added = []
+    if l2_pending:
+        added.append(f"L2:+{l2_pending}")
+    if l3_pending:
+        added.append(f"L3:+{l3_pending}")
+    return f"[memory_sync] ✅ 已自动同步: {', '.join(added)}"
+
+
 # ── 快速自检 ──
 if __name__ == "__main__":
     print(f"TEMP_DIR:    {_TEMP_DIR}")

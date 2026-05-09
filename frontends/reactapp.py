@@ -90,24 +90,62 @@ def _session_path(sid):
     return SESSION_DIR / f'{_safe_id(sid)}.json'
 
 
-def _load_messages(sid):
+def _clean_settings(settings):
+    if not isinstance(settings, dict):
+        settings = {}
+    try:
+        llm_no = int(settings.get('llm_no', 0))
+    except Exception:
+        llm_no = 0
+    return {'llm_no': llm_no}
+
+
+def _load_session_data(sid):
+    sid = _safe_id(sid)
     p = _session_path(sid)
     if not p.exists():
-        return []
+        return {'id': sid, 'title': '新会话', 'updated_at': 0, 'messages': [], 'settings': _clean_settings({})}
     try:
         data = json.loads(p.read_text(encoding='utf-8'))
-        return data.get('messages') or []
+        if not isinstance(data, dict):
+            data = {}
     except Exception:
-        return []
+        data = {}
+    data.setdefault('id', sid)
+    data.setdefault('title', '新会话')
+    data.setdefault('updated_at', 0)
+    data['messages'] = data.get('messages') or []
+    data['settings'] = _clean_settings(data.get('settings') or {})
+    return data
 
 
-def _save_session(sid, messages, title=None):
+def _load_messages(sid):
+    return _load_session_data(sid).get('messages') or []
+
+
+def _save_session(sid, messages=None, title=None, settings=None):
     sid = _safe_id(sid)
     now = int(time.time())
-    title = title or next((m.get('content','').strip().split('\n',1)[0][:64] for m in messages if m.get('role') == 'user' and m.get('content','').strip()), '新会话')
-    data = {'id': sid, 'title': title, 'updated_at': now, 'messages': messages}
+    old = _load_session_data(sid)
+    if messages is None:
+        messages = old.get('messages') or []
+    if settings is None:
+        settings = old.get('settings') or _clean_settings({})
+    else:
+        settings = _clean_settings(settings)
+    title = title or next((m.get('content','').strip().split('\n',1)[0][:64] for m in messages if m.get('role') == 'user' and m.get('content','').strip()), old.get('title') or '新会话')
+    data = {'id': sid, 'title': title, 'updated_at': now, 'messages': messages, 'settings': settings}
     _session_path(sid).write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
     return data
+
+
+def _session_settings(sid):
+    return _load_session_data(sid).get('settings') or _clean_settings({})
+
+
+def _save_session_settings(sid, settings):
+    d = _load_session_data(sid)
+    return _save_session(sid, d.get('messages') or [], title=d.get('title'), settings=settings)
 
 
 def _run_snapshot(sid):
@@ -244,14 +282,16 @@ def sessions():
 @app.post('/api/session/new')
 def new_session():
     sid = uuid.uuid4().hex
-    _save_session(sid, [])
-    return _json({'id': sid, 'messages': []})
+    settings = _clean_settings({})
+    _save_session(sid, [], settings=settings)
+    return _json({'id': sid, 'messages': [], 'settings': settings})
 
 @app.get('/api/session/<sid>')
 def get_session(sid):
     sid=_safe_id(sid)
+    data = _load_session_data(sid)
     run = _run_snapshot(sid)
-    return _json({'id': sid, 'messages': _load_messages(sid), 'run': run})
+    return _json({'id': sid, 'messages': data.get('messages') or [], 'settings': data.get('settings') or _clean_settings({}), 'run': run})
 
 @app.get('/api/run/<sid>')
 def get_run(sid):
@@ -277,19 +317,23 @@ def abort(sid):
 @app.post('/api/settings/<sid>')
 def settings(sid):
     sid=_safe_id(sid)
-    data=request.json or {}
+    data=_clean_settings(request.json or {})
+    _save_session_settings(sid, data)
     a=_agent(sid, data.get('llm_no',0))
     _apply_settings(a, data)
     b=_backend(a)
-    return _json({'ok': True, 'llm_no': getattr(a,'llm_no',None), 'backend': type(b).__name__ if b else None})
+    return _json({'ok': True, 'settings': data, 'llm_no': getattr(a,'llm_no',None), 'backend': type(b).__name__ if b else None})
 
 @app.get('/api/state/<sid>')
 def state(sid):
-    a=_agent(_safe_id(sid))
+    sid=_safe_id(sid)
+    saved_settings = _session_settings(sid)
+    a=_agent(sid, saved_settings.get('llm_no', 0))
+    _apply_settings(a, saved_settings)
     b=_backend(a)
     try: llms=[{'id': i, 'name': name or '', 'enabled': en} for i,name,en in a.list_llms()]
     except Exception: llms=[]
-    return _json({'llm_no': getattr(a,'llm_no',0), 'llms': llms, 'backend': {'class': type(b).__name__ if b else '', 'name': getattr(b,'name','') if b else '', 'api_mode': getattr(b,'api_mode','') if b else '', 'thinking_type': getattr(b,'thinking_type','') if b else '', 'reasoning_effort': getattr(b,'reasoning_effort','') if b else ''}})
+    return _json({'settings': saved_settings, 'llm_no': getattr(a,'llm_no',0), 'llms': llms, 'backend': {'class': type(b).__name__ if b else '', 'name': getattr(b,'name','') if b else '', 'api_mode': getattr(b,'api_mode','') if b else '', 'thinking_type': getattr(b,'thinking_type','') if b else '', 'reasoning_effort': getattr(b,'reasoning_effort','') if b else ''}})
 
 @app.post('/api/_debug/body_size')
 def _debug_body_size():
@@ -302,9 +346,10 @@ def chat(sid):
     data=request.json or {}
     prompt=str(data.get('prompt') or '')
     files=data.get('files') or []
-    settings=data.get('settings') or {}
-    a=_agent(sid, settings.get('llm_no',0))
-    _apply_settings(a, settings)
+    incoming_settings=_clean_settings(data.get('settings') or _session_settings(sid))
+    _save_session_settings(sid, incoming_settings)
+    a=_agent(sid, incoming_settings.get('llm_no',0))
+    _apply_settings(a, incoming_settings)
     image_blocks, saved_files = _file_to_blocks(files)
     display_prompt = prompt
     send_prompt = prompt

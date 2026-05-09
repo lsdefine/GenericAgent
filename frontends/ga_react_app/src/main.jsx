@@ -8,22 +8,9 @@ import './styles.css';
 const API = '';
 const uid = () => crypto.randomUUID?.() || Math.random().toString(36).slice(2);
 const defaultSettings = {llm_no: 0};
-const SETTINGS_KEY = 'gaReactSettings';
 function cleanSettings(settings){
   const n = Number(settings?.llm_no ?? 0);
   return {llm_no: Number.isFinite(n) ? n : 0};
-}
-function loadSavedSettings(){
-  try{
-    const raw = localStorage.getItem(SETTINGS_KEY);
-    if(!raw) return defaultSettings;
-    return cleanSettings(JSON.parse(raw));
-  }catch{
-    return defaultSettings;
-  }
-}
-function saveSettings(settings){
-  try{ localStorage.setItem(SETTINGS_KEY, JSON.stringify(cleanSettings(settings))); }catch{}
 }
 
 marked.setOptions({breaks: true, gfm: true});
@@ -192,7 +179,7 @@ function Composer({onSend,busy,onAbort,state,settings,updateSetting}){
   </div>
 }
 function App(){
-  const [sid,setSid]=useState(localStorage.gaReactSid||''); const [sessions,setSessions]=useState([]); const [messages,setMessages]=useState([]); const [busy,setBusy]=useState(false); const [state,setState]=useState({}); const [settings,setSettings]=useState(loadSavedSettings); const bottom=useRef(null);
+  const [sid,setSid]=useState(localStorage.gaReactSid||''); const [sessions,setSessions]=useState([]); const [messages,setMessages]=useState([]); const [busy,setBusy]=useState(false); const [state,setState]=useState({}); const [settings,setSettings]=useState(defaultSettings); const [follow,setFollow]=useState(true); const bottom=useRef(null); const chatRef=useRef(null);
   const refreshSessions=()=>jfetch('/api/sessions').then(d=>setSessions(d.sessions||[])).catch(console.error);
   function hydrateRun(baseMessages, run){
     let next=[...(baseMessages||[])].filter(x=>x.id!=='live');
@@ -214,25 +201,26 @@ function App(){
     }catch(e){ console.error(e); return false; }
   }
   async function ensure(){ let id=sid; if(!id){ const d=await jfetch('/api/session/new',{method:'POST'}); id=d.id; localStorage.gaReactSid=id; setSid(id);} return id; }
-  async function load(id, startPoll=true){ localStorage.gaReactSid=id; setSid(id); const d=await jfetch('/api/session/'+id); setMessages(hydrateRun(d.messages||[], d.run)); setBusy(!!d.run?.running); if(startPoll && d.run?.running) pollRun(id); jfetch('/api/state/'+id).then(s=>{setState(s); setSettings(v=>{
-    const saved = loadSavedSettings();
-    const next = cleanSettings({...v, ...saved});
-    saveSettings(next);
-    return next;
-  })}); }
+  async function load(id, startPoll=true){ localStorage.gaReactSid=id; setSid(id); const d=await jfetch('/api/session/'+id); const sessionSettings=cleanSettings(d.settings||{}); setSettings(sessionSettings); setMessages(hydrateRun(d.messages||[], d.run)); setBusy(!!d.run?.running); if(startPoll && d.run?.running) pollRun(id); jfetch('/api/state/'+id).then(s=>{setState(s); if(s.settings) setSettings(cleanSettings(s.settings));}); }
   useEffect(()=>{ensure().then(load); refreshSessions();},[]);
   useEffect(()=>{
     if(!sid || !busy) return;
     const t=setInterval(()=>pollRun(sid), 1000);
     return ()=>clearInterval(t);
   },[sid,busy]);
-  useEffect(()=>{bottom.current?.scrollIntoView({behavior:'smooth'});},[messages,busy]);
+  function isNearBottom(el){ return !el || (el.scrollHeight - el.scrollTop - el.clientHeight) < 96; }
+  function scrollToBottom(behavior='smooth'){
+    bottom.current?.scrollIntoView({behavior});
+  }
+  function onChatScroll(e){
+    setFollow(isNearBottom(e.currentTarget));
+  }
+  useEffect(()=>{ if(follow) scrollToBottom('smooth'); },[messages,busy,follow]);
   async function newChat(){ const d=await jfetch('/api/session/new',{method:'POST'}); await load(d.id); refreshSessions(); }
   async function del(id){ await fetch('/api/session/'+id,{method:'DELETE'}); if(id===sid) await newChat(); refreshSessions(); }
   async function updateSetting(patch){
     const next=cleanSettings({...settings,...patch});
     setSettings(next);
-    saveSettings(next);
     const id=await ensure();
     const d=await jfetch('/api/settings/'+id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(next)});
     setState(s=>({...s,...d}));
@@ -242,7 +230,7 @@ function App(){
     const payloadSettings=cleanSettings(settings);
     const userMsg={id:uid(),role:'user',content:prompt,files:(files||[]).map(f=>({name:f.name,type:f.type,mime:f.type,isImage:(f.type||'').startsWith('image/'),url:f.preview||''})),created_at:Date.now()/1000};
     setSettings(payloadSettings);
-    saveSettings(payloadSettings);
+    setFollow(true);
     setBusy(true);
     setMessages(m=>[...m,userMsg,{id:'live',role:'assistant',content:'正在处理附件…',created_at:Date.now()/1000}]);
     try{
@@ -280,7 +268,7 @@ function App(){
     }
   }
   async function abort(){ if(sid) await jfetch('/api/abort/'+sid,{method:'POST'}); setBusy(false); }
-  return <div className="app"><aside><div className="brand"><Bot/> <b>GeneraticAgent</b></div><button className="new" onClick={newChat}><Plus size={16}/> 新会话</button><div className="session-list">{sessions.map(s=><div className={'session '+(s.id===sid?'active':'')} key={s.id}><button onClick={()=>load(s.id)}><b>{s.title}</b><span>{fmtTime(s.updated_at)} · {s.count}条</span></button><button className="trash" onClick={()=>del(s.id)}><Trash2 size={14}/></button></div>)}</div><SettingsPanel state={state}/></aside><main><header><h1>GA Chat</h1><p>独立 React 前端 · 会话持久化 · 图片/文件 · 模型切换</p></header><div className="chat">{messages.length?messages.map(m=><Message key={m.id} m={m}/>):<div className="empty"><ImageIcon/>开始一个新对话，可直接粘贴图片。</div>}<div ref={bottom}/></div><Composer onSend={send} busy={busy} onAbort={abort} state={state} settings={settings} updateSetting={updateSetting}/></main></div>
+  return <div className="app"><aside><div className="brand"><Bot/> <b>GeneraticAgent</b></div><button className="new" onClick={newChat}><Plus size={16}/> 新会话</button><div className="session-list">{sessions.map(s=><div className={'session '+(s.id===sid?'active':'')} key={s.id}><button onClick={()=>load(s.id)}><b>{s.title}</b><span>{fmtTime(s.updated_at)} · {s.count}条</span></button><button className="trash" onClick={()=>del(s.id)}><Trash2 size={14}/></button></div>)}</div><SettingsPanel state={state}/></aside><main><header><h1>GA Chat</h1><p>独立 React 前端 · 会话持久化 · 图片/文件 · 模型切换</p></header><div className="chat-wrap"><div className="chat" ref={chatRef} onScroll={onChatScroll}>{messages.length?messages.map(m=><Message key={m.id} m={m}/>):<div className="empty"><ImageIcon/>开始一个新对话，可直接粘贴图片。</div>}<div ref={bottom}/></div>{!follow?<button className="follow-btn" onClick={()=>{setFollow(true); scrollToBottom('smooth')}}>↓ 返回跟随</button>:null}</div><Composer onSend={send} busy={busy} onAbort={abort} state={state} settings={settings} updateSetting={updateSetting}/></main></div>
 }
 
 createRoot(document.getElementById('root')).render(<App/>);

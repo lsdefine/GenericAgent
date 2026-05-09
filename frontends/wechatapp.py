@@ -6,6 +6,7 @@ from Crypto.Cipher import AES
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _TEMP_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'temp')
 from agentmain import GeneraticAgent
+from chatapp_common import split_text
 
 # ── WxBotClient (inline from wx_bot_client.py) ──
 for _k in ('HTTPS_PROXY', 'https_proxy'):
@@ -379,7 +380,8 @@ def on_message(bot, msg):
         _typing_stop.set()
         done, partial = _turn_parts(result)
         rest = '\n\n'.join(done[sent:] + [partial] + ['\n\n[任务已完成]'])
-        if rest.strip(): _wx_send((_clean(rest))[-2000:])
+        if rest.strip():
+            for p in split_text(_clean(rest), 1800): _wx_send(p)
         files = re.findall(r'\[FILE:([^\]]+)\]', result)
         bad = {'filepath', '<filepath>', 'path', '<path>', 'file_path', '<file_path>', '...'}
         files = [f for f in files if f.strip().lower() not in bad and (f if os.path.isabs(f) else os.path.join(_TEMP_DIR, f)) not in media_paths]

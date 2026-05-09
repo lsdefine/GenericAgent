@@ -117,4 +117,8 @@ reflect/*
 # Universal: never track __pycache__ anywhere
 **/__pycache__/
 
+# uv lockfiles are local-only for this repo
+uv.lock
+**/uv.lock
+
 .claude/

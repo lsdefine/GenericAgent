@@ -1,0 +1,853 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GenericAgent 智能体系统设计总览</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; background: #f5f5f5; color: #333; line-height: 1.7; }
+.toc { position: fixed; left: 0; top: 0; width: 280px; height: 100vh; overflow-y: auto; background: #1a1a2e; color: #ddd; padding: 20px; z-index: 100; }
+.toc h2 { color: #e94560; font-size: 16px; margin-bottom: 15px; border-bottom: 1px solid #333; padding-bottom: 10px; }
+.toc a { display: block; color: #aaa; text-decoration: none; font-size: 13px; padding: 4px 0 4px 12px; border-left: 2px solid transparent; transition: 0.2s; }
+.toc a:hover { color: #fff; border-left-color: #e94560; padding-left: 16px; }
+.toc .l2 { padding-left: 24px; font-size: 12px; }
+.toc .l3 { padding-left: 36px; font-size: 11px; color: #888; }
+.main { margin-left: 300px; padding: 30px 40px 80px; max-width: 1000px; }
+h1 { font-size: 28px; color: #1a1a2e; margin-bottom: 10px; }
+.subtitle { color: #666; font-size: 14px; margin-bottom: 30px; padding-bottom: 20px; border-bottom: 2px solid #e94560; }
+h2 { font-size: 22px; color: #1a1a2e; margin: 40px 0 15px; padding-bottom: 8px; border-bottom: 1px solid #ddd; }
+h3 { font-size: 17px; color: #2d3436; margin: 25px 0 10px; }
+h4 { font-size: 15px; color: #555; margin: 18px 0 8px; }
+p { margin: 10px 0; text-align: justify; }
+ul, ol { margin: 8px 0 8px 20px; }
+li { margin: 4px 0; }
+code { background: #f0f0f0; padding: 2px 6px; border-radius: 3px; font-size: 13px; color: #c0392b; font-family: 'Consolas', 'Source Code Pro', monospace; }
+pre { background: #1e1e1e; color: #d4d4d4; padding: 15px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.5; margin: 12px 0; }
+table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 14px; }
+th, td { border: 1px solid #ddd; padding: 8px 12px; text-align: left; }
+th { background: #f8f9fa; font-weight: 600; color: #444; }
+tr:nth-child(even) { background: #fafafa; }
+.tag { display: inline-block; background: #e94560; color: #fff; padding: 1px 8px; border-radius: 10px; font-size: 11px; margin-right: 4px; }
+.tag-blue { background: #3498db; }
+.tag-green { background: #27ae60; }
+.tag-orange { background: #f39c12; }
+.card { background: #fff; border-radius: 8px; padding: 20px; margin: 15px 0; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+.diagram { background: #f8f9fa; padding: 20px; border-radius: 8px; font-family: 'Consolas', monospace; font-size: 13px; line-height: 1.4; white-space: pre; overflow-x: auto; margin: 12px 0; }
+.highlight { background: #fff3cd; padding: 2px 6px; border-radius: 3px; }
+@media (max-width: 768px) { .toc { display: none; } .main { margin-left: 0; padding: 20px; } }
+
+/* ===== 暗黑模式 ===== */
+@media (prefers-color-scheme: dark) {
+body { background: #12121e; color: #d0d0d8; }
+.toc { background: #0d0d18; }
+.toc h2 { border-bottom-color: #333; }
+.toc a { color: #999; }
+.toc a:hover { color: #fff; }
+.toc .l3 { color: #777; }
+.main { }
+h1 { color: #e8e8f0; }
+.subtitle { color: #999; border-bottom-color: #b03050; }
+h2 { color: #e0e0ea; border-bottom-color: #333; }
+h3 { color: #ccd; }
+h4 { color: #aaa; }
+p { color: #c8c8d0; }
+code { background: #2a2a3c; color: #ff7b72; }
+pre { background: #0d0d18; color: #c8c8d0; border: 1px solid #2a2a3c; }
+table { }
+th, td { border-color: #2a2a3c; }
+th { background: #1a1a2e; color: #bbb; }
+tr:nth-child(even) { background: #18182a; }
+tr:nth-child(odd) { background: #12121e; }
+.tag { }
+.tag-blue { }
+.tag-green { }
+.tag-orange { }
+.card { background: #1a1a2e; box-shadow: 0 2px 8px rgba(0,0,0,0.3); }
+.diagram { background: #1a1a2e; color: #c8c8d0; }
+.highlight { background: #3a3a00; color: #ddd; }
+.card p { color: #c8c8d0; }
+}
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mermaid/10.9.0/mermaid.min.js" defer></script>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  var dark = window.matchMedia('(prefers-color-scheme:dark)').matches;
+  mermaid.initialize({startOnLoad:true, theme: dark?'dark':'default'});
+  window.matchMedia('(prefers-color-scheme:dark)').addEventListener('change',function(e){
+    location.reload();
+  });
+});</script>
+</head>
+<body>
+
+<div class="toc">
+<h2>📖 目录</h2>
+<a href="#intro">概述</a>
+<a href="#design" class="l2">核心设计原则</a>
+<a href="#arch" class="l2">系统架构</a>
+<a href="#arch-core" class="l3">核心模块</a>
+<a href="#arch-dir" class="l3">目录结构</a>
+
+<a href="#exec">执行模式</a>
+<a href="#exec-interactive" class="l2">交互模式</a>
+<a href="#exec-reflect" class="l2">反射模式</a>
+
+<a href="#tools">工具系统</a>
+<a href="#tools-def" class="l2">定义与加载</a>
+<a href="#tools-flow" class="l2">调用流程</a>
+<a href="#tools-create" class="l2">创建新工具</a>
+<a href="#tools-principle" class="l2">设计原则</a>
+
+<a href="#memory">分层记忆系统</a>
+<a href="#memory-hierarchy" class="l2">L0~L4 层级</a>
+<a href="#memory-flow" class="l2">访问与写入流程</a>
+
+<a href="#cognition">认知架构</a>
+<a href="#cog-perception" class="l2">环境感知</a>
+<a href="#cog-resource" class="l2">资源定位</a>
+<a href="#cog-loop" class="l2">问题解决循环</a>
+
+<a href="#reflection">自我反省机制</a>
+<a href="#ref-layers" class="l2">五层反省体系</a>
+<a href="#ref-fail" class="l2">失败升级链</a>
+
+<a href="#goal">目标设定与验证</a>
+<a href="#goal-layers" class="l2">四层目标闭环</a>
+<a href="#goal-verify" class="l2">独立验证机制</a>
+
+<a href="#multi">多智能体系统</a>
+<a href="#multi-master" class="l2">主从模式</a>
+<a href="#multi-map" class="l2">Map并行模式</a>
+<a href="#multi-super" class="l2">监察者模式</a>
+<a href="#multi-shared" class="l2">共享记忆</a>
+<a href="#multi-model" class="l2">多模型配置</a>
+
+<a href="#startup">启动方式</a>
+<a href="#startup-compare" class="l2">桌面 vs Web</a>
+
+<a href="#evolution">自我进化</a>
+<a href="#evol-skills" class="l2">技能树与自主探索</a>
+</div>
+
+<div class="main">
+
+<h1>GenericAgent 智能体系统设计总览</h1>
+<div class="subtitle">基于 docs/ 下全部文档的综合整理 | 2026-05-09</div>
+
+<!-- ==================== 概述 ==================== -->
+<h2 id="intro">概述</h2>
+<p><strong>GenericAgent（GA）</strong>是一个通用型自进化LLM智能体系统，旨在实现本地计算环境内任务自动化。其核心设计理念是通过优化上下文信息密度来提升智能体性能，而非单纯扩展上下文长度。</p>
+
+<div class="card">
+<h4>核心定位</h4>
+<ul>
+<li><strong>模型无关</strong>：底层推理引擎（Claude、GPT、Gemini等）可替换，不影响执行逻辑、工具接口与内存架构</li>
+<li><strong>统一智能体循环</strong>：每一步将全局记忆与当前任务规范结合形成执行上下文</li>
+<li><strong>两种执行模式</strong>：交互模式（用户发起）与反射模式（环境触发）</li>
+<li><strong>代码极简</strong>：核心代码库约3K行，核心智能体循环约百行</li>
+</ul>
+</div>
+
+<h3 id="design">核心设计原则</h3>
+<table>
+<tr><th>原则</th><th>描述</th></tr>
+<tr><td><strong>工具最小化</strong></td><td>将工具限制在必要的最小集合内，避免上下文膨胀；满足原子性与组合泛化</td></tr>
+<tr><td><strong>分层记忆</strong></td><td>仅保留小型常驻可见层（L1），深层记忆（L2~L4）按需访问</td></tr>
+<tr><td><strong>自我进化</strong></td><td>通过记录与更新信息环境实现跨任务经验整合，不修改基础模型</td></tr>
+<tr><td><strong>上下文压缩</strong></td><td>设定&lt;3万标记紧缩预算，采用字符域启发式方法管理</td></tr>
+</table>
+
+<!-- ==================== 系统架构 ==================== -->
+
+<h4>代码例证：核心执行循环</h4>
+<p>下方是 <code>agent_loop.py</code> 中 <code>agent_runner_loop</code> 函数的完整docstring，它描述了统一的智能体执行循环：</p>
+<pre>def agent_runner_loop(client, system_prompt, user_input, handler, tools_schema, max_turns=40, verbose=True, initial_user_content=None):
+    """通用智能体核心执行循环。每一步将全局记忆与当前任务规范结合形成执行上下文，LLM处理后生成输出或工具调用，
+    工具执行结果以结构化信号更新系统状态。
+
+    GA支持两种执行模式：
+    1. 交互模式：处理用户发起的任务，如代码执行、信息检索、文件操作
+    2. 反射模式：无需用户指令，持续监控环境变化，检测到特定条件自动触发对应任务
+
+    循环流程：构建消息 → 调用LLM → 解析工具调用 → 执行工具 → 更新上下文 → 重复直到完成/退出
+    """</pre>
+
+<h2 id="arch">系统架构</h2>
+
+<h3 id="arch-core">核心模块</h3>
+<table>
+<tr><th>模块</th><th>文件</th><th>职责</th></tr>
+<tr><td>智能体执行循环</td><td><code>agent_loop.py</code></td><td>构建消息→调用LLM→解析工具调用→执行→更新上下文</td></tr>
+<tr><td>工具引擎</td><td><code>ga.py</code></td><td>9种原子工具的解析、分发与执行</td></tr>
+<tr><td>LLM会话管理</td><td><code>llmcore.py</code></td><td>支持ClaudeSession、LLMSession、MixinSession等多种后端</td></tr>
+<tr><td>主入口</td><td><code>agentmain.py</code></td><td>CLI参数解析、工具JSON加载、任务队列管理</td></tr>
+<tr><td>前端界面</td><td><code>frontends/</code></td><td>CLI/桌面宠物/Streamlit Web/飞书/微信/Telegram</td></tr>
+</table>
+
+<h3 id="arch-dir">项目目录结构</h3>
+<div class="mermaid">
+flowchart TB
+    subgraph 执行模式
+        A[交互模式] -->|用户发起| M[Agent Loop]
+        B[反射模式] -->|环境触发| M
+    end
+    subgraph 核心组件
+        M --> T[ga.py 工具引擎]
+        M --> L[llmcore.py LLM会话管理]
+        T --> F[文件操作 code_run等]
+        T --> W[web_scan等]
+        T --> MM[file_read等]
+        T --> H[ask_user]
+    end
+    subgraph 前端
+        CLI[命令行] --> M
+        WEB[Streamlit] --> M
+        DESK[桌面宠物] --> M
+    end
+    subgraph 反射脚本
+        ATO[autonomous.py] --> B
+        SCH[scheduler.py] --> B
+    end</div>
+<div class="diagram">GenericAgent/
+├── agentmain.py          # 主入口
+├── agent_loop.py         # 智能体执行循环
+├── ga.py                 # 工具引擎
+├── llmcore.py            # LLM会话管理
+├── mykey.py              # 密钥配置
+├── assets/
+│   └── tools_schema.json # 工具定义文件
+├── memory/               # 分层记忆系统
+│   ├── global_mem_insight.txt  # L1 索引
+│   ├── global_mem.txt          # L2 事实
+│   ├── *.md / *.py             # L3 SOP/工具
+│   └── L4_raw_sessions/        # L4 归档
+├── frontends/            # 前端界面
+│   ├── stapp.py / stapp2.py  # Streamlit Web
+│   ├── desktop_pet.pyw       # 桌面宠物
+│   └── subagent_dashboard.py # 多Agent仪表盘
+├── temp/                 # 运行时临时文件
+├── docs/                 # 系统文档
+└── plugins/              # 插件</div>
+
+<!-- ==================== 执行模式 ==================== -->
+<h2 id="exec">执行模式</h2>
+
+<h3 id="exec-interactive">交互模式</h3>
+<p>用户通过CLI或前端界面发起任务，智能体按步骤执行：用户输入 → <code>put_task(query)</code> → 构建prompt调用LLM → LLM返回响应(含工具调用) → 执行工具 → 更新上下文 → 循环直到完成。</p>
+<div class="mermaid">
+sequenceDiagram
+    participant U as 用户
+    participant CLI as 命令行
+    participant A as GenericAgent
+    participant T as 工具引擎
+    participant L as 语言模型
+    U->>CLI: 输入任务指令
+    CLI->>A: put_task(query)
+    A->>L: 构建prompt调用
+    L->>A: 返回响应(含工具调用)
+    A->>T: 执行工具
+    T->>A: 返回结果
+    loop 循环直到完成
+        A->>L: 更新上下文/继续
+        L->>A: 返回响应
+    end
+    A->>CLI: 最终结果
+    CLI->>U: 显示结果
+</div>
+<div class="mermaid">
+flowchart TD
+    A[开始] --> B[构建消息]
+    B --> C[调用LLM]
+    C --> D{解析工具调用}
+    D -->|有工具调用| E[执行工具]
+    D -->|无工具调用| F[直接响应]
+    E --> G[更新上下文]
+    G --> H{是否完成}
+    H -->|否| B
+    H -->|是| I[结束]
+    F --> I
+</div>
+
+<h3 id="exec-reflect">反射模式</h3>
+
+<h4>代码例证：循环核心实现</h4>
+<p>以下是 <code>agent_loop.py</code> 中循环核心的代码骨架，展示了消息拼接、工具调用解析、结果回传的关键逻辑：</p>
+<pre>messages = [
+    {"role": "system", "content": system_prompt},
+    {"role": "user", "content": initial_user_content if initial_user_content is not None else user_input}
+]
+turn = 0;  handler.max_turns = max_turns
+while turn &lt; handler.max_turns:
+    turn += 1
+    response_gen = client.chat(messages=messages, tools=tools_schema)
+    response = yield from response_gen
+    if not response.tool_calls:
+        tool_calls = [{"tool_name": "no_tool", "args": {}}]
+    else:
+        tool_calls = [{"tool_name": tc.function.name,
+                       "args": json.loads(tc.function.arguments)}
+                      for tc in response.tool_calls]
+    for tc in tool_calls:
+        outcome = handler.dispatch(tc["tool_name"], tc["args"], response)
+        if outcome.should_exit: break
+        if outcome.next_prompt:
+            next_prompts.add(outcome.next_prompt)
+    # 新消息更新上下文，历史由 Session 维护
+    messages = [{"role": "user", "content": next_prompt, "tool_results": tool_results}]</pre>
+
+<p>无需用户指令，持续监控环境变化：加载监控脚本 → 定时轮询 <code>check()</code> → 条件满足时触发任务。</p>
+<div class="mermaid">
+flowchart TD
+    A["启动反射模式"] --> B["加载监控脚本"]
+    B --> C["定时轮询 check()"]
+    C --> D{条件满足?}
+    D -->|是| E["触发任务"]
+    D -->|否| C
+    E --> F["执行任务"]
+    F --> G["记录日志"]
+    G --> C
+</div>
+<p><strong>典型应用</strong>：看门狗（监控文件/日志变化）、定时任务（按时间规则生成GA任务）</p>
+
+<!-- ==================== 工具系统 ==================== -->
+
+<h4>代码例证：反射模式脚本</h4>
+
+<p><strong>① 自主看门狗（<code>reflect/autonomous.py</code>）</strong>——最简单的反射模式实现：检测用户离开超30分钟时自动触发任务：</p>
+<pre># reflect/autonomous.py
+INTERVAL = 1800
+ONCE = False
+
+def check():
+    return "[AUTO]🤖 用户已经离开超过30分钟，作为自主智能体，请阅读自动化sop，执行自动任务。"</pre>
+
+<p><strong>② 定时调度器（<code>reflect/scheduler.py</code>）</strong>——完整的定时任务引擎，支持cron式调度、冷却周期、周末跳过、执行窗口限制：</p>
+<pre>INTERVAL = 120  # 轮询间隔
+
+def _parse_cooldown(repeat):
+    """解析repeat为冷却时间"""
+    if repeat == 'once': return timedelta(days=999999)
+    if repeat in ('daily', 'weekday'): return timedelta(hours=20)
+    if repeat == 'weekly': return timedelta(days=6)
+    if repeat.startswith('every_'):
+        parts = repeat.split('_')
+        n = int(parts[1].rstrip('hdm'))
+        u = parts[1][-1]
+        if u == 'h': return timedelta(hours=n)
+        if u == 'm': return timedelta(minutes=n)
+        if u == 'd': return timedelta(days=n)
+    return timedelta(hours=20)
+
+def check():
+    # L4 archive cron (silent, every 12h)
+    # 遍历 sche_tasks/ 下的 .json 任务文件
+    for f in sorted(os.listdir(TASKS)):
+        if not f.endswith('.json'): continue
+        task = json.load(open(os.path.join(TASKS, f)))
+        if not task.get('enabled', False): continue
+        # 检查 schedule 时间 + max_delay 窗口
+        # 检查冷却期
+        # 满足条件 → 返回任务 prompt 触发执行
+    return None</pre>
+
+<h2 id="tools">工具系统</h2>
+
+<h3 id="tools-def">定义与加载</h3>
+<p>工具定义在 <code>assets/tools_schema.json</code>，采用OpenAI Function Calling格式。启动时由<code>agentmain.py</code>读取：</p>
+<pre>TS = open('assets/tools_schema.json').read()
+TOOLS_SCHEMA = json.loads(TS)</pre>
+
+<p><strong>9个内置工具</strong>：</p>
+
+<pre># assets/tools_schema.json 是 OpenAI Function Calling 格式的工具定义文件
+# 以下展示其中一个工具的完整定义：
+{"type": "function", "function": {
+  "name": "code_run",
+  "description": "Code executor. Prefer python. Multi-call OK, use script param...",
+  "parameters": {"type": "object", "properties": {
+    "script": {"type": "string", "description": "[Mutually exclusive]..."},
+    "type": {"type": "string", "enum": ["python", "powershell"], "default": "python"},
+    "timeout": {"type": "integer", "description": "in seconds", "default": 60},
+    "cwd": {"type": "string", "description": "Working directory"}
+  }}
+}}
+
+# agentmain.py 中的加载逻辑：
+def load_tool_schema(suffix=""):
+    global TOOLS_SCHEMA
+    TS = open(f"assets/tools_schema{suffix}.json").read()
+    TOOLS_SCHEMA = json.loads(TS.replace("powershell", "bash") if os.name != "nt" else TS)</pre>
+
+<table>
+<tr><th>类别</th><th>工具</th><th>功能</th></tr>
+<tr><td rowspan="3">文件操作</td><td><code>file_read</code></td><td>读取文件，支持关键词搜索</td></tr>
+<tr><td><code>file_patch</code></td><td>精准编辑，唯一匹配替换</td></tr>
+<tr><td><code>file_write</code></td><td>覆盖/追加/前置写入</td></tr>
+<tr><td>代码执行</td><td><code>code_run</code></td><td>受控运行时执行Python/PowerShell</td></tr>
+<tr><td rowspan="2">Web交互</td><td><code>web_scan</code></td><td>获取浏览器页面HTML/Tab列表</td></tr>
+<tr><td><code>web_execute_js</code></td><td>执行JS控制浏览器</td></tr>
+<tr><td rowspan="2">内存管理</td><td><code>update_working_checkpoint</code></td><td>短期工作记忆</td></tr>
+<tr><td><code>start_long_term_update</code></td><td>长期记忆蒸馏</td></tr>
+<tr><td>人机协作</td><td><code>ask_user</code></td><td>需要用户决策时中断任务</td></tr>
+</table>
+
+<h3 id="tools-flow">调用流程</h3>
+<div class="diagram">用户输入
+  ↓
+LLM 收到 tools=TOOLS_SCHEMA
+  ↓
+LLM 决定调用哪个工具 → 返回 function_call
+  ↓
+agent_runner_loop() 解析 → 映射到同名 Python 函数
+  ↓
+执行结果送回 LLM → 继续推理或输出回复</div>
+
+<h3 id="tools-create">创建新工具</h3>
+<div class="card">
+<h4>✅ 可以：脚本级工具</h4>
+<p>通过 <code>file_write</code> + <code>code_run</code> 运行时创建。例：图床服务、OCR调试脚本。</p>
+<h4>❌ 不可以：动态注册FC工具</h4>
+<p><code>tools=[]</code> 列表在对话开始时固定，中途不能追加。需要编辑 <code>assets/tools_schema.json</code> + 写Python实现，下轮会话生效。</p>
+<h4>策略</h4>
+<ul>
+<li>反复使用的能力 → 写成 <code>.py</code> 模块放 <code>memory/</code> 下</li>
+<li>一次性任务 → 直接用 <code>code_run</code> 内联代码</li>
+<li>持久化服务（如图床） → <code>file_write</code> 创建 → <code>code_run</code> 启动后台进程</li>
+</ul>
+</div>
+
+<h3 id="tools-principle">设计原则</h3>
+
+<h4>代码例证：安全拦截机制</h4>
+<p><code>ga.py</code> 中的 <code>code_run</code> 函数内置了高危操作黑名单，通过正则匹配拦截破坏性命令：</p>
+<pre>DANGEROUS_PATTERNS = [
+    (r'\brm\s+(-[rR]+|-[rR][fF]|-[fF][rR])\s*/[/\s]', '递归删除根目录'),
+    (r'\brd\s+/[sS]\s+/[qQ]\s+[A-Za-z]:\\', '递归删除驱动器'),
+    (r'\bformat\s+[A-Za-z]:', '格式化磁盘'),
+    (r'\bshutdown\s+[/-][sprh]', '关机/重启操作'),
+    (r':\(\)\s*\{\s*:\s*\|\s*:&\s*\}\s*;?\s*:', 'fork 炸弹'),
+    (r'\bchmod\s+-R\s+0{2,3}\s+', '递归清除权限'),
+    (r'\breg\s+delete\s+HK', '删除注册表项'),
+    (r'\btaskkill\s+/[fF]\s+/[iI][Mm]\s+', '强制终止进程'),
+]
+# 代码执行前先扫描，命中则拦截
+for pattern, desc in DANGEROUS_PATTERNS:
+    if re.search(pattern, _code_lower):
+        return {"status": "blocked", "reason": f"高危命令被拦截: {desc}"}</pre>
+
+<ul>
+<li><strong>描述即行为约束</strong>：工具的description直接影响LLM使用决策</li>
+<li><strong>参数驱动</strong>：所有交互通过参数传递</li>
+<li><strong>一次一个工具</strong>：每轮LLM只输出一个工具调用或纯回复</li>
+<li><strong>失败回溯</strong>：错误信息送回LLM，自主重试或换方案</li>
+</ul>
+
+<!-- ==================== 分层记忆 ==================== -->
+
+<h4>代码例证：上下文压缩（四阶段修剪）</h4>
+<p><code>ga.py</code> 的 <code>smart_format</code> 函数实现了字符域启发式压缩——这是"上下文压缩"设计原则的具体实现：</p>
+<pre>def smart_format(data, max_str_len=100, omit_str=" ... "):
+    """上下文截断与压缩：采用首尾策略对内容进行截断，限制单条消息长度。
+    GA采用字符域启发式方法管理上下文预算，通过四阶段修剪机制控制长度：
+    1. 工具输出截断：单工具输出超阈值时保留首尾，替换中间部分
+    2. 标签级压缩：每五轮替换重复工作记忆块为占位符
+    3. 消息清理：超预算时重新压缩并按先进先出删除旧消息
+    4. 工作记忆锚定：每条新消息附加最新对话摘要、轮次编号与关键信息
+    """
+    if not isinstance(data, str): data = str(data)
+    if len(data) &lt; max_str_len + len(omit_str)*2: return data
+    return f"{data[:max_str_len//2]}{omit_str}{data[-max_str_len//2:]}"</pre>
+
+<h4>代码例证：工具分发机制</h4>
+<p><code>ga.py</code> 的 <code>BaseHandler.dispatch</code> 方法将LLM返回的工具调用名映射到同名Python方法：</p>
+<pre>def dispatch(self, tool_name, args, response, index=0):
+    method_name = f"do_{tool_name}"
+    if hasattr(self, method_name):
+        return (yield from getattr(self, method_name)(args, response))
+    elif tool_name == "bad_json":
+        return StepOutcome(None, next_prompt=args.get("msg", "bad_json"))
+    else:
+        return StepOutcome(None, next_prompt=f"未知工具 {tool_name}")</pre>
+
+<h2 id="memory">分层记忆系统</h2>
+
+<h3 id="memory-hierarchy">L0~L4 层级</h3>
+<table>
+<tr><th>层级</th><th>存储路径</th><th>内容</th><th>特点</th></tr>
+<tr><td><strong>L0 元规范</strong></td><td><code>memory/memory_management_sop.md</code></td><td>记忆管理的元规则</td><td>写记忆前必读</td></tr>
+<tr><td><strong>L1 索引层</strong></td><td><code>memory/global_mem_insight.txt</code></td><td>紧凑指针、关键词映射、硬约束</td><td>常驻内存核心，≤30行</td></tr>
+<tr><td><strong>L2 事实层</strong></td><td><code>memory/global_mem.txt</code></td><td>经验证的长期事实</td><td>严格准入，排除瞬态信息</td></tr>
+<tr><td><strong>L3 SOP层</strong></td><td><code>memory/*.md / *.py</code></td><td>可复用流程性知识</td><td>工作流、前置条件、故障处理</td></tr>
+<tr><td><strong>L4 归档层</strong></td><td><code>memory/L4_raw_sessions/</code></td><td>历史会话原始数据</td><td>自动收集，轨迹重构</td></tr>
+</table>
+
+<h3 id="memory-flow">访问与写入流程</h3>
+
+<h4>代码例证：L1 Insight 实际内容</h4>
+<p>以下是 <code>memory/global_mem_insight.txt</code> 的实际内容（严格控制在23行，&lt;30行约束），展示了极简索引层的真实面貌：</p>
+<pre># [Global Memory Insight]
+需要时read L2 或 ls ../memory/ 查L3
+L0(META-SOP): memory_management_sop
+L2: 现空
+L3: memory_cleanup_sop(记忆整理) | skill_search | ui_detect.py | ocr_utils.py
+    | clipboard_ocr / clipboard_ocr_sop | subagent | web_setup_sop | plan_sop
+    | procmem_scanner | keychain | ljqCtrl_sop+.py | tmwebdriver_sop
+    | autonomous_operation_sop | scheduled_task_sop | vision_sop | adb_ui.py
+    | metaso_search
+L4: L4_raw_sessions/ 历史会话
+
+浏览器特殊操作: tmwebdriver_sop(...)
+键鼠: ljqCtrl_sop(禁pyautogui/先activate)
+截图/视觉: ocr/vision_sop | 禁全屏截图，优先窗口
+定时:scheduled_task_sop | 自主:autonomous_operation_sop
+手机:adb_ui.py
+
+[RULES]
+1. 搜索先行: 搜文件名严禁不用es(禁PS递归/禁dir遍历)...
+2. 交叉验证: 禁信摘要, 数值进详情页核实
+...</pre>
+
+<div class="mermaid">
+graph LR
+    L1[L1 索引层 常驻内存] -- 快速导航 --> L2[L2 事实层]
+    L1 -- 快速导航 --> L3[L3 SOP层]
+    L2 -- 经验整合 --> L3
+    M[智能体] -- 按需访问 --> L1
+    M -- 触发式提交 --> L2
+    M -- 触发式提交 --> L3
+    M -- 轨迹重构 --> L4[L4 归档层 历史会话]
+</div>
+<div class="diagram">收到任务 → 读L1 Insight → 发现SOP名 → 读L3 SOP → 按SOP执行
+  ↓
+任务完成 → 提取经验 → 按META-SOP决策树分类
+  ├─ 环境事实 → L2 global_mem.txt
+  ├─ 通用规则 → L1 RULES
+  └─ 特定技术 → L3 SOP/utils</div>
+
+<p><strong>规范须知</strong>：修改L1/L2只能用 <code>file_patch</code> 少量修改；写记忆前先读META-SOP(L0)核验；L2/L3变更时同步更新L1索引。</p>
+
+<h4>代码例证：记忆写入决策树（META-SOP）</h4>
+<p><code>memory/memory_management_sop.md</code>（L0元规范）中定义了信息分类快速决策树，指导智能体判断信息应存入哪一层：</p>
+<pre>"这条信息该放哪层？"
+
+是『环境特异性事实』? (IP、非标路径、凭证、ID、API密钥等)
+  ├─ YES → L2 (global_mem.txt)，然后按频率归入L1层级
+  └─ NO
+       ↓
+       是『通用操作规律』? (全局性避坑指南、排查方法)
+       ├─ YES → L1 [RULES] (仅限1句压缩准则)
+       └─ NO
+            ↓
+            是『特定任务技术』? (艰难尝试才能成功，且未来还能用到的)
+            ├─ YES → L3 (专项SOP或脚本)
+            └─ NO → 判定为冗余信息，严禁存储直接丢弃</pre>
+
+<h4>代码例证：L1 加载到上下文</h4>
+<p><code>ga.py</code> 的 <code>get_global_memory()</code> 函数展示了 L1 如何被注入到每次对话的系统提示中：</p>
+<pre>def get_global_memory():
+    prompt = "\n"
+    with open("memory/global_mem_insight.txt", "r") as f:
+        insight = f.read()
+    with open("assets/insight_fixed_structure.txt", "r") as f:
+        structure = f.read()
+    prompt += f"cwd = {os.path.join(script_dir, \"temp\")}\n"
+    prompt += structure + "\n../memory/global_mem_insight.txt:\n"
+    prompt += insight + "\n"
+    return prompt</pre>
+
+
+<!-- ==================== 认知架构 ==================== -->
+<h2 id="cognition">认知架构</h2>
+
+<h3 id="cog-perception">环境感知</h3>
+<p><strong>静态上下文</strong>（每次对话注入）：CONSTITUTION（9条铁律）、RULES、Global Memory Insight、Tool Definitions。</p>
+<p><strong>动态上下文</strong>（运行时注入）：<code>cwd</code>、<code>Today</code>、Working Memory（<code>update_working_checkpoint</code>）、会话历史。</p>
+<p><strong>探测手段</strong>：</p>
+<ul>
+<li><code>file_read</code> → 读文件内容</li>
+<li><code>web_scan</code> → 获知浏览器Tab + 页面HTML</li>
+<li><code>code_run</code> → 执行Python探测系统状态</li>
+<li>间接：工具返回值错误信息、用户反馈</li>
+</ul>
+
+<h3 id="cog-resource">资源定位</h3>
+<table>
+<tr><th>优先级</th><th>方法</th><th>适用场景</th></tr>
+<tr><td>1</td><td>查 Global Memory Insight</td><td>已知内存中有什么</td></tr>
+<tr><td>2</td><td>读 SOP / import Utils</td><td>有现成方案</td></tr>
+<tr><td>3</td><td><code>code_run</code> 探测</td><td>检查系统状态/文件存在性</td></tr>
+<tr><td>4</td><td>Metaso API 搜索</td><td>查技术文档/API</td></tr>
+<tr><td>5</td><td>浏览器 Bing 搜索</td><td>兜底</td></tr>
+</table>
+<p><strong>搜索铁律</strong>：<code>搜文件名严禁不用es(禁PS递归/禁dir遍历)</code> — 优先搜索索引，不暴力遍历。</p>
+
+<h3 id="cog-loop">问题解决循环</h3>
+<div class="diagram">接收任务 → 查记忆/读SOP → 探测环境状态
+  → 执行一步操作 → 验证结果
+    ├─ 成功 → 继续下一步
+    └─ 失败 → 升级策略
+        ├─ 1次：读错误日志
+        ├─ 2次：探测环境
+        └─ 3次：换方案或问用户
+  → 闭环确认（保存记忆/Git）</div>
+
+<p><strong>核心原则</strong>：</p>
+<table>
+<tr><th>原则</th><th>说明</th></tr>
+<tr><td>探测优先</td><td>不空想结果，先用工具获取真实信息</td></tr>
+<tr><td>分步执行</td><td>限制失败半径，小步快跑</td></tr>
+<tr><td>失败升级</td><td>禁止无新信息的重复操作</td></tr>
+<tr><td>交叉验证</td><td>不信摘要，数值进详情页核实</td></tr>
+<tr><td>闭环</td><td>物理模拟后确认，Git完整闭环</td></tr>
+</table>
+
+<!-- ==================== 自我反省 ==================== -->
+
+<h4>代码例证：失败升级链——3次法则</h4>
+<p>以下代码（摘自 <code>ga.py</code> 的 <code>file_read</code> 函数）展示了"第1次失败→智能重试"模式：找不到文件时自动扫描相似文件名：</p>
+<pre>except FileNotFoundError:
+    msg = f"Error: File not found: {path}"
+    tgt = os.path.basename(path)
+    # 自动扫描目录找相似文件
+    cands = list(itertools.islice(
+        (c for base in roots for c in _scan_files(base)), 2000))
+    top = sorted([(difflib.SequenceMatcher(None, tgt.lower(),
+                  c[0].lower()).ratio(), c) for c in cands[:2000]],
+                 key=lambda x: -x[0])[:5]
+    if top: msg += "\n\nDid you mean:\n" + \n           "\n".join(f"  {c[1]}  ({s:.0%})" for s, c in top)
+    return msg</pre>
+
+<h2 id="reflection">自我反省机制</h2>
+<p>反省能力通过<strong>结构化的多层反馈回路</strong>和<strong>强制元认知机制</strong>实现，而非拟人化的意识活动。</p>
+
+<h3 id="ref-layers">五层反省体系</h3>
+<table>
+<tr><th>维度</th><th>实现方式</th><th>时间范围</th></tr>
+<tr><td>即时反省</td><td><code>&lt;summary&gt;</code> 强制回顾上步结果+本轮意图</td><td>每轮对话</td></tr>
+<tr><td>任务中反省</td><td><code>update_working_checkpoint</code> 保存检查点</td><td>任务中途</td></tr>
+<tr><td>失败反省</td><td>3次升级链：读日志→探环境→换方案</td><td>失败时刻</td></tr>
+<tr><td>长期反省</td><td>记忆蒸馏 + META-SOP 写前校验</td><td>跨会话</td></tr>
+<tr><td>学习反省</td><td><code>start_long_term_update</code> 系统性回顾</td><td>长任务完成时</td></tr>
+</table>
+
+<h3 id="ref-fail">失败升级链（3次法则）</h3>
+
+<h4>代码例证：强制 summary 机制</h4>
+<p><code>ga.py</code> 中 <code>turn_end_callback</code> 函数的摘要提取逻辑，确保每一轮都生成 <code>&lt;summary&gt;</code> 标签：</p>
+<pre>def turn_end_callback(self, response, tool_calls, tool_results, turn, next_prompt, exit_reason):
+    _c = re.sub(r"```.*?```|&lt;thinking&gt;.*?&lt;/thinking&gt;", "", response.content, flags=re.DOTALL)
+    rsumm = re.search(r"&lt;summary&gt;(.*?)&lt;/summary&gt;", _c, re.DOTALL)
+    if rsumm:
+        summary = rsumm.group(1).strip()
+    else:
+        # 未输出summary时自动生成一个
+        tc = tool_calls[0]
+        summary = f"调用工具{tc['tool_name']}, args: {tc['args']}"
+        if tc["tool_name"] == "no_tool":
+            summary = "直接回答了用户问题"
+        # 同时注入提示要求补充summary
+        next_prompt += "\n\n\nUSER: &lt;summary&gt;呢？？？！\n\n"
+    # 存入历史用于后续上下文注入
+    self.history_info.append(f"[Agent] {summary}")</pre>
+
+<div class="card">
+<p><span class="tag">第1次失败</span> 读错误日志，理解原因 — <em>被动反省</em></p>
+<p><span class="tag tag-blue">第2次失败</span> 探测环境状态，获取更多上下文 — <em>主动反省</em></p>
+<p><span class="tag tag-orange">第3次失败</span> 深度分析后换方案或问用户 — <em>根本性调整</em></p>
+<p><strong>核心约束</strong>：<span class="highlight">禁止无新信息的重复尝试</span>。每次重试必须基于新的信息或不同策略。</p>
+</div>
+
+<!-- ==================== 目标验证 ==================== -->
+<h2 id="goal">目标设定与验证机制</h2>
+<p>核心思想：<strong>每个粒度的行动都有明确的预期目标，执行后必须验证目标是否达成</strong>。</p>
+
+<h3 id="goal-layers">四层目标闭环</h3>
+<table>
+<tr><th>层级</th><th>粒度</th><th>机制</th></tr>
+<tr><td>会话级</td><td>跨任务</td><td><code>start_long_term_update</code> 蒸馏回顾</td></tr>
+<tr><td>任务级</td><td>完整任务</td><td><code>plan.md</code> 终止检查 + 独立Subagent验证</td></tr>
+<tr><td>步骤级</td><td>单一步骤</td><td><code>[ ]</code> 标记 + Mini验证（确认文件存在/exit code/页面状态）</td></tr>
+<tr><td>单轮级</td><td>每轮</td><td><code>&lt;summary&gt;</code> 意图声明 + 结果确认</td></tr>
+</table>
+
+<h3 id="goal-verify">独立验证机制</h3>
+<p>所有 plan mode 任务完成后，<strong>强制启动独立验证 subagent</strong>：</p>
+<ul>
+<li>创建 <code>verify_context.json</code>（任务描述、plan路径、交付物清单、必做检查）</li>
+<li>启动验证 subagent → 对抗性验证（"证明交付物不能用"）</li>
+<li>输出 VERDICT：<span class="tag-green">PASS ✅</span> / <span class="tag">FAIL ❌</span> / <span class="tag-orange">PARTIAL ⚠</span></li>
+</ul>
+
+<!-- ==================== 多智能体 ==================== -->
+
+<h4>代码例证：验证 SOP 动作表</h4>
+<p><code>memory/verify_sop.md</code> 定义了按产物类型的验证动作规范：</p>
+<pre>| 产物类型 | 必做 |
+|---|---|
+| 网页/前端 | 打开+截图 → console错误 → 确认非空壳 |
+| 脚本/CLI | 执行 → 检查stdout/stderr/exit code → 边界输入再跑 |
+| 数据文件 | 格式校验 → 行数 → 抽查首/中/尾3条 |
+| API/服务 | 调用endpoint → 响应形状(不只200) → 错误输入 |
+| 配置/文档 | file_read完整内容 → 格式语法 → 未破坏已有 |
+| Bug修复   | 复现原bug → 验证修复 → 回归测试 |
+| 批量操作  | 总数 → 抽查首/中/尾 → 重复/遗漏 → 中间失败一致性 |
+
+# 对抗性探测（至少运行一个）
+边界值(0/空/超长/unicode) · 幂等性(同一操作两次) · 缺失依赖 · 孤儿ID</pre>
+
+<h2 id="multi">多智能体系统</h2>
+<p>GenericAgent 支持四种多智能体协作模式，核心通讯基于<strong>文件系统异步IO协议 + 共享记忆</strong>。</p>
+
+<h3 id="multi-master">主从模式（Master-Subagent）</h3>
+<p>主Agent通过文件系统与Subagent通讯：</p>
+<table>
+<tr><th>文件</th><th>方向</th><th>用途</th></tr>
+<tr><td><code>input.txt</code></td><td>主→子</td><td>任务目标与约束</td></tr>
+<tr><td><code>context.json</code></td><td>主→子</td><td>绝对路径、交付物清单</td></tr>
+<tr><td><code>output.txt</code></td><td>子→主</td><td>执行输出，<code>[ROUND END]</code>标记轮次</td></tr>
+<tr><td><code>reply.txt</code></td><td>主→子</td><td>继续对话/追加指令</td></tr>
+<tr><td><code>_intervene</code></td><td>主→子</td><td>纠偏指令</td></tr>
+<tr><td><code>_keyinfo</code></td><td>主→子</td><td>注入working memory</td></tr>
+<tr><td><code>_stop</code></td><td>主→子</td><td>终止信号</td></tr>
+</table>
+
+<p><strong>启动方式</strong>：</p>
+<pre>python agentmain.py --task my_task --input "任务描述" [--bg] [--llm_no N]</pre>
+
+<h3 id="multi-map">Map并行模式</h3>
+<p>适用独立同构子任务的批量处理：</p>
+<ol>
+<li>主Agent准备N个独立输入文件</li>
+<li>对每个文件启动一个 Subagent（<code>--bg</code> 后台）</li>
+<li>等所有完成 → 读取各 <code>output*.txt</code> → 汇总结果</li>
+</ol>
+
+<h3 id="multi-super">监察者模式（Supervisor-Worker）</h3>
+<div class="diagram">监察者（Supervisor）— 只读、只判断、只干预，不下场干活
+    │ 读 output.txt（观察进度）
+    │ 写 _intervene / _keyinfo（纠偏）
+    ▼
+工作Agent（Worker） — 实际执行任务</div>
+<p>监察者干预清单：跳步、细节遗漏、光说不做、断言无据、连续失败等。</p>
+
+<h3 id="multi-shared">共享记忆机制</h3>
+<p>所有Agent共享同一套记忆系统：L1 Insight、L2 Facts、L3 SOP/utils、keychain、文件系统。</p>
+
+<h3 id="multi-model">多模型配置</h3>
+<p>通过 <code>--llm_no N</code> 参数为不同Subagent指定不同大模型：</p>
+<pre># OCR 智能体 → 视觉模型 (llmclients[0])
+python agentmain.py --task 截图分析 --input "..." --llm_no 0 --bg
+
+# 文本智能体 → 纯文本模型 (llmclients[1])
+python agentmain.py --task 文本摘要 --input "..." --llm_no 1 --bg</pre>
+<p>在 <code>mykey.py</code> 中定义多个 session config（变量名需含 <code>api</code> / <code>config</code> / <code>cookie</code>）。</p>
+
+<!-- ==================== 启动方式 ==================== -->
+
+<h4>代码例证：多模型加载逻辑</h4>
+<p><code>agentmain.py</code> 的 <code>load_llm_sessions()</code> 函数展示了如何从 <code>mykey.py</code> 动态加载多个LLM后端：</p>
+<pre>def load_llm_sessions(self):
+    mykeys, changed = reload_mykeys()
+    llm_sessions = []
+    for k, cfg in mykeys.items():
+        if not any(x in k for x in ["api", "config", "cookie"]): continue
+        if "native" in k and "claude" in k:
+            llm_sessions += [NativeToolClient(NativeClaudeSession(cfg=cfg))]
+        elif "native" in k and "oai" in k:
+            llm_sessions += [NativeToolClient(NativeOAISession(cfg=cfg))]
+        elif "claude" in k:
+            llm_sessions += [ToolClient(ClaudeSession(cfg=cfg))]
+        elif "oai" in k:
+            llm_sessions += [ToolClient(LLMSession(cfg=cfg))]
+        elif "mixin" in k:
+            llm_sessions += [{"mixin_cfg": cfg}]
+    return llm_sessions
+
+# Subagent 后台启动模式
+def run():
+    # ...
+    gen = agent_runner_loop(self.llmclient, sys_prompt, raw_query,
+                            handler, TOOLS_SCHEMA, max_turns=70, verbose=self.verbose)
+    for chunk in gen:
+        if consume_file(self.task_dir, "_stop"): self.abort()
+        if self.stop_sig: break
+        # 实时推送输出到 display_queue</pre>
+
+<h2 id="startup">启动方式</h2>
+
+<h3 id="startup-compare">桌面版 vs Web版</h3>
+<table>
+<tr><th>对比维度</th><th><code>python launch.pyw</code></th><th><code>streamlit run stapp.py</code></th></tr>
+<tr><td>本质</td><td>桌面原生窗口包装器</td><td>纯Streamlit Web界面</td></tr>
+<tr><td>UI载体</td><td>pywebview 原生窗口</td><td>浏览器 Web 页面</td></tr>
+<tr><td>JS↔Python通信</td><td>✅ 有（inject/PASTE_HOOK_JS）</td><td>❌ 无</td></tr>
+<tr><td>空闲监控</td><td>✅ 30分钟自动注入任务</td><td>❌ 无</td></tr>
+<tr><td>Bot支持</td><td>✅ Telegram/QQ/飞书/企业微信/钉钉</td><td>❌ 无</td></tr>
+</table>
+
+<!-- ==================== 自我进化 ==================== -->
+
+<h4>代码例证：Streamlit Web 前端</h4>
+<p><code>frontends/stapp.py</code> 展示了GA如何嵌入Web界面，实现多模型切换、任务控制、空闲监控：</p>
+<pre>import streamlit as st
+from agentmain import GeneraticAgent
+
+@st.cache_resource
+def init():
+    agent = GeneraticAgent()
+    if agent.llmclient is None:
+        st.error("⚠️ 未配置任何可用的 LLM 接口")
+        st.stop()
+    else:
+        threading.Thread(target=agent.run, daemon=True).start()
+    return agent
+
+agent = init()
+# 侧边栏：LLM切换 / 空闲时间 / 停止按钮 / 桌面宠物
+llm_options = agent.list_llms()
+selected_idx = st.selectbox("备用链路", [...], format_func=llm_labels.get)
+if selected_idx != current_idx:
+    agent.next_llm(selected_idx)
+if st.button("强行停止任务"): agent.abort()
+if st.button("重新注入工具"): agent.llmclient.last_tools = ''</pre>
+
+<h2 id="evolution">自我进化</h2>
+<p>GA不修改基础模型，通过记录与更新信息环境实现进化。核心策略：<strong>进化策略而非工具</strong>，固定工具层与进化知识层分离。</p>
+
+<h3 id="evol-skills">技能树与自主探索</h3>
+<table>
+<tr><th>组件</th><th>说明</th></tr>
+<tr><td>技能树</td><td>两级结构：类别（web自动化/数据处理）→ 具名技能，记录脚本与使用次数</td></tr>
+<tr><td>触发机制</td><td>任务模式（文件系统提交）或反射模式（定时轮询）</td></tr>
+<tr><td>任务生成</td><td>从广度、深度、效用、创新性四维度加权评分</td></tr>
+<tr><td>执行流程</td><td>上下文加载→技能搜索→沙盒执行→撰写报告→技能整合</td></tr>
+<tr><td>质量评估</td><td>基于任务实际使用率调整评分权重</td></tr>
+</table>
+
+<div class="card" style="margin-top: 40px; border-left: 4px solid #e94560;">
+
+<h4>代码例证：记忆蒸馏机制</h4>
+<p><code>ga.py</code> 的 <code>do_start_long_term_update</code> 实现了"自我进化"——将任务经验蒸馏为长期记忆：</p>
+<pre>def do_start_long_term_update(self, args, response):
+    prompt = """### [总结提炼经验]
+提取最近一次任务中【事实验证成功且长期有效】的信息：
+- 环境事实（路径/凭证/配置）→ file_patch 更新 L2，同步 L1
+- 复杂任务经验（关键坑点/前置条件）→ L3 精简 SOP
+**只能提取行动验证成功的信息**
+**禁止**：临时变量、具体推理过程、未验证信息、通用常识
+"""
+    yield "[Info] Start distilling good memory for long-term storage.\n"
+    path = "./memory/memory_management_sop.md"
+    if os.path.exists(path):
+        result = "自动读取L0内容：\n" + file_read(path, show_linenos=False)
+    else:
+        result = "Memory Management SOP not found. Do not update memory."
+    return StepOutcome(result, next_prompt=prompt)</pre>
+
+<p><strong>📌 体系特点</strong>：GA的核心价值在于，通过<strong>工具最小化 + 分层记忆 + 强制反省 + 文件系统IPC</strong>的组合，在极简架构（~3K行核心代码）上实现了自我进化、多智能体协作、反射式监控等高级能力。这些能力不是预先设计的特性，而是从底层架构中自然涌现的。</p>
+</div>
+
+</div>
+</body>
+</html>

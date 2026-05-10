@@ -1,0 +1,851 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GenericAgent Agent System Design Overview</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; background: #f5f5f5; color: #333; line-height: 1.7; }
+.toc { position: fixed; left: 0; top: 0; width: 280px; height: 100vh; overflow-y: auto; background: #1a1a2e; color: #ddd; padding: 20px; z-index: 100; }
+.toc h2 { color: #e94560; font-size: 16px; margin-bottom: 15px; border-bottom: 1px solid #333; padding-bottom: 10px; }
+.toc a { display: block; color: #aaa; text-decoration: none; font-size: 13px; padding: 4px 0 4px 12px; border-left: 2px solid transparent; transition: 0.2s; }
+.toc a:hover { color: #fff; border-left-color: #e94560; padding-left: 16px; }
+.toc .l2 { padding-left: 24px; font-size: 12px; }
+.toc .l3 { padding-left: 36px; font-size: 11px; color: #888; }
+.main { margin-left: 300px; padding: 30px 40px 80px; max-width: 1000px; }
+h1 { font-size: 28px; color: #1a1a2e; margin-bottom: 10px; }
+.subtitle { color: #666; font-size: 14px; margin-bottom: 30px; padding-bottom: 20px; border-bottom: 2px solid #e94560; }
+h2 { font-size: 22px; color: #1a1a2e; margin: 40px 0 15px; padding-bottom: 8px; border-bottom: 1px solid #ddd; }
+h3 { font-size: 17px; color: #2d3436; margin: 25px 0 10px; }
+h4 { font-size: 15px; color: #555; margin: 18px 0 8px; }
+p { margin: 10px 0; text-align: justify; }
+ul, ol { margin: 8px 0 8px 20px; }
+li { margin: 4px 0; }
+code { background: #f0f0f0; padding: 2px 6px; border-radius: 3px; font-size: 13px; color: #c0392b; font-family: 'Consolas', 'Source Code Pro', monospace; }
+pre { background: #1e1e1e; color: #d4d4d4; padding: 15px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.5; margin: 12px 0; }
+table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 14px; }
+th, td { border: 1px solid #ddd; padding: 8px 12px; text-align: left; }
+th { background: #f8f9fa; font-weight: 600; color: #444; }
+tr:nth-child(even) { background: #fafafa; }
+.tag { display: inline-block; background: #e94560; color: #fff; padding: 1px 8px; border-radius: 10px; font-size: 11px; margin-right: 4px; }
+.tag-blue { background: #3498db; }
+.tag-green { background: #27ae60; }
+.tag-orange { background: #f39c12; }
+.card { background: #fff; border-radius: 8px; padding: 20px; margin: 15px 0; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+.diagram { background: #f8f9fa; padding: 20px; border-radius: 8px; font-family: 'Consolas', monospace; font-size: 13px; line-height: 1.4; white-space: pre; overflow-x: auto; margin: 12px 0; }
+.highlight { background: #fff3cd; padding: 2px 6px; border-radius: 3px; }
+@media (max-width: 768px) { .toc { display: none; } .main { margin-left: 0; padding: 20px; } }
+
+/* ===== Dark Mode ===== */
+@media (prefers-color-scheme: dark) {
+body { background: #12121e; color: #d0d0d8; }
+.toc { background: #0d0d18; }
+.toc h2 { border-bottom-color: #333; }
+.toc a { color: #999; }
+.toc a:hover { color: #fff; }
+.toc .l3 { color: #777; }
+.main { }
+h1 { color: #e8e8f0; }
+.subtitle { color: #999; border-bottom-color: #b03050; }
+h2 { color: #e0e0ea; border-bottom-color: #333; }
+h3 { color: #ccd; }
+h4 { color: #aaa; }
+p { color: #c8c8d0; }
+code { background: #2a2a3c; color: #ff7b72; }
+pre { background: #0d0d18; color: #c8c8d0; border: 1px solid #2a2a3c; }
+table { }
+th, td { border-color: #2a2a3c; }
+th { background: #1a1a2e; color: #bbb; }
+tr:nth-child(even) { background: #18182a; }
+tr:nth-child(odd) { background: #12121e; }
+.tag { }
+.tag-blue { }
+.tag-green { }
+.tag-orange { }
+.card { background: #1a1a2e; box-shadow: 0 2px 8px rgba(0,0,0,0.3); }
+.diagram { background: #1a1a2e; color: #c8c8d0; }
+.highlight { background: #3a3a00; color: #ddd; }
+.card p { color: #c8c8d0; }
+}
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mermaid/10.9.0/mermaid.min.js" defer></script>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  var dark = window.matchMedia('(prefers-color-scheme:dark)').matches;
+  mermaid.initialize({startOnLoad:true, theme: dark?'dark':'default'});
+  window.matchMedia('(prefers-color-scheme:dark)').addEventListener('change',function(e){
+    location.reload();
+  });
+});</script>
+</head>
+<body>
+
+<div class="toc">
+<h2>📖 Table of Contents</h2>
+<a href="#intro">Overview</a>
+<a href="#design" class="l2">Core Design Principles</a>
+<a href="#arch" class="l2">System Architecture</a>
+<a href="#arch-core" class="l3">Core Modules</a>
+<a href="#arch-dir" class="l3">Directory Structure</a>
+
+<a href="#exec">Execution Modes</a>
+<a href="#exec-interactive" class="l2">Interactive Mode</a>
+<a href="#exec-reflect" class="l2">Reflective Mode</a>
+
+<a href="#tools">Tool System</a>
+<a href="#tools-def" class="l2">Definition & Loading</a>
+<a href="#tools-flow" class="l2">Call Flow</a>
+<a href="#tools-create" class="l2">Creating New Tools</a>
+<a href="#tools-principle" class="l2">Design Principles</a>
+
+<a href="#memory">Layered Memory System</a>
+<a href="#memory-hierarchy" class="l2">L0~L4 Hierarchy</a>
+<a href="#memory-flow" class="l2">Access & Write Flow</a>
+
+<a href="#cognition">Cognitive Architecture</a>
+<a href="#cog-perception" class="l2">Environment Perception</a>
+<a href="#cog-resource" class="l2">Resource Location</a>
+<a href="#cog-loop" class="l2">Problem-Solving Loop</a>
+
+<a href="#reflection">Self-Reflection Mechanism</a>
+<a href="#ref-layers" class="l2">Five-Layer Reflection System</a>
+<a href="#ref-fail" class="l2">Failure Escalation Chain</a>
+
+<a href="#goal">Goal Setting & Verification</a>
+<a href="#goal-layers" class="l2">Four-Layer Goal Closure</a>
+<a href="#goal-verify" class="l2">Independent Verification Mechanism</a>
+
+<a href="#multi">Multi-Agent System</a>
+<a href="#multi-master" class="l2">Master-Subagent Mode</a>
+<a href="#multi-map" class="l2">Map Parallel Mode</a>
+<a href="#multi-super" class="l2">Supervisor-Worker Mode</a>
+<a href="#multi-shared" class="l2">Shared Memory</a>
+<a href="#multi-model" class="l2">Multi-Model Configuration</a>
+
+<a href="#startup">Startup Methods</a>
+<a href="#startup-compare" class="l2">Desktop vs Web</a>
+
+<a href="#evolution">Self-Evolution</a>
+<a href="#evol-skills" class="l2">Skill Tree & Autonomous Exploration</a>
+</div>
+
+<div class="main">
+
+<h1>GenericAgent Agent System Design Overview</h1>
+<div class="subtitle">Comprehensive compilation based on all docs/ documents | 2026-05-09</div>
+
+<!-- ==================== Overview ==================== -->
+<h2 id="intro">Overview</h2>
+<p><strong>GenericAgent (GA)</strong> is a general-purpose, self-evolving LLM agent system designed for task automation within local computing environments. Its core design philosophy is to improve agent performance by optimizing contextual information density, rather than simply extending context length.</p>
+
+<div class="card">
+<h4>Core Positioning</h4>
+<ul>
+<li><strong>Model-Agnostic</strong>: The underlying inference engine (Claude, GPT, Gemini, etc.) is swappable without affecting execution logic, tool interfaces, or memory architecture</li>
+<li><strong>Unified Agent Loop</strong>: Each step combines global memory with current task specifications to form an execution context</li>
+<li><strong>Two Execution Modes</strong>: Interactive mode (user-initiated) and Reflective mode (environment-triggered)</li>
+<li><strong>Minimal Codebase</strong>: Core codebase ~3K lines, core agent loop just ~100 lines</li>
+</ul>
+</div>
+
+<h3 id="design">Core Design Principles</h3>
+<table>
+<tr><th>Principle</th><th>Description</th></tr>
+<tr><td><strong>Tool Minimalism</strong></td><td>Keep tools to the minimum necessary set to avoid context bloat; satisfy atomicity and combinatorial generalization</td></tr>
+<tr><td><strong>Layered Memory</strong></td><td>Only keep a small persistent visible layer (L1); deeper memory (L2~L4) accessed on demand</td></tr>
+<tr><td><strong>Self-Evolution</strong></td><td>Achieve cross-task experience integration by recording and updating the information environment, without modifying the base model</td></tr>
+<tr><td><strong>Context Compression</strong></td><td>Set a tight budget of &lt;30K tokens, managed using character-domain heuristic methods</td></tr>
+</table>
+
+<!-- ==================== System Architecture ==================== -->
+
+<h4>Code Example: Core Execution Loop</h4>
+<p>Below is the complete docstring of the <code>agent_runner_loop</code> function in <code>agent_loop.py</code>, which describes the unified agent execution loop:</p>
+<pre>def agent_runner_loop(client, system_prompt, user_input, handler, tools_schema, max_turns=40, verbose=True, initial_user_content=None):
+    """Generic agent core execution loop. Each step combines global memory with current task specs to form an execution context; after LLM processing, output or tool calls are generated,
+    and tool execution results update system state via structured signals.
+
+    GA supports two execution modes:
+    1. Interactive mode: handles user-initiated tasks such as code execution, information retrieval, file operations
+    2. Reflective mode: continuously monitors environment changes without user instructions, automatically triggers corresponding tasks when specific conditions are detected
+
+    Loop flow: Build message → Call LLM → Parse tool calls → Execute tools → Update context → Repeat until completion/exit
+    """</pre>
+
+<h2 id="arch">System Architecture</h2>
+
+<h3 id="arch-core">Core Modules</h3>
+<table>
+<tr><th>Module</th><th>File</th><th>Responsibility</th></tr>
+<tr><td>Agent Execution Loop</td><td><code>agent_loop.py</code></td><td>Build message → Call LLM → Parse tool calls → Execute → Update context</td></tr>
+<tr><td>Tool Engine</td><td><code>ga.py</code></td><td>Parsing, dispatching and execution of 9 atomic tools</td></tr>
+<tr><td>LLM Session Management</td><td><code>llmcore.py</code></td><td>Supports multiple backends: ClaudeSession, LLMSession, MixinSession, etc.</td></tr>
+<tr><td>Main Entry</td><td><code>agentmain.py</code></td><td>CLI argument parsing, tool JSON loading, task queue management</td></tr>
+<tr><td>Frontend Interfaces</td><td><code>frontends/</code></td><td>CLI / Desktop Pet / Streamlit Web / Feishu / WeChat / Telegram</td></tr>
+</table>
+
+<h3 id="arch-dir">Project Directory Structure</h3>
+<div class="mermaid">
+flowchart TB
+    subgraph Execution Modes
+        A[Interactive Mode] -->|User initiates| M[Agent Loop]
+        B[Reflective Mode] -->|Environment triggers| M
+    end
+    subgraph Core Components
+        M --> T[ga.py Tool Engine]
+        M --> L[llmcore.py LLM Session Management]
+        T --> F[File ops code_run etc.]
+        T --> W[web_scan etc.]
+        T --> MM[file_read etc.]
+    end
+    subgraph Frontend
+        CLI[Command Line] --> M
+        WEB[Streamlit] --> M
+        DESK[Desktop Pet] --> M
+    end
+    subgraph Reflection Scripts
+        ATO[autonomous.py] --> B
+        SCH[scheduler.py] --> B
+    end</div>
+<div class="diagram">GenericAgent/
+├── agentmain.py          # Main entry
+├── agent_loop.py         # Agent execution loop
+├── ga.py                 # Tool engine
+├── llmcore.py            # LLM session management
+├── mykey.py              # Key configuration
+├── assets/
+│   └── tools_schema.json # Tool definition file
+├── memory/               # Layered memory system
+│   ├── global_mem_insight.txt  # L1 Index
+│   ├── global_mem.txt          # L2 Facts
+│   ├── *.md / *.py             # L3 SOPs/Tools
+│   └── L4_raw_sessions/        # L4 Archives
+├── frontends/            # Frontend interfaces
+│   ├── stapp.py / stapp2.py  # Streamlit Web
+│   ├── desktop_pet.pyw       # Desktop Pet
+│   └── subagent_dashboard.py # Multi-Agent Dashboard
+├── temp/                 # Runtime temporary files
+├── docs/                 # System documentation
+└── plugins/              # Plugins</div>
+
+<!-- ==================== Execution Modes ==================== -->
+<h2 id="exec">Execution Modes</h2>
+
+<h3 id="exec-interactive">Interactive Mode</h3>
+<p>The user initiates a task through CLI or frontend interface, and the agent executes step by step: User Input → <code>put_task(query)</code> → Build prompt, call LLM → LLM returns response (with tool calls) → Execute tools → Update context → Loop until completion.</p>
+<div class="mermaid">
+sequenceDiagram
+    participant U as User
+    participant CLI as CLI
+    participant A as GenericAgent
+    participant T as Tool Engine
+    participant L as Language Model
+    U->>CLI: Input task instruction
+    CLI->>A: put_task(query)
+    A->>L: Build prompt, call LLM
+    L->>A: Return response (with tool calls)
+    A->>T: Execute tools
+    T->>A: Return results
+    loop Loop until completion
+        A->>L: Update context / continue
+        L->>A: Return response
+    end
+    A->>CLI: Final result
+    CLI->>U: Display result
+</div>
+<div class="mermaid">
+flowchart TD
+    A[Start] --> B[Build message]
+    B --> C[Call LLM]
+    C --> D{Parse tool calls}
+    D -->|Has tool calls| E[Execute tools]
+    D -->|No tool calls| F[Direct response]
+    E --> G[Update context]
+    G --> H{Completed?}
+    H -->|No| B
+    H -->|Yes| I[End]
+    F --> I
+</div>
+
+<h3 id="exec-reflect">Reflective Mode</h3>
+
+<h4>Code Example: Loop Core Implementation</h4>
+<p>Below is the skeleton of the loop core in <code>agent_loop.py</code>, showing the key logic of message concatenation, tool call parsing, and result feedback:</p>
+<pre>messages = [
+    {"role": "system", "content": system_prompt},
+    {"role": "user", "content": initial_user_content if initial_user_content is not None else user_input}
+]
+turn = 0;  handler.max_turns = max_turns
+while turn &lt; handler.max_turns:
+    turn += 1
+    response_gen = client.chat(messages=messages, tools=tools_schema)
+    response = yield from response_gen
+    if not response.tool_calls:
+        tool_calls = [{"tool_name": "no_tool", "args": {}}]
+    else:
+        tool_calls = [{"tool_name": tc.function.name,
+                       "args": json.loads(tc.function.arguments)}
+                      for tc in response.tool_calls]
+    for tc in tool_calls:
+        outcome = handler.dispatch(tc["tool_name"], tc["args"], response)
+        if outcome.should_exit: break
+        if outcome.next_prompt:
+            next_prompts.add(outcome.next_prompt)
+    # New messages update context, history maintained by Session
+    messages = [{"role": "user", "content": next_prompt, "tool_results": tool_results}]</pre>
+
+<p>Continuously monitors environment changes without user instructions: Load monitoring script → Periodically poll <code>check()</code> → Trigger task when conditions are met.</p>
+<div class="mermaid">
+flowchart TD
+    A["Start Reflective Mode"] --> B["Load monitoring script"]
+    B --> C["Periodically poll check()"]
+    C --> D{Condition met?}
+    D -->|Yes| E["Trigger task"]
+    D -->|No| C
+    E --> F["Execute task"]
+    F --> G["Log results"]
+    G --> C
+</div>
+<p><strong>Typical Applications</strong>: Watchdog (monitors file/log changes), Scheduled tasks (generates GA tasks based on time rules)</p>
+
+<!-- ==================== Tool System ==================== -->
+
+<h4>Code Example: Reflective Mode Scripts</h4>
+
+<p><strong>① Autonomous Watchdog (<code>reflect/autonomous.py</code>)</strong> — The simplest reflective mode implementation: automatically triggers tasks when detecting user absence over 30 minutes:</p>
+<pre># reflect/autonomous.py
+INTERVAL = 1800
+ONCE = False
+
+def check():
+    return "[AUTO]🤖 User has been away for over 30 minutes. As an autonomous agent, please read the automation SOP and execute autonomous tasks."</pre>
+
+<p><strong>② Scheduled Scheduler (<code>reflect/scheduler.py</code>)</strong> — A full-featured scheduled task engine supporting cron-style scheduling, cooldown periods, weekend skipping, and execution window limits:</p>
+<pre>INTERVAL = 120  # Polling interval
+
+def _parse_cooldown(repeat):
+    """Parse repeat into cooldown duration"""
+    if repeat == 'once': return timedelta(days=999999)
+    if repeat in ('daily', 'weekday'): return timedelta(hours=20)
+    if repeat == 'weekly': return timedelta(days=6)
+    if repeat.startswith('every_'):
+        parts = repeat.split('_')
+        n = int(parts[1].rstrip('hdm'))
+        u = parts[1][-1]
+        if u == 'h': return timedelta(hours=n)
+        if u == 'm': return timedelta(minutes=n)
+        if u == 'd': return timedelta(days=n)
+    return timedelta(hours=20)
+
+def check():
+    # L4 archive cron (silent, every 12h)
+    # Iterate through .json task files under sche_tasks/
+    for f in sorted(os.listdir(TASKS)):
+        if not f.endswith('.json'): continue
+        task = json.load(open(os.path.join(TASKS, f)))
+        if not task.get('enabled', False): continue
+        # Check schedule time + max_delay window
+        # Check cooldown period
+        # Condition met → return task prompt to trigger execution
+    return None</pre>
+
+<h2 id="tools">Tool System</h2>
+
+<h3 id="tools-def">Definition & Loading</h3>
+<p>Tool definitions are in <code>assets/tools_schema.json</code>, using the OpenAI Function Calling format. Loaded by <code>agentmain.py</code> at startup:</p>
+<pre>TS = open('assets/tools_schema.json').read()
+TOOLS_SCHEMA = json.loads(TS)</pre>
+
+<p><strong>9 Built-in Tools</strong>:</p>
+
+<pre># assets/tools_schema.json is a tool definition file in OpenAI Function Calling format
+# Below shows the complete definition of one tool:
+{"type": "function", "function": {
+  "name": "code_run",
+  "description": "Code executor. Prefer python. Multi-call OK, use script param...",
+  "parameters": {"type": "object", "properties": {
+    "script": {"type": "string", "description": "[Mutually exclusive]..."},
+    "type": {"type": "string", "enum": ["python", "powershell"], "default": "python"},
+    "timeout": {"type": "integer", "description": "in seconds", "default": 60},
+    "cwd": {"type": "string", "description": "Working directory"}
+  }}
+}}
+
+# Loading logic in agentmain.py:
+def load_tool_schema(suffix=""):
+    global TOOLS_SCHEMA
+    TS = open(f"assets/tools_schema{suffix}.json").read()
+    TOOLS_SCHEMA = json.loads(TS.replace("powershell", "bash") if os.name != "nt" else TS)</pre>
+
+<table>
+<tr><th>Category</th><th>Tool</th><th>Function</th></tr>
+<tr><td rowspan="3">File Operations</td><td><code>file_read</code></td><td>Read files, supports keyword search</td></tr>
+<tr><td><code>file_patch</code></td><td>Precise editing, unique match replacement</td></tr>
+<tr><td><code>file_write</code></td><td>Overwrite/Append/Prepend write</td></tr>
+<tr><td>Code Execution</td><td><code>code_run</code></td><td>Execute Python/PowerShell in controlled runtime</td></tr>
+<tr><td rowspan="2">Web Interaction</td><td><code>web_scan</code></td><td>Get browser page HTML / Tab list</td></tr>
+<tr><td><code>web_execute_js</code></td><td>Execute JS to control browser</td></tr>
+<tr><td rowspan="2">Memory Management</td><td><code>update_working_checkpoint</code></td><td>Short-term working memory</td></tr>
+<tr><td><code>start_long_term_update</code></td><td>Long-term memory distillation</td></tr>
+<tr><td>Human Collaboration</td><td><code>ask_user</code></td><td>Interrupt task when user decision needed</td></tr>
+</table>
+
+<h3 id="tools-flow">Call Flow</h3>
+<div class="diagram">User Input
+  ↓
+LLM receives tools=TOOLS_SCHEMA
+  ↓
+LLM decides which tool to call → returns function_call
+  ↓
+agent_runner_loop() parses → maps to same-name Python function
+  ↓
+Execution result sent back to LLM → continues reasoning or outputs reply</div>
+
+<h3 id="tools-create">Creating New Tools</h3>
+<div class="card">
+<h4>✅ Possible: Script-Level Tools</h4>
+<p>Created at runtime via <code>file_write</code> + <code>code_run</code>. Example: Image hosting service, OCR debugging script.</p>
+<h4>❌ Not Possible: Dynamic FC Tool Registration</h4>
+<p>The <code>tools=[]</code> list is fixed at conversation start and cannot be appended mid-way. Requires editing <code>assets/tools_schema.json</code> + writing Python implementation, effective next session.</p>
+<h4>Strategy</h4>
+<ul>
+<li>Reusable capabilities → Write as <code>.py</code> module under <code>memory/</code></li>
+<li>One-time tasks → Use inline code via <code>code_run</code> directly</li>
+<li>Persistent services (e.g., image hosting) → <code>file_write</code> to create → <code>code_run</code> to start background process</li>
+</ul>
+</div>
+
+<h3 id="tools-principle">Design Principles</h3>
+
+<h4>Code Example: Safety Interception Mechanism</h4>
+<p>The <code>code_run</code> function in <code>ga.py</code> has a built-in blacklist for dangerous operations, intercepting destructive commands via regex matching:</p>
+<pre>DANGEROUS_PATTERNS = [
+    (r'\brm\s+(-[rR]+|-[rR][fF]|-[fF][rR])\s*/[/\s]', 'Recursively delete root directory'),
+    (r'\brd\s+/[sS]\s+/[qQ]\s+[A-Za-z]:\\', 'Recursively delete drive'),
+    (r'\bformat\s+[A-Za-z]:', 'Format disk'),
+    (r'\bshutdown\s+[/-][sprh]', 'Shutdown/reboot operation'),
+    (r':\(\)\s*\{\s*:\s*\|\s*:&\s*\}\s*;?\s*:', 'Fork bomb'),
+    (r'\bchmod\s+-R\s+0{2,3}\s+', 'Recursively clear permissions'),
+    (r'\breg\s+delete\s+HK', 'Delete registry keys'),
+    (r'\btaskkill\s+/[fF]\s+/[iI][Mm]\s+', 'Force terminate process'),
+]
+# Scan before code execution, intercept on hit
+for pattern, desc in DANGEROUS_PATTERNS:
+    if re.search(pattern, _code_lower):
+        return {"status": "blocked", "reason": f"Dangerous command intercepted: {desc}"}</pre>
+
+<ul>
+<li><strong>Description Is Behavior Constraint</strong>: The tool's description directly influences LLM usage decisions</li>
+<li><strong>Parameter-Driven</strong>: All interactions pass through parameters</li>
+<li><strong>One Tool at a Time</strong>: Each round LLM outputs either one tool call or a plain response</li>
+<li><strong>Failure Backtracking</strong>: Error info sent back to LLM, which autonomously retries or switches approaches</li>
+</ul>
+
+<!-- ==================== Layered Memory ==================== -->
+
+<h4>Code Example: Context Compression (Four-Stage Trimming)</h4>
+<p>The <code>smart_format</code> function in <code>ga.py</code> implements character-domain heuristic compression — this is the concrete implementation of the "Context Compression" design principle:</p>
+<pre>def smart_format(data, max_str_len=100, omit_str=" ... "):
+    """Context truncation and compression: uses head-tail strategy to truncate content, limits single message length.
+    GA uses character-domain heuristic methods to manage context budget, controlling length via a four-stage trimming mechanism:
+    1. Tool Output Truncation: when a single tool output exceeds threshold, keep head and tail, replace middle section
+    2. Tag-Level Compression: replace duplicate working memory blocks with placeholders every 5 rounds
+    3. Message Cleanup: recompress when over budget, delete old messages by FIFO
+    4. Working Memory Anchoring: append latest conversation summary, round number, and key info to each new message
+    """
+    if not isinstance(data, str): data = str(data)
+    if len(data) &lt; max_str_len + len(omit_str)*2: return data
+    return f"{data[:max_str_len//2]}{omit_str}{data[-max_str_len//2:]}"</pre>
+
+<h4>Code Example: Tool Dispatch Mechanism</h4>
+<p>The <code>BaseHandler.dispatch</code> method in <code>ga.py</code> maps the tool call name returned by LLM to the same-name Python method:</p>
+<pre>def dispatch(self, tool_name, args, response, index=0):
+    method_name = f"do_{tool_name}"
+    if hasattr(self, method_name):
+        return (yield from getattr(self, method_name)(args, response))
+    elif tool_name == "bad_json":
+        return StepOutcome(None, next_prompt=args.get("msg", "bad_json"))
+    else:
+        return StepOutcome(None, next_prompt=f"Unknown tool {tool_name}")</pre>
+
+<h2 id="memory">Layered Memory System</h2>
+
+<h3 id="memory-hierarchy">L0~L4 Hierarchy</h3>
+<table>
+<tr><th>Layer</th><th>Storage Path</th><th>Content</th><th>Characteristics</th></tr>
+<tr><td><strong>L0 Meta-SOP</strong></td><td><code>memory/memory_management_sop.md</code></td><td>Meta-rules for memory management</td><td>Must read before writing memory</td></tr>
+<tr><td><strong>L1 Index Layer</strong></td><td><code>memory/global_mem_insight.txt</code></td><td>Compact pointers, keyword mapping, hard constraints</td><td>Core resident memory, ≤30 lines</td></tr>
+<tr><td><strong>L2 Facts Layer</strong></td><td><code>memory/global_mem.txt</code></td><td>Verified long-term facts</td><td>Strict admission, excludes transient info</td></tr>
+<tr><td><strong>L3 SOP Layer</strong></td><td><code>memory/*.md / *.py</code></td><td>Reusable procedural knowledge</td><td>Workflows, prerequisites, troubleshooting</td></tr>
+<tr><td><strong>L4 Archive Layer</strong></td><td><code>memory/L4_raw_sessions/</code></td><td>Raw historical session data</td><td>Auto-collected, trajectory reconstruction</td></tr>
+</table>
+
+<h3 id="memory-flow">Access & Write Flow</h3>
+
+<h4>Code Example: L1 Insight Actual Content</h4>
+<p>Below is the actual content of <code>memory/global_mem_insight.txt</code> (strictly kept at 23 lines, &lt;30 line constraint), showing the real appearance of the minimal index layer:</p>
+<pre># [Global Memory Insight]
+Read L2 when needed or ls ../memory/ for L3
+L0(META-SOP): memory_management_sop
+L2: currently empty
+L3: memory_cleanup_sop(memory_consolidation) | skill_search | ui_detect.py | ocr_utils.py
+    | clipboard_ocr / clipboard_ocr_sop | subagent | web_setup_sop | plan_sop
+    | procmem_scanner | keychain | ljqCtrl_sop+.py | tmwebdriver_sop
+    | autonomous_operation_sop | scheduled_task_sop | vision_sop | adb_ui.py
+    | metaso_search
+L4: L4_raw_sessions/ historical sessions
+
+Browser special ops: tmwebdriver_sop(...)
+Keyboard/Mouse: ljqCtrl_sop(no pyautogui / activate first)
+Screenshot/Vision: ocr/vision_sop | no full-screen screenshot, prefer window
+Scheduling: scheduled_task_sop | Autonomous: autonomous_operation_sop
+Mobile: adb_ui.py
+
+[RULES]
+1. Search first: always use es for filename search (no PS recursive / no dir traversal)...
+2. Cross-verify: don't trust summaries, verify values in detail pages
+...</pre>
+
+<div class="mermaid">
+graph LR
+    L1[L1 Index Layer Resident Memory] -- Fast navigation --> L2[L2 Facts Layer]
+    L1 -- Fast navigation --> L3[L3 SOP Layer]
+    L2 -- Experience integration --> L3
+    M[Agent] -- On-demand access --> L1
+    M -- Triggered submission --> L2
+    M -- Triggered submission --> L3
+    M -- Trajectory reconstruction --> L4[L4 Archive Layer Historical Sessions]
+</div>
+<div class="diagram">Receive task → Read L1 Insight → Find SOP name → Read L3 SOP → Execute per SOP
+  ↓
+Task complete → Extract experience → Classify via META-SOP decision tree
+  ├─ Environmental facts → L2 global_mem.txt
+  ├─ General rules → L1 RULES
+  └─ Specific techniques → L3 SOP/utils</div>
+
+<p><strong>Notes</strong>: Modifying L1/L2 only via <code>file_patch</code> with small edits; read META-SOP (L0) for verification before writing memory; sync L1 index when L2/L3 changes.</p>
+
+<h4>Code Example: Memory Write Decision Tree (META-SOP)</h4>
+<p><code>memory/memory_management_sop.md</code> (L0 Meta-SOP) defines a quick decision tree for information classification, guiding the agent to determine which layer information should go into:</p>
+<pre>"Which layer should this go into?"
+
+Is it an 'environment-specific fact'? (IP, non-standard path, credential, ID, API key, etc.)
+  ├─ YES → L2 (global_mem.txt), then categorize into L1 by frequency
+  └─ NO
+       ↓
+       Is it a 'general operational rule'? (global pitfalls guide, troubleshooting methods)
+       ├─ YES → L1 [RULES] (1-line compressed guideline only)
+       └─ NO
+            ↓
+            Is it a 'specific task technique'? (hard-won success, reusable in future)
+            ├─ YES → L3 (specialized SOP or script)
+            └─ NO → Redundant info, strictly prohibited from storage, discard directly</pre>
+
+<h4>Code Example: L1 Loaded into Context</h4>
+<p>The <code>get_global_memory()</code> function in <code>ga.py</code> demonstrates how L1 is injected into the system prompt of every conversation:</p>
+<pre>def get_global_memory():
+    prompt = "\n"
+    with open("memory/global_mem_insight.txt", "r") as f:
+        insight = f.read()
+    with open("assets/insight_fixed_structure.txt", "r") as f:
+        structure = f.read()
+    prompt += f"cwd = {os.path.join(script_dir, \"temp\")}\n"
+    prompt += structure + "\n../memory/global_mem_insight.txt:\n"
+    prompt += insight + "\n"
+    return prompt</pre>
+
+<!-- ==================== Cognitive Architecture ==================== -->
+<h2 id="cognition">Cognitive Architecture</h2>
+
+<h3 id="cog-perception">Environment Perception</h3>
+<p><strong>Static Context</strong> (injected each conversation): CONSTITUTION (9 iron rules), RULES, Global Memory Insight, Tool Definitions.</p>
+<p><strong>Dynamic Context</strong> (injected at runtime): <code>cwd</code>, <code>Today</code>, Working Memory (<code>update_working_checkpoint</code>), conversation history.</p>
+<p><strong>Probing Methods</strong>:</p>
+<ul>
+<li><code>file_read</code> → Read file content</li>
+<li><code>web_scan</code> → Get browser tabs + page HTML</li>
+<li><code>code_run</code> → Execute Python to probe system state</li>
+<li>Indirect: tool return error info, user feedback</li>
+</ul>
+
+<h3 id="cog-resource">Resource Location</h3>
+<table>
+<tr><th>Priority</th><th>Method</th><th>Use Case</th></tr>
+<tr><td>1</td><td>Check Global Memory Insight</td><td>Know what's in memory</td></tr>
+<tr><td>2</td><td>Read SOP / import Utils</td><td>Existing solution available</td></tr>
+<tr><td>3</td><td><code>code_run</code> probing</td><td>Check system state / file existence</td></tr>
+<tr><td>4</td><td>Metaso API search</td><td>Look up technical docs / APIs</td></tr>
+<tr><td>5</td><td>Browser Bing search</td><td>Fallback</td></tr>
+</table>
+<p><strong>Search Golden Rule</strong>: <code>Always use es for filename search (no PS recursive / no dir traversal)</code> — prioritize search index, no brute-force traversal.</p>
+
+<h3 id="cog-loop">Problem-Solving Loop</h3>
+<div class="diagram">Receive task → Check memory/read SOP → Probe environment state
+  → Execute one step → Verify result
+    ├─ Success → Continue to next step
+    └─ Failure → Escalate strategy
+        ├─ 1st: Read error logs
+        ├─ 2nd: Probe environment
+        └─ 3rd: Switch approach or ask user
+  → Close the loop (save memory / Git)</div>
+
+<p><strong>Core Principles</strong>:</p>
+<table>
+<tr><th>Principle</th><th>Description</th></tr>
+<tr><td>Probe First</td><td>Don't speculate; use tools to get real info</td></tr>
+<tr><td>Step-by-Step</td><td>Limit failure radius, iterate fast</td></tr>
+<tr><td>Failure Escalation</td><td>No repeated actions without new information</td></tr>
+<tr><td>Cross-Verification</td><td>Don't trust summaries, verify values in detail pages</td></tr>
+<tr><td>Close the Loop</td><td>Confirm after physical simulation, complete Git cycle</td></tr>
+</table>
+
+<!-- ==================== Self-Reflection ==================== -->
+
+<h4>Code Example: Failure Escalation Chain — 3-Strike Rule</h4>
+<p>The following code (excerpted from the <code>file_read</code> function in <code>ga.py</code>) demonstrates the "1st failure → intelligent retry" pattern: automatically scans for similar filenames when the file is not found:</p>
+<pre>except FileNotFoundError:
+    msg = f"Error: File not found: {path}"
+    tgt = os.path.basename(path)
+    # Auto-scan directory for similar files
+    cands = list(itertools.islice(
+        (c for base in roots for c in _scan_files(base)), 2000))
+    top = sorted([(difflib.SequenceMatcher(None, tgt.lower(),
+                  c[0].lower()).ratio(), c) for c in cands[:2000]],
+                 key=lambda x: -x[0])[:5]
+    if top: msg += "\n\nDid you mean:\n" + \n           "\n".join(f"  {c[1]}  ({s:.0%})" for s, c in top)
+    return msg</pre>
+
+<h2 id="reflection">Self-Reflection Mechanism</h2>
+<p>Reflection capability is achieved through <strong>structured multi-layer feedback loops</strong> and <strong>enforced meta-cognition mechanisms</strong>, rather than anthropomorphic conscious activity.</p>
+
+<h3 id="ref-layers">Five-Layer Reflection System</h3>
+<table>
+<tr><th>Dimension</th><th>Implementation</th><th>Time Range</th></tr>
+<tr><td>Immediate Reflection</td><td><code>&lt;summary&gt;</code> forced review of last result + current intent</td><td>Each turn</td></tr>
+<tr><td>Mid-Task Reflection</td><td><code>update_working_checkpoint</code> saves checkpoint</td><td>Mid-task</td></tr>
+<tr><td>Failure Reflection</td><td>3-strike escalation: read logs → probe env → switch approach</td><td>At failure</td></tr>
+<tr><td>Long-Term Reflection</td><td>Memory distillation + META-SOP pre-write validation</td><td>Cross-session</td></tr>
+<tr><td>Learning Reflection</td><td><code>start_long_term_update</code> systematic review</td><td>At long task completion</td></tr>
+</table>
+
+<h3 id="ref-fail">Failure Escalation Chain (3-Strike Rule)</h3>
+
+<h4>Code Example: Enforced Summary Mechanism</h4>
+<p>The summary extraction logic in the <code>turn_end_callback</code> function in <code>ga.py</code> ensures that a <code>&lt;summary&gt;</code> tag is generated every turn:</p>
+<pre>def turn_end_callback(self, response, tool_calls, tool_results, turn, next_prompt, exit_reason):
+    _c = re.sub(r"```.*?```|&lt;thinking&gt;.*?&lt;/thinking&gt;", "", response.content, flags=re.DOTALL)
+    rsumm = re.search(r"&lt;summary&gt;(.*?)&lt;/summary&gt;", _c, re.DOTALL)
+    if rsumm:
+        summary = rsumm.group(1).strip()
+    else:
+        # Auto-generate if no summary output
+        tc = tool_calls[0]
+        summary = f"Calling tool {tc['tool_name']}, args: {tc['args']}"
+        if tc["tool_name"] == "no_tool":
+            summary = "Directly answered user's question"
+        # Also inject a prompt asking for a summary
+        next_prompt += "\n\n\nUSER: &lt;summary&gt;呢？？？！\n\n"
+    # Store in history for subsequent context injection
+    self.history_info.append(f"[Agent] {summary}")</pre>
+
+<div class="card">
+<p><span class="tag">1st Failure</span> Read error logs, understand the cause — <em>Passive Reflection</em></p>
+<p><span class="tag tag-blue">2nd Failure</span> Probe environment state, get more context — <em>Active Reflection</em></p>
+<p><span class="tag tag-orange">3rd Failure</span> Deep analysis then switch approach or ask user — <em>Fundamental Adjustment</em></p>
+<p><strong>Core Constraint</strong>: <span class="highlight">No repeated attempts without new information</span>. Each retry must be based on new information or a different strategy.</p>
+</div>
+
+<!-- ==================== Goal & Verification ==================== -->
+<h2 id="goal">Goal Setting & Verification Mechanism</h2>
+<p>Core idea: <strong>Every action at every granularity has a clear expected goal; after execution, verification of whether the goal was achieved is mandatory</strong>.</p>
+
+<h3 id="goal-layers">Four-Layer Goal Closure</h3>
+<table>
+<tr><th>Layer</th><th>Granularity</th><th>Mechanism</th></tr>
+<tr><td>Session Level</td><td>Cross-task</td><td><code>start_long_term_update</code> distillation review</td></tr>
+<tr><td>Task Level</td><td>Complete task</td><td><code>plan.md</code> termination check + Independent Subagent verification</td></tr>
+<tr><td>Step Level</td><td>Single step</td><td><code>[ ]</code> mark + Mini verification (confirm file existence/exit code/page state)</td></tr>
+<tr><td>Turn Level</td><td>Each turn</td><td><code>&lt;summary&gt;</code> intent declaration + result confirmation</td></tr>
+</table>
+
+<h3 id="goal-verify">Independent Verification Mechanism</h3>
+<p>After all plan mode tasks are completed, <strong>an independent verification subagent is forcibly started</strong>:</p>
+<ul>
+<li>Create <code>verify_context.json</code> (task description, plan path, deliverables list, mandatory checks)</li>
+<li>Start verification subagent → Adversarial verification ("Prove the deliverable doesn't work")</li>
+<li>Output VERDICT: <span class="tag-green">PASS ✅</span> / <span class="tag">FAIL ❌</span> / <span class="tag-orange">PARTIAL ⚠</span></li>
+</ul>
+
+<!-- ==================== Multi-Agent ==================== -->
+
+<h4>Code Example: Verification SOP Action Table</h4>
+<p><code>memory/verify_sop.md</code> defines verification action specifications by deliverable type:</p>
+<pre>| Deliverable Type | Mandatory |
+|---|---|
+| Web page/Frontend | Open + screenshot → console errors → confirm not empty shell |
+| Script/CLI | Execute → check stdout/stderr/exit code → test with edge inputs |
+| Data file | Format validation → row count → spot-check first/middle/last 3 rows |
+| API/Service | Call endpoint → response shape (not just 200) → error input test |
+| Config/Doc | file_read full content → format/syntax → ensure no damage to existing |
+| Bug fix | Reproduce original bug → verify fix → regression test |
+| Batch operation | Total count → spot-check first/middle/last → duplicate/miss → intermediate failure consistency |
+
+# Adversarial probing (at least run one)
+Boundary values (0/empty/oversized/unicode) · Idempotency (same operation twice) · Missing dependencies · Orphan IDs</pre>
+
+<h2 id="multi">Multi-Agent System</h2>
+<p>GenericAgent supports four multi-agent collaboration modes, with core communication based on <strong>filesystem async IO protocol + shared memory</strong>.</p>
+
+<h3 id="multi-master">Master-Subagent Mode</h3>
+<p>The master agent communicates with subagents via the filesystem:</p>
+<table>
+<tr><th>File</th><th>Direction</th><th>Purpose</th></tr>
+<tr><td><code>input.txt</code></td><td>Master→Sub</td><td>Task objectives and constraints</td></tr>
+<tr><td><code>context.json</code></td><td>Master→Sub</td><td>Absolute paths, deliverables list</td></tr>
+<tr><td><code>output.txt</code></td><td>Sub→Master</td><td>Execution output, <code>[ROUND END]</code> round marker</td></tr>
+<tr><td><code>reply.txt</code></td><td>Master→Sub</td><td>Continue dialogue / additional instructions</td></tr>
+<tr><td><code>_intervene</code></td><td>Master→Sub</td><td>Correction instructions</td></tr>
+<tr><td><code>_keyinfo</code></td><td>Master→Sub</td><td>Inject working memory</td></tr>
+<tr><td><code>_stop</code></td><td>Master→Sub</td><td>Termination signal</td></tr>
+</table>
+
+<p><strong>Startup Method</strong>:</p>
+<pre>python agentmain.py --task my_task --input "Task description" [--bg] [--llm_no N]</pre>
+
+<h3 id="multi-map">Map Parallel Mode</h3>
+<p>Suitable for batch processing of independent isomorphic subtasks:</p>
+<ol>
+<li>Master agent prepares N independent input files</li>
+<li>Start a subagent for each file (<code>--bg</code> background)</li>
+<li>Wait for all to complete → read each <code>output*.txt</code> → aggregate results</li>
+</ol>
+
+<h3 id="multi-super">Supervisor-Worker Mode</h3>
+<div class="diagram">Supervisor — read-only, judge-only, intervene-only, never does hands-on work
+    │ Read output.txt (observe progress)
+    │ Write _intervene / _keyinfo (course correction)
+    ▼
+Worker Agent — actually executes tasks</div>
+<p>Supervisor intervention triggers: skipping steps, missing details, all talk no action, assertions without evidence, consecutive failures, etc.</p>
+
+<h3 id="multi-shared">Shared Memory Mechanism</h3>
+<p>All agents share the same memory system: L1 Insight, L2 Facts, L3 SOP/utils, keychain, filesystem.</p>
+
+<h3 id="multi-model">Multi-Model Configuration</h3>
+<p>Use the <code>--llm_no N</code> parameter to assign different LLMs to different subagents:</p>
+<pre># OCR agent → Vision model (llmclients[0])
+python agentmain.py --task screenshot_analysis --input "..." --llm_no 0 --bg
+
+# Text agent → Text model (llmclients[1])
+python agentmain.py --task text_summary --input "..." --llm_no 1 --bg</pre>
+<p>Define multiple session configs in <code>mykey.py</code> (variable names must contain <code>api</code> / <code>config</code> / <code>cookie</code>).</p>
+
+<!-- ==================== Startup Methods ==================== -->
+
+<h4>Code Example: Multi-Model Loading Logic</h4>
+<p>The <code>load_llm_sessions()</code> function in <code>agentmain.py</code> demonstrates how multiple LLM backends are dynamically loaded from <code>mykey.py</code>:</p>
+<pre>def load_llm_sessions(self):
+    mykeys, changed = reload_mykeys()
+    llm_sessions = []
+    for k, cfg in mykeys.items():
+        if not any(x in k for x in ["api", "config", "cookie"]): continue
+        if "native" in k and "claude" in k:
+            llm_sessions += [NativeToolClient(NativeClaudeSession(cfg=cfg))]
+        elif "native" in k and "oai" in k:
+            llm_sessions += [NativeToolClient(NativeOAISession(cfg=cfg))]
+        elif "claude" in k:
+            llm_sessions += [ToolClient(ClaudeSession(cfg=cfg))]
+        elif "oai" in k:
+            llm_sessions += [ToolClient(LLMSession(cfg=cfg))]
+        elif "mixin" in k:
+            llm_sessions += [{"mixin_cfg": cfg}]
+    return llm_sessions
+
+# Subagent background startup mode
+def run():
+    # ...
+    gen = agent_runner_loop(self.llmclient, sys_prompt, raw_query,
+                            handler, TOOLS_SCHEMA, max_turns=70, verbose=self.verbose)
+    for chunk in gen:
+        if consume_file(self.task_dir, "_stop"): self.abort()
+        if self.stop_sig: break
+        # Real-time push output to display_queue</pre>
+
+<h2 id="startup">Startup Methods</h2>
+
+<h3 id="startup-compare">Desktop vs Web Version</h3>
+<table>
+<tr><th>Dimension</th><th><code>python launch.pyw</code></th><th><code>streamlit run stapp.py</code></th></tr>
+<tr><td>Nature</td><td>Desktop native window wrapper</td><td>Pure Streamlit Web interface</td></tr>
+<tr><td>UI Carrier</td><td>pywebview native window</td><td>Browser web page</td></tr>
+<tr><td>JS↔Python Communication</td><td>✅ Yes (inject/PASTE_HOOK_JS)</td><td>❌ No</td></tr>
+<tr><td>Idle Monitoring</td><td>✅ Auto-inject task after 30 min</td><td>❌ No</td></tr>
+<tr><td>Bot Support</td><td>✅ Telegram/QQ/Feishu/WeCom/DingTalk</td><td>❌ No</td></tr>
+</table>
+
+<!-- ==================== Self-Evolution ==================== -->
+
+<h4>Code Example: Streamlit Web Frontend</h4>
+<p><code>frontends/stapp.py</code> shows how GA is embedded in a Web interface, implementing multi-model switching, task control, and idle monitoring:</p>
+<pre>import streamlit as st
+from agentmain import GeneraticAgent
+
+@st.cache_resource
+def init():
+    agent = GeneraticAgent()
+    if agent.llmclient is None:
+        st.error("⚠️ No available LLM interface configured")
+        st.stop()
+    else:
+        threading.Thread(target=agent.run, daemon=True).start()
+    return agent
+
+agent = init()
+# Sidebar: LLM switching / idle time / stop button / desktop pet
+llm_options = agent.list_llms()
+selected_idx = st.selectbox("Backup Link", [...], format_func=llm_labels.get)
+if selected_idx != current_idx:
+    agent.next_llm(selected_idx)
+if st.button("Force Stop Task"): agent.abort()
+if st.button("Re-inject Tools"): agent.llmclient.last_tools = ''</pre>
+
+<h2 id="evolution">Self-Evolution</h2>
+<p>GA does not modify the base model; it evolves by recording and updating the information environment. Core strategy: <strong>evolve strategies, not tools</strong>, keeping the tool layer fixed and separated from the evolving knowledge layer.</p>
+
+<h3 id="evol-skills">Skill Tree & Autonomous Exploration</h3>
+<table>
+<tr><th>Component</th><th>Description</th></tr>
+<tr><td>Skill Tree</td><td>Two-level structure: Category (web automation / data processing) → Named skills, records scripts and usage count</td></tr>
+<tr><td>Trigger Mechanism</td><td>Task mode (filesystem submission) or reflective mode (periodic polling)</td></tr>
+<tr><td>Task Generation</td><td>Weighted scoring across four dimensions: breadth, depth, utility, innovativeness</td></tr>
+<tr><td>Execution Flow</td><td>Context loading → Skill search → Sandbox execution → Report writing → Skill integration</td></tr>
+<tr><td>Quality Assessment</td><td>Adjust scoring weights based on actual task usage rate</td></tr>
+</table>
+
+<div class="card" style="margin-top: 40px; border-left: 4px solid #e94560;">
+
+<h4>Code Example: Memory Distillation Mechanism</h4>
+<p>The <code>do_start_long_term_update</code> function in <code>ga.py</code> implements "self-evolution" — distilling task experience into long-term memory:</p>
+<pre>def do_start_long_term_update(self, args, response):
+    prompt = """### [Summary & Extract Experience]
+Extract information from the most recent task that is [factually verified and long-term valid]:
+- Environmental facts (paths/credentials/configurations) → file_patch to update L2, sync L1
+- Complex task experience (key pitfalls/prerequisites) → L3 concise SOP
+**Only extract information verified successful through action**
+**Forbidden**: temporary variables, specific reasoning processes, unverified info, general common sense
+"""
+    yield "[Info] Start distilling good memory for long-term storage.\n"
+    path = "./memory/memory_management_sop.md"
+    if os.path.exists(path):
+        result = "Auto-read L0 content:\n" + file_read(path, show_linenos=False)
+    else:
+        result = "Memory Management SOP not found. Do not update memory."
+    return StepOutcome(result, next_prompt=prompt)</pre>
+
+<p><strong>📌 System Characteristics</strong>: GA's core value lies in combining <strong>tool minimalism + layered memory + enforced reflection + filesystem IPC</strong> to achieve advanced capabilities such as self-evolution, multi-agent collaboration, and reflective monitoring within a minimal architecture (~3K lines of core code). These capabilities are not pre-designed features, but naturally emerge from the underlying architecture.</p>
+</div>
+
+</div>
+</body>
+</html>

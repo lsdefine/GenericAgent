@@ -380,6 +380,7 @@ class _TelegramStreamSession:
         self.sent_segments = 0
         self.active_display = ""
         self.pending_display = ""
+        self._edit_overflow_msgs = {}
         self.retry_until = 0.0
         self.last_update_at = 0.0
         self.last_update_raw_len = 0
@@ -600,15 +601,66 @@ class _TelegramStreamSession:
                 raise
         return updated if hasattr(updated, "edit_text") else msg
 
+    def _message_key(self, msg):
+        chat_id = getattr(getattr(msg, "chat", None), "id", None)
+        message_id = getattr(msg, "message_id", None)
+        if chat_id is not None and message_id is not None:
+            return (chat_id, message_id)
+        if message_id is not None:
+            return ("message", message_id)
+        return ("object", id(msg))
+
+    async def _delete_text_once(self, msg):
+        delete = getattr(msg, "delete", None)
+        if delete is None:
+            return
+        try:
+            result = delete()
+            if hasattr(result, "__await__"):
+                await result
+        except RetryAfter as exc:
+            self._set_retry_after(exc)
+            raise
+        except Exception as exc:
+            print(f"[TG stale overflow delete error] {type(exc).__name__}: {exc}", flush=True)
+
+    async def _delete_text(self, msg, wait_retry=True):
+        if wait_retry:
+            await self._retry_call(self._delete_text_once, msg)
+        else:
+            await self._delete_text_once(msg)
+
     async def _edit_text(self, msg, text, wait_retry=True):
         segments = _markdown_safe_segments(text) or ["..."]
+        old_key = self._message_key(msg)
+        overflow_msgs = self._edit_overflow_msgs.get(old_key, [])
         if wait_retry:
             updated = await self._retry_call(self._edit_text_once, msg, segments[0])
         else:
             updated = await self._edit_text_once(msg, segments[0])
-        for segment in segments[1:]:
-            updated = await self._reply_text(segment, wait_retry=wait_retry)
-        return updated if hasattr(updated, "edit_text") else msg
+        primary_msg = updated if hasattr(updated, "edit_text") else msg
+        self._edit_overflow_msgs.pop(old_key, None)
+
+        new_overflow_msgs = []
+        for index, segment in enumerate(segments[1:]):
+            if index < len(overflow_msgs):
+                overflow_msg = overflow_msgs[index]
+                if wait_retry:
+                    edited_overflow = await self._retry_call(self._edit_text_once, overflow_msg, segment)
+                else:
+                    edited_overflow = await self._edit_text_once(overflow_msg, segment)
+                new_overflow_msgs.append(
+                    edited_overflow if hasattr(edited_overflow, "edit_text") else overflow_msg
+                )
+            else:
+                new_overflow_msgs.append(await self._reply_text(segment, wait_retry=wait_retry))
+
+        for stale_msg in overflow_msgs[len(new_overflow_msgs):]:
+            await self._delete_text(stale_msg, wait_retry=wait_retry)
+
+        if new_overflow_msgs:
+            self._edit_overflow_msgs[self._message_key(primary_msg)] = new_overflow_msgs
+        return primary_msg
 
     async def _upsert_live_message(self, text, wait_retry=True):
         if self.live_msg is None:

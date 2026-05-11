@@ -126,7 +126,8 @@ def code_run(code, code_type="python", timeout=60, cwd=None, code_cwd=None, stop
     try:
         process = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            bufsize=0, cwd=cwd, startupinfo=startupinfo
+            bufsize=0, cwd=cwd, startupinfo=startupinfo,
+            creationflags=0x08000000 if os.name == 'nt' else 0
         )
         start_t = time.time()
         t = threading.Thread(target=stream_reader, args=(process, full_stdout), daemon=True)

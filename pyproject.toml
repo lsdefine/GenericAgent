@@ -39,3 +39,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 py-modules = []
+packages = ["ga_cli"]
+
+[project.scripts]
+ga = "ga_cli.cli:main"

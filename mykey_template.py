@@ -332,6 +332,8 @@ native_oai_config = {
 #     'github_token': 'ghp_<your_github_token>', # 可选；已登录 copilot CLI 可不填
 #     # 'copilot_home': './temp/copilot_home',   # 可选；受限环境建议显式指定
 #     # 'cli_path': '/path/to/copilot',          # 可选；自定义 copilot CLI 路径
+#     # 'cli_log_level': 'debug',                 # 可选；让 Copilot CLI 产生日志
+#     # 'cli_log_to_console': True,               # 可选；把 CLI stderr 日志转发到当前控制台
 # }
 #
 #

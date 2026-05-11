@@ -90,7 +90,7 @@ pip install -e ".[copilot-sdk]"
 cp mykey_template.py mykey.py
 # Edit mykey.py and fill in your LLM API Key
 # For Copilot SDK support, add:
-# copilot_sdk_config = {'model': 'gpt-5', 'github_token': 'ghp_xxx'}
+# copilot_sdk_config = {'model': 'gpt-5', 'github_token': 'ghp_xxx', 'cli_log_level': 'debug'}
 
 # 4. Launch
 python launch.pyw

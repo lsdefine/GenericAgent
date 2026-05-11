@@ -727,8 +727,21 @@ class CopilotSDKSession(BaseSession):
         self.cli_cwd = cfg.get('cli_cwd')
         self.cli_env = cfg.get('cli_env')
         self.cli_log_level = cfg.get('cli_log_level')
+        self.cli_log_to_console = cfg.get('cli_log_to_console', True)
         self.provider = cfg.get('provider')
     def make_messages(self, raw_list): return _msgs_claude2oai(_fix_messages(raw_list))
+    def _emit_cli_logs(self, client):
+        if not self.cli_log_to_console: return
+        rpc_client = getattr(client, "_client", None)
+        get_logs = getattr(rpc_client, "get_stderr_output", None)
+        if not callable(get_logs): return
+        logs = get_logs()
+        if not logs: return
+        try:
+            sys.stderr.write(logs if logs.endswith('\n') else logs + '\n')
+            sys.stderr.flush()
+        except OSError:
+            pass
     def _messages_to_prompt(self, messages):
         lines = []
         for m in messages:
@@ -756,15 +769,19 @@ class CopilotSDKSession(BaseSession):
         if self.cli_log_level: subprocess_kwargs["log_level"] = self.cli_log_level
         cfg = SubprocessConfig(**subprocess_kwargs) if subprocess_kwargs else None
         async with CopilotClient(config=cfg) as client:
+            session = None
             kwargs = {"on_permission_request": PermissionHandler.approve_all, "streaming": False}
             if self.model: kwargs["model"] = self.model
             if self.reasoning_effort: kwargs["reasoning_effort"] = self.reasoning_effort
             if self.provider is not None: kwargs["provider"] = self.provider
-            session = await client.create_session(**kwargs)
-            try: reply = await session.send_and_wait(prompt)
+            try:
+                session = await client.create_session(**kwargs)
+                reply = await session.send_and_wait(prompt)
             finally:
-                try: await session.disconnect()
-                except Exception as e: print(f"[WARN] CopilotSDKSession disconnect failed: {type(e).__name__}: {e}")
+                if session is not None:
+                    try: await session.disconnect()
+                    except Exception as e: print(f"[WARN] CopilotSDKSession disconnect failed: {type(e).__name__}: {e}")
+                self._emit_cli_logs(client)
             data = getattr(reply, "data", reply)
             if isinstance(data, dict): return str(data.get("content", ""))
             return str(getattr(data, "content", data) or "")

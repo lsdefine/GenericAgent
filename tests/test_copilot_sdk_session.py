@@ -1,3 +1,4 @@
+import io
 import sys
 import types
 import unittest
@@ -44,6 +45,9 @@ class CopilotSDKSessionTests(unittest.TestCase):
             def __init__(self, config=None, **kwargs):
                 record["client_config"] = config
                 record["client_kwargs"] = kwargs
+                self._client = types.SimpleNamespace(
+                    get_stderr_output=lambda: record.get("stderr_output", "")
+                )
 
             async def __aenter__(self):
                 return self
@@ -93,6 +97,26 @@ class CopilotSDKSessionTests(unittest.TestCase):
         with patch.object(llmcore, "reload_mykeys", return_value=({"copilot_sdk_config": cfg}, True)):
             client = llmcore.resolve_client("copilot_sdk_config")
         self.assertIsInstance(client, llmcore.ToolClient)
+
+    def test_copilot_sdk_logs_cli_output_to_console(self):
+        cfg = {"model": "gpt-5"}
+        self.record["stderr_output"] = "copilot cli debug log\n"
+        with patch.object(llmcore, "reload_mykeys", return_value=({"copilot_sdk_config": cfg}, True)):
+            session = llmcore.resolve_session("copilot_sdk_config")
+            with patch("sys.stderr", new_callable=io.StringIO) as stderr:
+                output = "".join(session.ask("hello copilot sdk"))
+        self.assertIn("stubbed copilot reply", output)
+        self.assertIn("copilot cli debug log", stderr.getvalue())
+
+    def test_copilot_sdk_can_disable_cli_console_logs(self):
+        cfg = {"model": "gpt-5", "cli_log_to_console": False}
+        self.record["stderr_output"] = "copilot cli debug log\n"
+        with patch.object(llmcore, "reload_mykeys", return_value=({"copilot_sdk_config": cfg}, True)):
+            session = llmcore.resolve_session("copilot_sdk_config")
+            with patch("sys.stderr", new_callable=io.StringIO) as stderr:
+                output = "".join(session.ask("hello copilot sdk"))
+        self.assertIn("stubbed copilot reply", output)
+        self.assertEqual("", stderr.getvalue())
 
 
 if __name__ == "__main__":

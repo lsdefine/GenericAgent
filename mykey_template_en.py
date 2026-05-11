@@ -65,6 +65,8 @@ native_oai_config = {
 #     'github_token': 'ghp_<your_github_token>',  # optional if CLI login / GH_TOKEN / GITHUB_TOKEN is already available
 #     # 'copilot_home': './temp/copilot_home',  # optional writable home dir
 #     # 'cli_path': '/path/to/copilot',         # optional custom copilot CLI
+#     # 'cli_log_level': 'debug',               # optional CLI log level
+#     # 'cli_log_to_console': True,             # optional forward CLI stderr logs to this console
 # }
 
 

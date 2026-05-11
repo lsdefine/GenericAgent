@@ -18,6 +18,7 @@
 #      ─────────────────────────────────────────────────────────────────────────
 #      含 'native' 且 'claude'             → NativeClaudeSession    → API 原生 tool 字段
 #      含 'native' 且 'oai'               → NativeOAISession       → API 原生 tool 字段
+#      含 'copilot' 且 'sdk'              → CopilotSDKSession      → github-copilot-sdk
 #      含 'claude'（不含 native）          → ClaudeSession          → 文本协议工具 (deprecated)
 #      含 'oai'（不含 native）             → LLMSession             → 文本协议工具 (deprecated)
 #      含 'mixin'                          → MixinSession           → 多 session 故障转移
@@ -320,7 +321,22 @@ native_oai_config = {
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  3. LLMSession / ClaudeSession — 非 Native 文本协议工具（deprecated）
+#  3. CopilotSDKSession — GitHub Copilot SDK（可选）
+# ══════════════════════════════════════════════════════════════════════════════
+#  变量名同时含 'copilot' + 'sdk'。使用官方 github-copilot-sdk（底层走 Copilot CLI）。
+#  需要 Python 3.11+ 且安装: pip install ".[copilot-sdk]"
+#
+# copilot_sdk_config = {
+#     'name': 'copilot-sdk',                      # /llms 显示名
+#     'model': 'gpt-5',                           # Copilot 可用模型（如 gpt-5/claude-sonnet-4.5）
+#     'github_token': 'ghp_<your_github_token>', # 可选；已登录 copilot CLI 可不填
+#     # 'copilot_home': './temp/copilot_home',   # 可选；受限环境建议显式指定
+#     # 'cli_path': '/path/to/copilot',          # 可选；自定义 copilot CLI 路径
+# }
+#
+#
+# ══════════════════════════════════════════════════════════════════════════════
+#  4. LLMSession / ClaudeSession — 非 Native 文本协议工具（deprecated）
 # ══════════════════════════════════════════════════════════════════════════════
 #  ⚠ 后续版本可能移除非 Native session。新用户请直接使用上面的 Native 配置。
 #  非 Native 把工具描述放在 text 字段里，兼容性广但对 overfit 模型效果打折。
@@ -351,7 +367,7 @@ native_oai_config = {
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  4. 其他 Native 兼容渠道
+#  5. 其他 Native 兼容渠道
 # ══════════════════════════════════════════════════════════════════════════════
 
 # ── 4a. MiniMax OAI 路径 (/v1 chat/completions) ────────────────────────────

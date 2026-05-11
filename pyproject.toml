@@ -18,6 +18,9 @@ dependencies = [
 [project.optional-dependencies]
 # select extras, not all. match current task/env.
 # examples: .[ui] for GUI, bot deps only if bot needed.
+copilot-sdk = [
+    "github-copilot-sdk>=0.1.0; python_version>='3.11'",
+]
 ui = [
     "streamlit>=1.28",
     "pywebview>=4.0",

@@ -83,10 +83,14 @@ cd GenericAgent
 # 2. Install dependencies
 pip install requests streamlit pywebview   # Desktop GUI (launch.pyw)
 pip install requests textual               # Terminal UI (tuiapp.py)
+# Optional: Copilot SDK backend (Python 3.11+)
+pip install -e ".[copilot-sdk]"
 
 # 3. Configure API Key
 cp mykey_template.py mykey.py
 # Edit mykey.py and fill in your LLM API Key
+# For Copilot SDK support, add:
+# copilot_sdk_config = {'model': 'gpt-5', 'github_token': 'ghp_xxx'}
 
 # 4. Launch
 python launch.pyw
@@ -327,11 +331,15 @@ cd GenericAgent
 # 2. 安装依赖
 pip install requests streamlit pywebview   # 桌面 GUI (launch.pyw)
 pip install requests textual               # 终端 UI (tuiapp.py)
+# 可选：Copilot SDK 后端（Python 3.11+）
+pip install -e ".[copilot-sdk]"
 
 # 3. 配置 API Key
 cp mykey_template.py mykey.py
 # 编辑 mykey.py，填入你的 LLM API Key
 # 或使用交互式向导：python assets/configure_mykey.py
+# 如需 Copilot SDK，额外可配置：
+# copilot_sdk_config = {'model': 'gpt-5', 'github_token': 'ghp_xxx'}
 
 # 4. 启动
 python launch.pyw

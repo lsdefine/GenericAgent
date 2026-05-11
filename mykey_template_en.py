@@ -11,6 +11,7 @@
 #  and picks the session class by keyword:
 #      name contains 'native' + 'claude'  → NativeClaudeSession  (Anthropic API)
 #      name contains 'native' + 'oai'     → NativeOAISession     (OpenAI API)
+#      name contains 'copilot' + 'sdk'    → CopilotSDKSession    (github-copilot-sdk)
 #      name contains 'mixin'              → MixinSession         (failover)
 #
 #  Native = tools go in the API's native `tool` field (function calling), same
@@ -53,6 +54,18 @@ native_oai_config = {
     # 'max_retries': 3,
     # 'read_timeout': 120,
 }
+
+
+# ── 2b. CopilotSDKSession — GitHub Copilot SDK (optional) ────────────────────
+#  Requires: `pip install .[copilot-sdk]` (Python 3.11+)
+#  Uses the official github-copilot-sdk runtime (Copilot CLI under the hood).
+# copilot_sdk_config = {
+#     'name': 'copilot-sdk',
+#     'model': 'gpt-5',                         # any model available in Copilot
+#     'github_token': 'ghp_<your_github_token>',  # optional if CLI login / GH_TOKEN / GITHUB_TOKEN is already available
+#     # 'copilot_home': './temp/copilot_home',  # optional writable home dir
+#     # 'cli_path': '/path/to/copilot',         # optional custom copilot CLI
+# }
 
 
 # ── 3. Mixin failover (optional) ─────────────────────────────────────────────

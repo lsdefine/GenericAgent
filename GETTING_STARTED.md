@@ -104,6 +104,7 @@ native_claude_config = {
 ```
 
 > 💡 还支持 `native_oai_config`（OpenAI 标准工具调用）、`sider_cookie`（Sider）等，详见 `mykey_template.py` 中的注释。
+> 💡 还支持 `copilot_sdk_config`（`github-copilot-sdk`，需 Python 3.11+）。
 
 ### 关键规则
 
@@ -115,6 +116,7 @@ native_claude_config = {
 | `claude`（不含 `native`） | Claude 兼容 | Claude API 服务 |
 | `native` + `claude` | Claude 标准工具调用 | 较弱模型推荐，工具调用更规范 |
 | `native` + `oai` | OpenAI 标准工具调用 | 较弱模型推荐，工具调用更规范 |
+| `copilot` + `sdk` | Copilot SDK | 通过 github-copilot-sdk 连接 Copilot CLI |
 
 > 例：用 Claude 模型，但 API 服务提供的是 OpenAI 兼容接口 → 变量名用 `oai_xxx`。
 > 例：用 MiniMax 模型 → 变量名用 `oai_minimax_config`，MiniMax 走 OpenAI 兼容接口。

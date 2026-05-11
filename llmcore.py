@@ -1,4 +1,4 @@
-import os, json, re, time, requests, sys, threading, urllib3, base64, importlib, uuid
+import os, json, re, time, requests, sys, threading, urllib3, base64, importlib, uuid, asyncio
 from datetime import datetime
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 _RESP_CACHE_KEY = str(uuid.uuid4())
@@ -606,6 +606,17 @@ class LLMSession(BaseSession):
     def raw_ask(self, messages): return (yield from _openai_stream(self, messages))
     def make_messages(self, raw_list): return _msgs_claude2oai(_fix_messages(raw_list))
 
+def _run_async_sync(coro):
+    try: asyncio.get_running_loop()
+    except RuntimeError: return asyncio.run(coro)
+    box = {"ret": None, "err": None}
+    def _runner():
+        try: box["ret"] = asyncio.run(coro)
+        except Exception as e: box["err"] = e
+    t = threading.Thread(target=_runner, daemon=True); t.start(); t.join()
+    if box["err"] is not None: raise box["err"]
+    return box["ret"]
+
 def _fix_messages(messages):
     """修复 messages 符合 Claude API：交替、tool_use/tool_result 配对"""
     if not messages: return messages
@@ -700,6 +711,70 @@ class NativeOAISession(NativeClaudeSession):
         messages = _fix_messages(messages)
         messages = _ensure_thinking_blocks(messages, self.model)
         return (yield from _openai_stream(self, _msgs_claude2oai(messages)))
+
+class CopilotSDKSession(BaseSession):
+    def __init__(self, cfg):
+        github_token = cfg.get('github_token') or cfg.get('apikey') or os.environ.get('COPILOT_GITHUB_TOKEN') or os.environ.get('GH_TOKEN') or os.environ.get('GITHUB_TOKEN')
+        ccfg = dict(cfg)
+        ccfg.setdefault('apikey', github_token or '')
+        ccfg.setdefault('apibase', cfg.get('apibase', 'https://api.githubcopilot.com'))
+        ccfg.setdefault('model', cfg.get('model', 'gpt-5'))
+        super().__init__(ccfg)
+        self.github_token = github_token
+        self.copilot_home = cfg.get('copilot_home')
+        self.cli_path = cfg.get('cli_path')
+        self.cli_args = cfg.get('cli_args')
+        self.cli_cwd = cfg.get('cli_cwd')
+        self.cli_env = cfg.get('cli_env')
+        self.cli_log_level = cfg.get('cli_log_level')
+        self.provider = cfg.get('provider')
+    def make_messages(self, raw_list): return _msgs_claude2oai(_fix_messages(raw_list))
+    def _messages_to_prompt(self, messages):
+        lines = []
+        for m in messages:
+            role = str(m.get("role", "user")).upper()
+            content = m.get("content", "")
+            if isinstance(content, list):
+                parts = []
+                for p in content:
+                    if not isinstance(p, dict): continue
+                    if p.get("type") == "text" and p.get("text"): parts.append(p["text"])
+                    elif p.get("type") == "image_url": parts.append("[image]")
+                content = "\n".join(parts)
+            lines.append(f"=== {role} ===\n{content if isinstance(content, str) else str(content)}")
+        return "\n\n".join(lines).strip()
+    async def _send_with_session(self, prompt):
+        from copilot import CopilotClient, SubprocessConfig
+        from copilot.session import PermissionHandler
+        subprocess_kwargs = {}
+        if self.github_token: subprocess_kwargs["github_token"] = self.github_token
+        if self.copilot_home: subprocess_kwargs["copilot_home"] = self.copilot_home
+        if self.cli_path: subprocess_kwargs["cli_path"] = self.cli_path
+        if self.cli_args is not None: subprocess_kwargs["cli_args"] = self.cli_args
+        if self.cli_cwd: subprocess_kwargs["cwd"] = self.cli_cwd
+        if self.cli_env is not None: subprocess_kwargs["env"] = self.cli_env
+        if self.cli_log_level: subprocess_kwargs["log_level"] = self.cli_log_level
+        cfg = SubprocessConfig(**subprocess_kwargs) if subprocess_kwargs else None
+        async with CopilotClient(config=cfg) as client:
+            kwargs = {"on_permission_request": PermissionHandler.approve_all, "streaming": False}
+            if self.model: kwargs["model"] = self.model
+            if self.reasoning_effort: kwargs["reasoning_effort"] = self.reasoning_effort
+            if self.provider is not None: kwargs["provider"] = self.provider
+            session = await client.create_session(**kwargs)
+            try: reply = await session.send_and_wait(prompt)
+            finally:
+                try: await session.disconnect()
+                except Exception as e: print(f"[WARN] CopilotSDKSession disconnect failed: {type(e).__name__}: {e}")
+            data = getattr(reply, "data", reply)
+            if isinstance(data, dict): return str(data.get("content", ""))
+            return str(getattr(data, "content", data) or "")
+    def raw_ask(self, messages):
+        try: text = _run_async_sync(self._send_with_session(self._messages_to_prompt(messages)))
+        except Exception as e:
+            err = f"!!!Error: {type(e).__name__}: {e}"
+            yield err; return [{"type": "text", "text": err}]
+        if text: yield text
+        return [{"type": "text", "text": text or ""}]
 
 def openai_tools_to_claude(tools):
     """[{type:'function', function:{name,description,parameters}}] → [{name,description,input_schema}]."""
@@ -1012,6 +1087,7 @@ class NativeToolClient:
 def resolve_session(cfg_name):
     cfg = reload_mykeys()[0].get(cfg_name)
     if not cfg: raise ValueError(f"Config '{cfg_name}' not in mykey")
+    if 'copilot' in cfg_name and 'sdk' in cfg_name: return CopilotSDKSession(cfg=cfg)
     if 'native' in cfg_name: return (NativeClaudeSession if 'claude' in cfg_name else NativeOAISession)(cfg=cfg)
     if 'claude' in cfg_name: return ClaudeSession(cfg=cfg)
     return LLMSession(cfg=cfg) if 'oai' in cfg_name else None

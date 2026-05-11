@@ -1,0 +1,7 @@
+{
+  "schedule": "03:00",
+  "repeat": "weekly",
+  "enabled": true,
+  "max_delay_hours": 12,
+  "prompt": "执行三轴统一扫描任务（轴1情绪波动+轴2持续模式+轴3已消失事项）。\n\n步骤：\n1. 运行 `from reflect.analyzers import TriAxisScanner; scanner = TriAxisScanner(); report = scanner.run()`\n2. 检查 report['errors'] 是否为空，有错误则记录\n3. 将 report['summary'] 作为核心结论写入报告\n4. 如果轴1有 tier1_clusters > 0，记录待溯源位置（第二步任务）\n5. 如果轴2有新增项，记录待深挖项（第二步任务）\n6. 如果轴3有项，记录待比较记忆项（第二步任务）\n7. 将完整报告写入指定报告路径\n\n注意：本任务只做第一步扫描，不执行溯源/学习/记忆比较等第二步操作。"
+}

@@ -47,6 +47,7 @@ memory/*
 !memory/L4_raw_sessions/
 memory/L4_raw_sessions/*
 !memory/L4_raw_sessions/compress_session.py
+!memory/L4_raw_sessions/session_traceback.py
 
 # ljqCtrl related tools
 !memory/ljqCtrl.py
@@ -101,7 +102,8 @@ memory/L4_raw_sessions/*
 .vs/
 restore_commit.txt
 
-sche_tasks/
+sche_tasks/*
+!sche_tasks/tri_axis_scan.json
 # CDP Bridge 密钥配置（首次运行自动生成）
 assets/tmwd_cdp_bridge/config.js
 assets/copilot_proxy.pyw
@@ -113,6 +115,13 @@ reflect/*
 !reflect/scheduler.py
 !reflect/agent_team_worker.py
 !reflect/goal_mode.py
+!reflect/analyzers/
+reflect/analyzers/*
+!reflect/analyzers/__init__.py
+!reflect/analyzers/tri_axis_scanner.py
+!reflect/analyzers/emotion_scanner.py
+!reflect/analyzers/habit_tracker.py
+!reflect/analyzers/abandoned_detector.py
 
 # Universal: never track __pycache__ anywhere
 **/__pycache__/

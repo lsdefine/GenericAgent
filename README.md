@@ -182,6 +182,34 @@ The default Streamlit desktop UI started by `python launch.pyw`, plus the QQ / T
 | **Out of the Box** | A few core files + starter skills | Hundreds of modules | Rich CLI toolset |
 
 
+## 📈 Evaluation — Five Dimensions
+
+> 📂 Full evaluation datasets and results: <https://github.com/JinyiHan99/GA-Technical-Report/tree/main>
+
+| Dimension | Question | Benchmarks used |
+|---|---|---|
+| **1. Task Completion & Token Efficiency** | Can GA complete hard tasks more cheaply than leading agents? | SOP-Bench, Lifelong AgentBench, RealFin-Benchmark |
+| **2. Tool-Use Efficiency** | Can a minimal atomic toolset solve what specialized toolsets solve, with less overhead? | Tool Efficiency Benchmark (11 simple + 5 long-horizon tasks) |
+| **3. Memory System Effectiveness** | Does condensed hierarchical memory beat full/redundant memory and embedding-based retrievers? | SOP-Bench (dangerous goods), LoCoMo, 20-skill stress test |
+| **4. Self-Evolution Capability** | Can the agent distill experience into reusable SOPs and code, without intervention? | 9-round LangChain longitudinal study, 8-task cross-task web benchmark |
+| **5. Web Browsing Capability** | Does density-driven design survive the open web? | WebCanvas, BrowseComp-ZH, Custom Tasks (22) |
+
+Baselines across these dimensions include **Claude Code**, **OpenAI CodeX**, and **OpenClaw**, evaluated under *Claude Sonnet 4.6*, *Claude Opus 4.6*, *GPT-5.4*, and *MiniMax M2.7* backbones.
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="assets/images/result_radar.png" width="100%" alt="Tool-use efficiency radar"/><br/>
+      <sub><b>Tool-use efficiency radar.</b> GA dominates token, request, and tool-call axes while preserving quality across four task dimensions.</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="assets/images/result_convergence.png" width="100%" alt="Cross-task self-evolution convergence"/><br/>
+      <sub><b>Cross-task self-evolution.</b> Second- and third-run GA executions converge to a stable low-cost regime across eight web tasks, while OpenClaw shows no such convergence.</sub>
+    </td>
+  </tr>
+</table>
+
+
 ## 🧠 How It Works
 
 GenericAgent accomplishes complex tasks through **Layered Memory × Minimal Toolset × Autonomous Execution Loop**, continuously accumulating experience during execution.
@@ -496,6 +524,34 @@ dingtalk_allowed_users = ["your_staff_id"]  # 或 ['*']
 | **OS 控制** | 键鼠、视觉、ADB | 多 Agent 委派 | 文件 + 终端 |
 | **自我进化** | 自主生长 Skill 和工具 | 插件生态 | 会话间无状态 |
 | **出厂配置** | 几个核心文件 + 少量初始 Skills | 数百模块 | 丰富 CLI 工具集 |
+
+
+## 📈 评测 — 五大维度
+
+> 📂 完整的评测数据集以及评测结果见：<https://github.com/JinyiHan99/GA-Technical-Report/tree/main>
+
+| 维度 | 核心问题 | 使用的基准 |
+|---|---|---|
+| **1. 任务完成度与 Token 效率** | GA 能否以更低成本完成高难度任务？ | SOP-Bench、Lifelong AgentBench、RealFin-Benchmark |
+| **2. 工具使用效率** | 最小原子工具集能否以更低开销替代专用工具集？ | Tool Efficiency Benchmark |
+| **3. 记忆系统有效性** | 精简分层记忆能否超越冗余记忆和基于 Embedding 的检索器？ | SOP-Bench、LoCoMo、20-skill 压力测试 |
+| **4. 自我进化能力** | Agent 能否在无人干预下将经验提炼为可复用的 SOP 与代码？ | 9 轮 LangChain 纵向研究、8 任务跨任务 Web 基准 |
+| **5. 网页浏览能力** | 信息密度驱动设计能否适应开放网页？ | WebCanvas、BrowseComp-ZH、自定义任务 |
+
+以上维度的基线包括 **Claude Code**、**OpenAI CodeX** 和 **OpenClaw**，分别在 *Claude Sonnet 4.6*、*Claude Opus 4.6*、*GPT-5.4* 和 *MiniMax M2.7* 底座上进行评测。
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="assets/images/result_radar.png" width="100%" alt="工具使用效率雷达图"/><br/>
+      <sub><b>工具使用效率雷达图。</b>GA 在 Token、请求数和工具调用轴上全面领先，同时在四个任务维度上保持质量。</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="assets/images/result_convergence.png" width="100%" alt="跨任务自我进化收敛曲线"/><br/>
+      <sub><b>跨任务自我进化。</b>GA 的第二轮和第三轮执行在 8 个 Web 任务上收敛至稳定的低成本区间。</sub>
+    </td>
+  </tr>
+</table>
 
 
 ## 🧠 工作机制

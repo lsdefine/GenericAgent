@@ -19,7 +19,7 @@ from continue_cmd import handle_frontend_command, reset_conversation, list_sessi
 from btw_cmd import handle_frontend_command as btw_handle_frontend
 from export_cmd import last_assistant_text, export_to_temp, wrap_for_clipboard
 
-st.set_page_config(page_title="Cowork", layout="wide")
+st.set_page_config(page_title="Cowork", layout="wide", initial_sidebar_state="expanded")
 
 LANG = os.environ.get('GA_LANG', 'zh')
 if LANG not in ('zh', 'en'): LANG = 'zh'
@@ -37,13 +37,30 @@ I18N = {
 }
 def T(key): return I18N.get(LANG, I18N['zh']).get(key, key)
 
+STATE_FILE = os.path.abspath(os.path.join(script_dir, '..', 'temp', 'stapp_state.json'))
+def load_state():
+    try:
+        with open(STATE_FILE, encoding='utf-8-sig') as f: return json.load(f)
+    except (OSError, json.JSONDecodeError): return {}
+def saved_llm_no(default):
+    try: return int(load_state().get('llm_no', default))
+    except (TypeError, ValueError): return default
+def save_state(**updates):
+    try:
+        state = load_state(); state.update(updates)
+        os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
+        with open(STATE_FILE, 'w', encoding='utf-8') as f: json.dump(state, f, ensure_ascii=False, indent=2)
+    except (OSError, TypeError): pass
+
 @st.cache_resource
 def init():
     agent = GeneraticAgent()
     if agent.llmclient is None:
         st.error("⚠️ Please set mykey.py!")
         st.stop()
-    else: threading.Thread(target=agent.run, daemon=True).start()
+    saved_llm = saved_llm_no(agent.llm_no)
+    if saved_llm != agent.llm_no: agent.next_llm(saved_llm)
+    threading.Thread(target=agent.run, daemon=True).start()
     return agent
 
 agent = init()
@@ -61,7 +78,7 @@ def render_sidebar():
     st.caption(f"LLM Core: {llm_labels.get(current_idx, str(current_idx))}")
     selected_idx = st.selectbox("LLM", [idx for idx, _, _ in llm_options], index=next((i for i, (idx, _, _) in enumerate(llm_options) if idx == current_idx), 0), format_func=llm_labels.get, label_visibility="collapsed", key="sidebar_llm_select")
     if selected_idx != current_idx:
-        agent.next_llm(selected_idx); st.rerun(scope="fragment")
+        agent.next_llm(selected_idx); save_state(llm_no=selected_idx); st.rerun(scope="fragment")
     if st.button(T('force_stop')):
         agent.abort(); st.toast("Stop signal sended"); st.rerun()
     if st.button(T('reinject_tools')):

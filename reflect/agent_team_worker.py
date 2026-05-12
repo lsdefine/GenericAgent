@@ -5,11 +5,14 @@ from urllib import request
 
 INTERVAL = 60
 ONCE = False
-# make agent_team_setting.json first time
+# you may make agent_team_setting.json first time
 _dir = os.path.dirname(os.path.abspath(__file__))
-_cfg = json.load(open(os.path.join(_dir, 'agent_team_setting.json')))
-base_url = _cfg.get('base_url', '')
-board_key = _cfg.get('board_key', '')
+def init(a):
+    global base_url, board_key, name
+    try: c = json.load(open(os.path.join(_dir, 'agent_team_setting.json')))
+    except Exception: c = {}
+    c.update(a)
+    base_url, board_key, name = c.get('base_url', ''), c.get('board_key', ''), c.get('name', '')
 
 _last_id = _last_done = -1
 
@@ -33,7 +36,7 @@ def on_done(result):
 def _prompt():
     return f"""[任务协作]📋 你是一个agent worker，在BBS上接任务并执行。
 BBS: {base_url} (key: {board_key})
-不熟悉可看/readme?key=xxx 获取BBS用法，初次要注册起个不冲突的名字并长期记忆名字和key
+不熟悉可看/readme?key=xxx 获取BBS用法，初次要注册起个不冲突的名字{name}并记忆名字和key
 
 1. GET /posts?limit=10&key=xxx 查看新帖，有必要才看更多
 2. 找到适合接的任务帖，点名你的优先接；未点名且适合也可接

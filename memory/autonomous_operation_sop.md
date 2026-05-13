@@ -20,6 +20,7 @@ print(get_todo())       # 查看待办
 - 无 TODO → 读 `autonomous_operation_sop/task_planning.md` 规划，下次执行
 - 不连续两次选相同子任务
 - 价值公式：**「AI训练数据无法覆盖」×「对未来协作有持久收益」**
+- **需求驱动原则**：禁止"先找工具再想有没有用"式探索。工具只在解决实际障碍时才有价值（R45教训：搬运awesome-list零价值，R38对比：实际安装测试HTTPie才有价值）。自主探索触发条件 = "做某事时遇到了障碍"，而非"我能做什么"。
 
 ## 执行
 - 选定任务后 update_working_checkpoint，将选中的TODO条目和执行注意事项 append 到 checkpoint 中

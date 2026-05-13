@@ -229,13 +229,8 @@ class InputArea(TextArea):
         Binding("alt+enter",   "newline", "Newline", show=False),
         Binding("ctrl+enter",  "newline", "Newline", show=False),
         Binding("shift+enter", "newline", "Newline", show=False),
-        # 拆掉父类 ctrl+v：父类会走 action_paste 从 app.clipboard 再插一次，
-        # 和终端 bracketed paste 触发的 _on_paste 双重插入 → 单行粘贴会重复
-        Binding("ctrl+v",      "noop",    "Noop",    show=False),
+        Binding("ctrl+v",      "paste",   "Paste",   show=False),
     ]
-
-    def action_noop(self) -> None:
-        pass
 
     class Submitted(Message):
         def __init__(self, input_area: "InputArea", value: str) -> None:
@@ -247,6 +242,7 @@ class InputArea(TextArea):
         super().__init__(*args, **kwargs)
         self._pastes: dict[int, str] = {}
         self._paste_counter = 0
+        self._last_paste: tuple[str, str, float] = ("", "", 0.0)
 
     def expand_placeholders(self, text: str) -> str:
         def repl(m):
@@ -259,15 +255,18 @@ class InputArea(TextArea):
         self._pastes.clear()
         self._paste_counter = 0
 
-    def action_newline(self) -> None:
-        result = self._replace_via_keyboard("\n", *self.selection)
-        if result:
-            self.move_cursor(result.end_location)
+    def _insert_paste_text(self, text: str, source: str) -> bool:
+        text = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+        if not text:
+            return False
 
-    async def _on_paste(self, event: events.Paste) -> None:
-        if self.read_only:
-            return
-        text = event.text.replace("\r\n", "\n").replace("\r", "\n")
+        normalized = text
+        last_source, last_text, last_at = self._last_paste
+        now = time.monotonic()
+        if normalized == last_text and source != last_source and now - last_at < 0.25:
+            self._last_paste = (source, normalized, now)
+            return True
+
         line_count = len(text.splitlines()) or 1
         if line_count > 2:
             self._paste_counter += 1
@@ -278,7 +277,24 @@ class InputArea(TextArea):
         if result:
             self.move_cursor(result.end_location)
             self.focus()
-        event.stop(); event.prevent_default()
+        self._last_paste = (source, normalized, now)
+        return result is not None
+
+    def action_newline(self) -> None:
+        result = self._replace_via_keyboard("\n", *self.selection)
+        if result:
+            self.move_cursor(result.end_location)
+
+    def action_paste(self) -> None:
+        if self.read_only:
+            return
+        self._insert_paste_text(self.app.clipboard, "key")
+
+    async def _on_paste(self, event: events.Paste) -> None:
+        if self.read_only:
+            return
+        if self._insert_paste_text(event.text, "event"):
+            event.stop(); event.prevent_default()
 
     async def _on_key(self, event: events.Key) -> None:
         try:

@@ -720,9 +720,15 @@ class CopilotSDKSession(BaseSession):
     )
     EXECUTION_POLICY_TEXT = (
         "=== SYSTEM ===\n"
-        "[Execution Policy] Do NOT execute shell commands or scripts through Copilot runtime permissions.\n"
-        "When execution is needed, return the command/script to this agent as a tool call "
-        "(for example code_run) and wait for tool_result."
+        "[Execution Policy] Do NOT use your built-in terminal, shell, PowerShell, or any native command-execution capability.\n"
+        "Do NOT run terminal commands directly (do not produce 'Ran terminal command:' output).\n"
+        "When any command, script, or code execution is needed, output it as a tool call "
+        "(for example code_run with the appropriate code_type such as 'powershell', 'bash', or 'python') "
+        "and wait for the tool_result from this agent."
+    )
+    _RAN_TERMINAL_RE = re.compile(
+        r'Ran terminal command:\s*(.*?)(?=\nRan terminal command:|\Z)',
+        re.DOTALL,
     )
     def __init__(self, cfg):
         github_token = cfg.get('github_token') or cfg.get('apikey') or os.environ.get('COPILOT_GITHUB_TOKEN') or os.environ.get('GH_TOKEN') or os.environ.get('GITHUB_TOKEN')
@@ -860,6 +866,41 @@ class CopilotSDKSession(BaseSession):
         if is_powershell: return code, 'powershell'
         is_python = ('python' in key) or bool(re.search(r'^\s*(import\s|from\s+\w+\s+import\s|def\s|class\s)', code))
         return code, ('python' if is_python else 'bash')
+    _PS_CMD_INDICATORS = (
+        'Get-', 'Set-', 'New-', 'Remove-', 'Copy-', 'Move-', 'Rename-', 'Test-', 'Invoke-',
+        'Write-Host', 'Write-Output', 'Write-Error',
+        'Select-Object', 'Where-Object', 'ForEach-Object', 'Sort-Object', 'Format-Table', 'Format-List',
+        '-ErrorAction', '-Recurse', '-Force', '-Filter', '-Path ',
+        '$_', '$env:', '$PSVersionTable',
+    )
+    def _classify_terminal_command_type(self, cmd):
+        if any(ind in cmd for ind in self._PS_CMD_INDICATORS):
+            return 'powershell'
+        if bool(re.search(r'^\s*(import\s|from\s+\w+\s+import\s|def\s|class\s)', cmd, re.MULTILINE)):
+            return 'python'
+        return 'bash'
+    def _convert_ran_terminal_to_tool_calls(self, text):
+        """Convert 'Ran terminal command: <cmd>' blocks in Copilot's response into code_run tool calls.
+
+        When Copilot uses its built-in terminal directly (bypassing the permission handler),
+        its response contains 'Ran terminal command: <cmd>' markers.  This method strips those
+        blocks and returns equivalent <tool_use> blocks so the *agent* runs the commands instead.
+        Returns (cleaned_text, tool_blocks_list).
+        """
+        if not text or 'Ran terminal command:' not in text:
+            return text, []
+        tool_blocks = []
+        for m in self._RAN_TERMINAL_RE.finditer(text):
+            cmd = m.group(1).strip()
+            if not cmd:
+                continue
+            code_type = self._classify_terminal_command_type(cmd)
+            payload = {"name": "code_run", "arguments": {"code": cmd, "code_type": code_type}}
+            tool_blocks.append(f'<tool_use>{json.dumps(payload, ensure_ascii=False)}</tool_use>')
+        if not tool_blocks:
+            return text, []
+        clean_text = self._RAN_TERMINAL_RE.sub('', text).strip()
+        return clean_text, tool_blocks
     def _append_tool_call_from_denied_permission(self, text):
         if '<tool_use>' in (text or '') or '<tool_call>' in (text or ''): return text
         for req in reversed(self._denied_permission_requests):
@@ -900,7 +941,13 @@ class CopilotSDKSession(BaseSession):
                 self._emit_cli_logs(client)
             data = getattr(reply, "data", reply)
             text = str(data.get("content", "")) if isinstance(data, dict) else str(getattr(data, "content", data) or "")
-            if tool_mode: text = self._append_tool_call_from_denied_permission(text)
+            if tool_mode:
+                text, terminal_tool_blocks = self._convert_ran_terminal_to_tool_calls(text)
+                if terminal_tool_blocks:
+                    sep = '\n\n' if text.strip() else ''
+                    text = text.rstrip() + sep + '\n'.join(terminal_tool_blocks)
+                else:
+                    text = self._append_tool_call_from_denied_permission(text)
             return text
     def raw_ask(self, messages):
         try: text = _run_async_sync(self._send_with_session(self._messages_to_prompt(messages)))

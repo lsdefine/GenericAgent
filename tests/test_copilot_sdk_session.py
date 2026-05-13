@@ -65,13 +65,15 @@ class CopilotSDKSessionTests(unittest.TestCase):
             self._saved_modules[name] = sys.modules.get(name)
         sys.modules[name] = module
 
-    def _install_copilot_stubs(self, error=False, missing_deny=False, simulate_permission_request=None):
+    def _install_copilot_stubs(self, error=False, missing_deny=False, simulate_permission_request=None, copilot_reply=None):
         record = self.record
 
         class FakeSubprocessConfig:
             def __init__(self, **kwargs):
                 record["subprocess_kwargs"] = kwargs
                 self.kwargs = kwargs
+
+        _copilot_reply = copilot_reply
 
         class FakeSession:
             async def send_and_wait(self, prompt):
@@ -81,7 +83,8 @@ class CopilotSDKSessionTests(unittest.TestCase):
                     cb(simulate_permission_request)
                 if error:
                     raise RuntimeError("Copilot CLI unavailable")
-                return types.SimpleNamespace(data=types.SimpleNamespace(content="stubbed copilot reply"))
+                reply_content = _copilot_reply if _copilot_reply is not None else "stubbed copilot reply"
+                return types.SimpleNamespace(data=types.SimpleNamespace(content=reply_content))
 
             async def disconnect(self):
                 record["disconnected"] = True
@@ -209,7 +212,82 @@ class CopilotSDKSessionTests(unittest.TestCase):
         self.assertIn("Get-ChildItem Env:", output)
         self.assertIn('"code_type": "powershell"', output)
 
-    def test_resolve_client_wraps_copilot_sdk_as_tool_client(self):
+    def _tool_prompt(self):
+        return (
+            "=== SYSTEM ===\n"
+            "### Tools (mounted, always in effect):\n"
+            '[{"type":"function","function":{"name":"code_run"}}]\n'
+            "=== ASSISTANT ===\n"
+        )
+
+    def test_ran_terminal_command_powershell_becomes_tool_call(self):
+        """Copilot native-terminal PowerShell output is converted to a code_run tool call."""
+        reply = (
+            "Let me check the files.\n"
+            "Ran terminal command: Get-ChildItem -Path C:\\projects -Recurse\n"
+        )
+        self._install_copilot_stubs(copilot_reply=reply)
+        cfg = {"model": "gpt-5", "permission_mode": "approve_all", "enforce_agent_tool_calls": True}
+        with patch.object(llmcore, "reload_mykeys", return_value=({"copilot_sdk_config": cfg}, True)):
+            session = llmcore.resolve_session("copilot_sdk_config")
+            output = "".join(session.ask(self._tool_prompt()))
+        self.assertIn("<tool_use>", output)
+        self.assertIn('"name": "code_run"', output)
+        self.assertIn("Get-ChildItem", output)
+        self.assertIn('"code_type": "powershell"', output)
+        self.assertNotIn("Ran terminal command:", output)
+
+    def test_ran_terminal_command_stripped_from_response_text(self):
+        """Text before 'Ran terminal command:' is preserved; the marker itself is stripped."""
+        reply = (
+            "Here is the analysis:\n\n"
+            "Ran terminal command: Get-Content README.md -ErrorAction SilentlyContinue\n"
+        )
+        self._install_copilot_stubs(copilot_reply=reply)
+        cfg = {"model": "gpt-5", "enforce_agent_tool_calls": True}
+        with patch.object(llmcore, "reload_mykeys", return_value=({"copilot_sdk_config": cfg}, True)):
+            session = llmcore.resolve_session("copilot_sdk_config")
+            output = "".join(session.ask(self._tool_prompt()))
+        self.assertIn("Here is the analysis:", output)
+        self.assertNotIn("Ran terminal command:", output)
+        self.assertIn('"code_type": "powershell"', output)
+
+    def test_ran_terminal_command_multiple_commands_all_converted(self):
+        """Multiple 'Ran terminal command:' blocks all become separate tool calls."""
+        reply = (
+            "Ran terminal command: Get-Content README.md\n"
+            "Ran terminal command: Get-ChildItem src -Recurse\n"
+        )
+        self._install_copilot_stubs(copilot_reply=reply)
+        cfg = {"model": "gpt-5", "enforce_agent_tool_calls": True}
+        with patch.object(llmcore, "reload_mykeys", return_value=({"copilot_sdk_config": cfg}, True)):
+            session = llmcore.resolve_session("copilot_sdk_config")
+            output = "".join(session.ask(self._tool_prompt()))
+        self.assertEqual(output.count('<tool_use>'), 2)
+        self.assertIn("Get-Content", output)
+        self.assertIn("Get-ChildItem", output)
+        self.assertNotIn("Ran terminal command:", output)
+
+    def test_ran_terminal_command_bash_classified_correctly(self):
+        """Shell commands without PowerShell indicators are classified as bash."""
+        reply = "Ran terminal command: ls -la /tmp\n"
+        self._install_copilot_stubs(copilot_reply=reply)
+        cfg = {"model": "gpt-5", "enforce_agent_tool_calls": True}
+        with patch.object(llmcore, "reload_mykeys", return_value=({"copilot_sdk_config": cfg}, True)):
+            session = llmcore.resolve_session("copilot_sdk_config")
+            output = "".join(session.ask(self._tool_prompt()))
+        self.assertIn('"code_type": "bash"', output)
+        self.assertNotIn("Ran terminal command:", output)
+
+    def test_ran_terminal_command_not_processed_outside_tool_mode(self):
+        """Without enforce_agent_tool_calls, native terminal output passes through unchanged."""
+        reply = "Ran terminal command: Get-ChildItem src\n"
+        self._install_copilot_stubs(copilot_reply=reply)
+        cfg = {"model": "gpt-5", "enforce_agent_tool_calls": False}
+        with patch.object(llmcore, "reload_mykeys", return_value=({"copilot_sdk_config": cfg}, True)):
+            session = llmcore.resolve_session("copilot_sdk_config")
+            output = "".join(session.ask("hello"))
+        self.assertIn("Ran terminal command:", output)
         cfg = {"model": "gpt-5"}
         with patch.object(llmcore, "reload_mykeys", return_value=({"copilot_sdk_config": cfg}, True)):
             client = llmcore.resolve_client("copilot_sdk_config")

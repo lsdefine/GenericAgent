@@ -267,23 +267,18 @@ class InputArea(TextArea):
     async def _on_paste(self, event: events.Paste) -> None:
         if self.read_only:
             return
-        # 终端 bracketed paste 在 Windows 上常把行尾送成 \r\n 或裸 \r，
-        # 直接塞进 document 会丢换行（\r 不被当行尾），归一成 \n 再交给 super
-        event.text = event.text.replace("\r\n", "\n").replace("\r", "\n")
-        text = event.text
+        text = event.text.replace("\r\n", "\n").replace("\r", "\n")
         line_count = len(text.splitlines()) or 1
         if line_count > 2:
             self._paste_counter += 1
             sid = self._paste_counter
             self._pastes[sid] = text
-            placeholder = f"[Pasted text #{sid} +{line_count} lines]"
-            result = self._replace_via_keyboard(placeholder, *self.selection)
-            if result:
-                self.move_cursor(result.end_location)
-                self.focus()
-            event.stop(); event.prevent_default()
-            return
-        await super()._on_paste(event)
+            text = f"[Pasted text #{sid} +{line_count} lines]"
+        result = self._replace_via_keyboard(text, *self.selection)
+        if result:
+            self.move_cursor(result.end_location)
+            self.focus()
+        event.stop(); event.prevent_default()
 
     async def _on_key(self, event: events.Key) -> None:
         try:

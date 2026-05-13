@@ -50,9 +50,12 @@ def get_last_reply_time():
 PASTE_HOOK_JS = """if (!window._pasteHooked) { window._pasteHooked = true;
     document.addEventListener('paste', e => {
         const items = e.clipboardData?.items; if (!items) return;
-        let t = null;
-        for (const item of items) { if (item.kind === 'file') { t = item.type.startsWith('image/') ? 'image in clipboard, ' : 'file in clipboard, '; break; } }
-        if (!t) return;
+        let t = null, hasText = false;
+        for (const item of items) {
+            if (item.kind === 'string' && (item.type === 'text/plain' || item.type === 'text/html')) hasText = true;
+            if (item.kind === 'file') { t = item.type.startsWith('image/') ? 'image in clipboard, ' : 'file in clipboard, '; }
+        }
+        if (!t || hasText) return;
         e.preventDefault(); e.stopImmediatePropagation();
         const el = document.querySelector('textarea[data-testid="stChatInputTextArea"]') || document.activeElement;
         if (el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT')) {

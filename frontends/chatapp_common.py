@@ -19,6 +19,7 @@ TELEGRAM_MENU_COMMANDS = (
     ("new", "开启新对话并清空当前上下文"),
     ("restore", "恢复上次对话历史"),
     ("continue", "列出可恢复会话；/continue n 恢复第 n 个"),
+    ("btw", "临时插问主 agent 进展，不打断主线"),
     ("llm", "查看模型列表；/llm n 切换到指定模型"),
 )
 

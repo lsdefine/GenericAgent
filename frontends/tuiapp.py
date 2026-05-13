@@ -31,10 +31,12 @@ try:
     from rich.markdown import Markdown
     from rich.panel import Panel
     from rich.text import Text
+    from textual import events
     from textual.app import App, ComposeResult
     from textual.binding import Binding
     from textual.containers import Horizontal, Vertical
-    from textual.widgets import Footer, Header, Input, RichLog, Static
+    from textual.message import Message
+    from textual.widgets import Footer, Header, RichLog, Static, TextArea
 except ModuleNotFoundError as exc:  # pragma: no cover - exercised by manual missing-dep path
     if exc.name == "textual":
         print("Textual is required. Install with: pip install textual", file=sys.stderr)
@@ -159,6 +161,40 @@ def default_agent_factory() -> Any:
     return agent
 
 
+class PromptInput(TextArea):
+    """Multi-line input: Enter submits, Ctrl+Enter (ctrl+j) inserts newline, paste never auto-submits."""
+
+    BINDINGS = [
+        Binding("ctrl+j", "newline", "Newline", show=False),
+    ]
+
+    class Submitted(Message):
+        """Posted when the user presses Enter to submit."""
+        def __init__(self, value: str) -> None:
+            super().__init__()
+            self.value = value
+
+    def __init__(self, placeholder: str = "", **kwargs) -> None:
+        super().__init__(language=None, show_line_numbers=False, compact=True, placeholder=placeholder, **kwargs)
+
+    def _on_key(self, event: events.Key) -> None:
+        if event.key == "enter":
+            # Enter → submit
+            event.stop()
+            event.prevent_default()
+            value = self.text.rstrip()
+            self.clear()
+            self.post_message(self.Submitted(value))
+        elif event.key == "ctrl+j":
+            # Ctrl+Enter (ctrl+j) → insert newline
+            event.stop()
+            event.prevent_default()
+            start, end = self.selection
+            self._replace_via_keyboard("\n", start, end)
+        else:
+            super()._on_key(event)
+
+
 class GenericAgentTUI(App[None]):
     """Textual app that manages multiple GenericAgent sessions."""
 
@@ -169,7 +205,7 @@ class GenericAgentTUI(App[None]):
     #main { width: 1fr; }
     #status { height: 3; border: solid $primary; padding: 0 1; }
     #log { height: 1fr; border: solid $primary; padding: 0 1; }
-    #prompt { dock: bottom; }
+    #prompt { dock: bottom; height: auto; min-height: 1; max-height: 8; margin-bottom: 1; }
     .hint { color: $text-muted; }
     """
 
@@ -199,13 +235,13 @@ class GenericAgentTUI(App[None]):
             with Vertical(id="main"):
                 yield Static("", id="status")
                 yield RichLog(id="log", wrap=True, highlight=True, markup=True)
-        yield Input(placeholder="Message, or /help  /new  /branch  /rewind  /switch  /clear  /close  /stop  /llm  /resume", id="prompt")
+        yield PromptInput(placeholder="Message, or /help  /new  /branch  /rewind  /switch  /clear  /close  /stop  /llm  /resume", id="prompt")
         yield Footer()
 
     def on_mount(self) -> None:
         self.add_session("main")
         self._system("Welcome to GenericAgent TUI. Type /help for commands.")
-        self.query_one("#prompt", Input).focus()
+        self.query_one("#prompt", PromptInput).focus()
 
     def on_resize(self, event) -> None:
         narrow = self.size.width < 70
@@ -266,9 +302,8 @@ class GenericAgentTUI(App[None]):
     def action_stop_current(self) -> None:
         self._cmd_stop([])
 
-    def on_input_submitted(self, event: Input.Submitted) -> None:
+    def on_prompt_input_submitted(self, event: PromptInput.Submitted) -> None:
         value = event.value.rstrip()
-        event.input.value = ""
         if not value:
             self._system("Empty input ignored. Type /help for commands.")
             return

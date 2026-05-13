@@ -180,7 +180,8 @@ if __name__ == '__main__':
     parser.add_argument('--llm_no', type=int, default=0)
     parser.add_argument('--verbose', action='store_true')
     parser.add_argument('--nobg', action='store_true')
-    args = parser.parse_args()
+    args, _unknown = parser.parse_known_args()
+    _reflect_args = dict(zip([k.lstrip('-') for k in _unknown[::2]], _unknown[1::2])) if _unknown else {}
 
     if args.task and not args.nobg:
         import subprocess, platform
@@ -224,11 +225,15 @@ if __name__ == '__main__':
         import importlib.util
         spec = importlib.util.spec_from_file_location('reflect_script', args.reflect)
         mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+        if hasattr(mod, 'init'): mod.init(_reflect_args)
         _mt = os.path.getmtime(args.reflect)
-        print(f'[Reflect] loaded {args.reflect}')
+        print(f'[Reflect] loaded {args.reflect}' + (f' args={_reflect_args}' if _reflect_args else ''))
         while True:
             if os.path.getmtime(args.reflect) != _mt:
-                try: spec.loader.exec_module(mod); _mt = os.path.getmtime(args.reflect); print('[Reflect] reloaded')
+                try:
+                    spec.loader.exec_module(mod); _mt = os.path.getmtime(args.reflect)
+                    if hasattr(mod, 'init'): mod.init(_reflect_args)
+                    print('[Reflect] reloaded')
                 except Exception as e: print(f'[Reflect] reload error: {e}')
             time.sleep(getattr(mod, 'INTERVAL', 5))
             try: task = mod.check()

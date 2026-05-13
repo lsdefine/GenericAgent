@@ -25,6 +25,7 @@ from chatapp_common import (
     split_text,
 )
 from continue_cmd import handle_frontend_command, reset_conversation
+from btw_cmd import handle_frontend_command as handle_btw_frontend_command
 from llmcore import mykeys
 
 agent = GeneraticAgent()
@@ -812,6 +813,14 @@ def _cancel_stream_task(ctx):
 async def _sync_commands(application):
     await application.bot.set_my_commands([BotCommand(command, description) for command, description in TELEGRAM_MENU_COMMANDS])
 
+async def _reply_command_text(message, text):
+    for segment in _markdown_safe_segments(text) or ["..."]:
+        try:
+            await message.reply_text(_to_markdown_v2(segment), parse_mode=ParseMode.MARKDOWN_V2)
+        except Exception as exc:
+            print(f"[TG command markdown fallback] {type(exc).__name__}: {exc}", flush=True)
+            await message.reply_text(segment)
+
 async def handle_msg(update, ctx):
     uid = update.effective_user.id
     if ALLOWED and uid not in ALLOWED:
@@ -908,6 +917,9 @@ async def handle_command(update, ctx):
         return await update.message.reply_text(f"状态: {'🔴 运行中' if agent.is_running else '🟢 空闲'}\nLLM: [{agent.llm_no}] {llm}")
     if op == '/stop': return await cmd_abort(update, ctx)
     if op == '/llm': return await cmd_llm(update, ctx)
+    if op == '/btw':
+        answer = await asyncio.to_thread(handle_btw_frontend_command, agent, cmd)
+        return await _reply_command_text(update.message, answer)
     if op == '/new':
         _cancel_stream_task(ctx)
         return await update.message.reply_text(reset_conversation(agent))

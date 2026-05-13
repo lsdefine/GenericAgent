@@ -801,11 +801,6 @@ class CopilotSDKSession(BaseSession):
             h = getattr(permission_handler_cls, 'approve_all', None)
             if h is not None: return h
         if deny_handler is not None: return deny_handler
-        if mode in approve_modes:
-            h = getattr(permission_handler_cls, 'approve_all', None)
-            if h is not None:
-                print("[WARN] Copilot SDK PermissionHandler missing deny/reject handler, fallback to approve_all.")
-                return h
         # Safe fallback: if SDK exposes no known handlers, force-deny every permission request.
         print("[WARN] Copilot SDK PermissionHandler missing known handlers, using deny-all function fallback.")
         def _deny_all(*_args, **_kwargs): return False

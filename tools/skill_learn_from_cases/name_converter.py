@@ -42,7 +42,10 @@ def convert_name(skill_name: str) -> str:
 
     # 纯英文名：直接规范化
     if not has_cjk:
-        return skill_name.strip().lower().replace(" ", "_").replace("-", "_")
+        safe = skill_name.strip().lower().replace(" ", "_").replace("-", "_")
+        # 路径注入防护
+        safe = re.sub(r'[^\w\-\u4e00-\u9fff]', '', safe).strip('_')
+        return safe or "unknown"
 
     mapping = _load_mapping()
     seen = set()

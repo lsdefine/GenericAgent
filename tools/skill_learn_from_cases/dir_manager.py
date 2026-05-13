@@ -8,10 +8,25 @@ import os
 import json
 import shutil
 from pathlib import Path
+import re as _re
 
 # GA 根目录（通过包路径推算）
 GA_ROOT = Path(__file__).resolve().parents[2]
 SKILL_LEARN_ROOT = GA_ROOT / "skills_learning"
+
+
+def _sanitize_skill_name(skill_name: str) -> str:
+    """
+    清洗技能名：移除路径遍历字符（../..）和危险字符，
+    确保只能用作单个目录名，不能进行路径穿越。
+    """
+    # 移除非字母数字下划线连字符和中文的字符
+    sanitized = _re.sub(r'[^\w\-\u4e00-\u9fff]', '_', skill_name)
+    # 防止空名和特殊前缀
+    sanitized = sanitized.strip('_')
+    if not sanitized:
+        sanitized = "unnamed_skill"
+    return sanitized
 
 
 def _list_dirs(parent: Path) -> list[Path]:
@@ -23,7 +38,7 @@ def _list_dirs(parent: Path) -> list[Path]:
 
 def get_versions(skill_name: str) -> list[int]:
     """获取某技能已有的版本号列表，如 [1, 2, 3]"""
-    skill_dir = SKILL_LEARN_ROOT / skill_name
+    skill_dir = SKILL_LEARN_ROOT / _sanitize_skill_name(skill_name)
     versions = []
     for d in _list_dirs(skill_dir):
         if d.name.startswith("rev"):
@@ -49,16 +64,17 @@ def ensure_root_exists():
 
 
 def get_skill_dir(skill_name: str) -> Path:
-    """返回技能目录"""
-    return SKILL_LEARN_ROOT / skill_name
+    """返回技能目录（路径注入防护：skill_name 经 _sanitize_skill_name 清洗）"""
+    return SKILL_LEARN_ROOT / _sanitize_skill_name(skill_name)
 
 
 def get_latest_revision_dir(skill_name: str) -> Path | None:
     """返回包含知识模式的最新版本 rev 目录（跳过空目录）"""
-    versions = get_versions(skill_name)
+    safe_name = _sanitize_skill_name(skill_name)
+    versions = get_versions(safe_name)
     if not versions:
         return None
-    skill_dir = SKILL_LEARN_ROOT / skill_name
+    skill_dir = SKILL_LEARN_ROOT / safe_name
     # 从高往低找，取第一个有模式文件的版本
     for v in reversed(versions):
         patterns_file = skill_dir / f"rev{v}" / "patterns" / "knowledge_patterns.json"
@@ -113,7 +129,7 @@ def create_revision_dir(skill_name: str, version: int) -> Path:
       ├── reports/
       └── iterations/
     """
-    rev_dir = SKILL_LEARN_ROOT / skill_name / f"rev{version}"
+    rev_dir = SKILL_LEARN_ROOT / _sanitize_skill_name(skill_name) / f"rev{version}"
     subdirs = ["cases", "patterns", "tools", "reports", "iterations"]
     for s in subdirs:
         (rev_dir / s).mkdir(parents=True, exist_ok=True)

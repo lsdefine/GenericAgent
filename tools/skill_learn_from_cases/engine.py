@@ -23,6 +23,7 @@ sys.path.insert(0, str(GA_ROOT / "memory" / "skill_search"))
 
 from tools.skill_learn_from_cases import dir_manager
 from tools.skill_learn_from_cases.restore_funcs import _import_skill_search, _import_web_search, _web_search_wikipedia
+from tools.skill_learn_from_cases.llm_helper import call_llm, call_llm_json, llm_available
 
 
 def _detect_docker():
@@ -91,6 +92,54 @@ def _phase0_bootstrap(skill_name: str) -> dict:
 # Phase 1: 技能定义
 # ===============================================================
 
+def _llm_enrich_definition(ctx: dict, name_clean: str):
+    """
+    使用 LLM 丰富技能定义：生成结构化定义、前置知识、核心概念、常见陷阱。
+    仅增强，不破坏已有字段。
+    """
+    prompt = f"""技能名称: {name_clean}
+
+请为这个技能生成一份结构化学习定义，包含以下字段（JSON 格式）：
+1. description: 一段精炼的简介（100-200字），面向想学习该技能的开发者
+2. prerequisites: 前置知识列表（数组，每项含 name 和 reason 字段）
+3. core_concepts: 3-6个核心概念/知识点
+4. common_pitfalls: 3-5个常见错误/陷阱（每项含 pitfall 和 advice 字段）
+
+当前已有描述: {ctx['skill_definition'].get('description','')}
+
+请以 JSON 格式输出，strict 模式：
+{{"description": "...", "prerequisites": [{{"name": "docker", "reason": "容器化基础"}}], "core_concepts": ["..."], "common_pitfalls": [{{"pitfall": "...", "advice": "..."}}]}}
+"""
+
+    result = call_llm_json(prompt,
+        system_prompt="你是技术技能学习专家，擅长生成结构化、可操作的学习定义。输出纯 JSON。",
+        temperature=0.3,
+        max_tokens=4096)
+
+    if not isinstance(result, dict):
+        return
+
+    # 增强描述（如果 LLM 返回的描述更长更好）
+    if result.get("description") and len(result["description"]) > len(ctx["skill_definition"].get("description", "")):
+        ctx["skill_definition"]["description"] = result["description"][:500]
+
+    # 前置知识
+    if result.get("prerequisites"):
+        ctx["skill_definition"]["prerequisites"] = result["prerequisites"]
+
+    # 核心概念
+    if result.get("core_concepts"):
+        ctx["skill_definition"]["core_concepts"] = result["core_concepts"]
+
+    # 常见陷阱
+    if result.get("common_pitfalls"):
+        ctx["skill_definition"]["common_pitfalls"] = result["common_pitfalls"]
+
+    print(f"  [LLM] 定义增强: 前置知识 {len(result.get('prerequisites',[]))} 项, "
+          f"核心概念 {len(result.get('core_concepts',[]))} 项, "
+          f"常见陷阱 {len(result.get('common_pitfalls',[]))} 项")
+
+
 def _phase1_define(ctx: dict):
     """定义技能：查 skill hub 获取前置知识"""
     print(f"\n{'-'*55}")
@@ -154,17 +203,34 @@ def _phase1_define(ctx: dict):
         try:
             wiki_results = wiki_fn(keyword=name_clean, size=3)
             if wiki_results:
+                valid_snippets = []
                 for r in wiki_results[:3]:
                     s = r.get("snippet", "") or ""
                     if s:
-                        snippets.append(s[:200])
+                        # 过滤无关结果（如产品介绍而非技能描述）
+                        s_lower = s.lower()
+                        skill_words = set(name_clean.lower().split())
+                        s_words = set(s_lower.split())
+                        word_overlap = s_words & skill_words
+                        irr_signals = ["was a", "is a ", "corporation", "inc.", "company",
+                                        "is a web", "is a software", "is a service"]
+                        irr_count = sum(1 for sig in irr_signals if sig in s_lower)
+                        if irr_count >= 1 and len(word_overlap) <= 1:
+                            print(f"  [WIKI跳过] 不相关: {s[:60]}...")
+                            continue
+                        valid_snippets.append(s[:200])
+                snippets = valid_snippets
                 if snippets:
                     brief = "；".join(snippets)[:300]
-                    ctx["skill_definition"]["description"] = brief
                     ctx["skill_definition"]["wiki_summary"] = brief
+                    ctx["skill_definition"]["description"] = brief
                     print(f"  Wikipedia 摘要: {len(snippets)} 条")
         except Exception:
             pass
+
+    # ── LLM 增强：丰富技能定义 ──
+    if llm_available():
+        _llm_enrich_definition(ctx, name_clean)
 
     # 写入定义
     def_file = ctx["rev_dir"] / "reports" / "skill_definition.json"
@@ -177,8 +243,48 @@ def _phase1_define(ctx: dict):
 # Phase 2: 案例搜索
 # ===============================================================
 
+def _llm_generate_search_queries(skill_name: str) -> list[str] | None:
+    """
+    使用 LLM 生成多样化搜索查询词。
+    返回查询列表或 None（降级到硬编码查询）。
+    """
+    if not llm_available():
+        return None
+
+    name = skill_name.replace("_", " ").title()
+    has_cjk = any('\u4e00' <= c <= '\u9fff' for c in skill_name)
+
+    prompt = f"""技能名称: {skill_name}
+显示名: {name}
+包含中文: {'是' if has_cjk else '否'}
+
+请为搜索该技能的学习案例，生成 4~6 个多样化的搜索查询词。
+要求：
+1. 覆盖不同角度：最佳实践、技术方案、实战经验、常见陷阱
+2. 中英文混合策略：{f'同时生成中文和英文查询' if has_cjk else '全英文查询'}
+3. 如果技能有特定产品/框架名，优先使用原名
+4. 每个查询应能搜到不同的内容类型
+
+请以 JSON 数组输出，如 ["查询1", "查询2", ...]
+"""
+
+    result = call_llm_json(prompt,
+        system_prompt="你是一个搜索引擎优化专家，擅长为技能学习生成高效的搜索查询。输出纯 JSON 数组。",
+        temperature=0.5,
+        max_tokens=2048)
+
+    if isinstance(result, list) and len(result) >= 2:
+        valid = [str(q) for q in result if len(str(q)) > 5][:8]
+        if valid:
+            print(f"  [LLM] 搜索词: {len(valid)} 个")
+            for q in valid:
+                print(f"    - {q}")
+            return valid
+    return None
+
+
 def _phase2_search(ctx: dict):
-    """双渠道搜索案例"""
+    """双渠道搜索案例（LLM增强版）"""
     print(f"\n{'-'*55}")
     print("  Phase 2: 案例搜索")
     print(f"{'-'*55}")
@@ -221,27 +327,35 @@ def _phase2_search(ctx: dict):
             en_kws = sorted(set(w for w in en_kws if len(w) > 2))
             en_kw = " ".join(en_kws) if en_kws else ""
             
-            queries = []
-            if has_cjk:
-                # 中文查询
-                queries.extend([
-                    f"{name} 最佳实践",
-                    f"{name} 实战 经验",
-                    f"{name} 技术方案 案例",
-                    f"{name.split('图像')[0] if '图像' in name else name} 图像识别 凭证验证",
-                ])
-                # 如果有英文关键词，额外生成英文查询
-                if en_kw and len(en_kw) > 3:
-                    queries.extend([
-                        f"{en_kw} best practices tutorial",
-                        f"{en_kw} guide examples",
-                    ])
-            else:
-                queries = [
-                    f"{name.replace('_',' ')} best practices 2025",
-                    f"{name.replace('_',' ')} production experience",
-                    f"{name.replace('_',' ')} tutorial guide"
-                ]
+            # ── LLM 增强：智能生成搜索词 ──
+            queries = _llm_generate_search_queries(name)
+            if queries is None:
+                # fallback: 原硬编码查询
+                if has_cjk:
+                    queries = [
+                        f"{name} 最佳实践",
+                        f"{name} 实战 经验",
+                        f"{name} 技术方案 案例",
+                        f"{name.split('图像')[0] if '图像' in name else name} 图像识别 凭证验证",
+                    ]
+                    if en_kw and len(en_kw) > 3:
+                        queries.extend([
+                            f"{en_kw} best practices tutorial",
+                            f"{en_kw} guide examples",
+                        ])
+                else:
+                    queries = [
+                        f"{name.replace('_',' ')} tutorial",
+                        f"{name.replace('_',' ')} how to use",
+                        f"{name.replace('_',' ')} guide examples",
+                        f"{name.replace('_',' ')} getting started",
+                        f"learn {name.replace('_',' ')} beginner",
+                    ]
+                    if en_kw:
+                        queries.extend([
+                            f"{en_kw} best practices",
+                            f"{en_kw} tutorial",
+                        ])
             web_cases = []
             seen_urls = set()
             for q in queries:
@@ -348,6 +462,16 @@ def _decompose_skill_name(skill_name: str, cases: list) -> list:
     
     # 基于常见技能后缀生成子主题模板映射
     topic_map = {
+        # ── wiki/知识库/搜索 ──
+        "wiki": "Wiki系统搭建与内容管理最佳实践",
+        "search": "搜索算法与检索排序优化策略",
+        "搜索": "搜索算法与检索排序优化策略",
+        "文档": "文档结构化解析与关键信息提取",
+        "知识库": "知识库构建与知识管理最佳实践",
+        "knowledge": "知识库构建与知识管理最佳实践",
+        "documentation": "文档编写与API文档自动化工具链",
+        "doc": "文档编写与API文档自动化工具链",
+        # ── 图像/凭证 ──
         "图像": "图像采集与预处理最佳实践",
         "图片": "图像采集与预处理最佳实践",
         "凭证": "凭证标准化与格式校验规范",
@@ -415,7 +539,10 @@ def _decompose_skill_name(skill_name: str, cases: list) -> list:
                           "变化检测","目标检测","语义分割","像素",
                           "多光谱","高光谱","无人机","航拍","配准",
                           "neo4j","cypher","图数据库","知识图谱",
-                          "图算法","图查询","图遍历","节点","关系"]:
+                          "图算法","图查询","图遍历","节点","关系",
+                          "wiki","wikidata","wikipedia","sparql",
+                          "搜索","检索","搜索引擎","ranking",
+                          "api","rest","http","爬虫","crawler"]:
             if tech_term in text and tech_term not in seen:
                 case_keywords_found.add(tech_term)
     
@@ -501,18 +628,65 @@ def _extract_patterns_from_cases(cases: list[dict], skill_name: str) -> list[dic
                         seen_ids.add(pid)
                 break
 
-    # 匹配技能领域模式：技能名 + 案例内容
+    # ── 技能名相关性过滤：通用模式必须与技能主题相关 ──
+    skill_lower = skill_name.lower()
+    rel_terms = set(skill_lower.replace("_", " ").replace("-", " ").split())
+    # 为每个通用模式建相关性关键词映射
+    generic_rel = {
+        "production": {"deploy", "deployment", "production", "release", "docker", "container", "ci", "cd", "pipeline", "运维", "部署", "发布", "上线", "devops"},
+        "reliability": {"restart", "health", "monitor", "recovery", "resilient", "monitoring", "failover", "监控", "可用性", "容错", "故障恢复"},
+        "testing_config": {"test", "validate", "config", "verify", "lint", "测试", "验证", "配置", "校验"},
+    }
+    for p in patterns:
+        if p.get("level") == "basic":
+            category = None
+            for cat, terms in generic_rel.items():
+                if any(t in p["principle"].lower() for t in terms):
+                    category = cat
+                    break
+            if category:
+                cat_terms = generic_rel[category]
+                if not (rel_terms & cat_terms):
+                    p["confidence"] = max(20, p["confidence"] - 20)
+    try:
+        from skill_search import SkillRegistry as _SR
+        _sr = _SR()
+        _matches = [r for r in _sr.skills if skill_name in r.key]
+        if _matches and hasattr(_matches[0], 'tags') and _matches[0].tags:
+            _rel_tags = set(_matches[0].tags[:10])
+            for p in patterns:
+                _p_lower = p["principle"].lower()
+                _tag_match = sum(1 for t in _rel_tags if t.lower() in _p_lower or _p_lower[:10] in t.lower())
+                if _tag_match == 0 and p.get("level") == "basic":
+                    p["confidence"] = max(15, p["confidence"] - 15)
+    except Exception:
+        pass
     skill_keywords = skill_name.lower().replace("_", " ").replace("-", " ")
     matched_domains = set()
+    # 构建案例标题文本（仅标题，不含摘要/描述——减少误匹配）
+    case_titles_text = " ".join([
+        (c.get("title") or c.get("key") or "").lower()
+        for c in cases
+    ])
     for domain, info in skill_domain_patterns.items():
-        # 技能名匹配
+        # 技能名匹配（高置信度）
         if domain in skill_keywords:
             matched_domains.add(domain)
             continue
-        # 关键词匹配
+        # 关键词在案例标题中出现 + 技能名中包含领域上下文（兼顾新旧技能）
         for kw in info["keywords"]:
-            if kw in all_text or kw in skill_keywords:
-                matched_domains.add(domain)
+            if (kw in case_titles_text or kw in skill_keywords):
+                # 额外检查：技能名或其分解词与领域相关
+                for name_part in skill_keywords.split():
+                    if len(name_part) > 2 and (name_part in domain or domain in name_part):
+                        matched_domains.add(domain)
+                        break
+                else:
+                    # 技能名无直接关联时，只在强关键词匹配时才加（关键词出现在多个案例标题中）
+                    if kw in skill_keywords:
+                        matched_domains.add(domain)
+                    elif case_titles_text.count(kw) >= 2:  # 多个案例标题都含此关键词
+                        matched_domains.add(domain)
                 break
 
     for domain in matched_domains:
@@ -601,20 +775,217 @@ def _extract_patterns_from_cases(cases: list[dict], skill_name: str) -> list[dic
     return patterns
 
 
+# ═══════════════════════════════════════════════════════════════
+# LLM 增强: Phase 3 — 智能模式提取
+# ═══════════════════════════════════════════════════════════════
+
+def _llm_extract_patterns(cases: list[dict], skill_name: str) -> list[dict] | None:
+    """
+    使用 LLM 从案例中提取知识模式。
+
+    返回 patterns 列表（每个含 id/principle/confidence/level），
+    LLM 不可用或解析失败时返回 None（触发 fallback）。
+    """
+    if not llm_available():
+        return None
+
+    # 构造案例摘要（控制 token 量）
+    case_summaries = []
+    for c in cases[:12]:  # 最多 12 条，控制成本
+        title = c.get("title") or c.get("key") or "?"
+        snippet = c.get("snippet") or c.get("description") or ""
+        case_summaries.append(f"- [{title}] {snippet[:200]}")
+
+    case_text = "\n".join(case_summaries)
+
+    prompt = f"""技能名称: {skill_name}
+
+请分析以下案例，提取该技能领域的核心知识模式（最佳实践/原则/规范）。
+
+要求:
+1. 每个模式包含: id(如"P_xxx"), principle(具体原则描述), confidence(0-100,基于案例支持度), level("domain"或"advanced")
+2. 从案例真实内容中提炼，不要凭空编造
+3. 模式应该具有实践指导意义，不泛泛而谈
+4. 如果案例不足，可以适度基于领域常识补充，但降低 confidence
+
+案例：
+{case_text}
+
+请以 JSON 数组格式输出，每个元素: {{"id": "P_xxx", "principle": "...", "confidence": 85, "level": "domain"}}
+"""
+
+    result = call_llm_json(prompt,
+        system_prompt="你是技能学习专家，擅长从案例中提炼可操作的实践模式。输出纯 JSON 数组，不要额外说明。",
+        temperature=0.3,
+        max_tokens=4096)
+
+    if result is None:
+        return None
+    if isinstance(result, list):
+        # 验证结构
+        valid = []
+        for item in result:
+            if isinstance(item, dict) and "id" in item and "principle" in item:
+                item.setdefault("confidence", 75)
+                item.setdefault("level", "domain")
+                valid.append(item)
+        if valid:
+            print(f"  [LLM] 智能模式提取: {len(valid)} 个模式")
+            return valid
+    return None
+
+
+def _llm_decompose_skill_name(skill_name: str, cases: list) -> list | None:
+    """
+    使用 LLM 将技能名分解为子主题（当没有案例时的 fallback 改进）。
+    返回 [(子主题, 置信度), ...] 或 None。
+    """
+    if not llm_available():
+        return None
+
+    name_clean = skill_name.replace("_", " ").title()
+    case_titles = []
+    for c in (cases or [])[:8]:
+        case_titles.append(c.get("title", "?") or c.get("key", "?"))
+
+    case_hint = "\n".join(f"- {t}" for t in case_titles) if case_titles else "（暂无案例）"
+
+    prompt = f"""技能名称: {name_clean}
+
+请将这个技能分解为 3~5 个子主题（sub-topics），每个子主题代表该领域的一个重要实践方向。
+子主题应该是可操作的、有区分度的，而非空泛概念。
+
+参考案例标题：
+{case_hint}
+
+请以 JSON 数组格式输出，每个元素: {{"topic": "子主题名称（含简要说明）", "confidence": 78}}
+confidence 表示该子主题与技能的相关程度（0-100）。
+"""
+
+    result = call_llm_json(prompt,
+        system_prompt="你是技能学习专家，善于将复杂技能拆解为可学习的子主题。输出纯 JSON 数组。",
+        temperature=0.3,
+        max_tokens=2048)
+
+    if isinstance(result, list) and result:
+        subs = []
+        for item in result:
+            if isinstance(item, dict) and "topic" in item:
+                conf = item.get("confidence", 70)
+                subs.append((item["topic"], conf))
+        if subs:
+            print(f"  [LLM] 技能分解: {len(subs)} 个子主题")
+            return subs
+    return None
+
+
 def _phase3_analyze(ctx: dict):
-    """Phase 3: 分析提炼知识模式"""
+    """Phase 3: 分析提炼知识模式（LLM增强版）"""
     print(f"\n{'-'*55}")
     print("  Phase 3: 模式提炼")
     print(f"{'-'*55}")
 
     cases = ctx.get("cases", [])
     skill_name = ctx["skill_name"]
-    patterns = _extract_patterns_from_cases(cases, skill_name)
 
-    # 合并历史模式（如果有继承）
+    # ── LLM 增强路径 ──
+    patterns = _llm_extract_patterns(cases, skill_name)
+    if patterns is None:
+        # fallback: 规则路径
+        print("  [FALLBACK] 使用规则模式提取（LLM 不可用或解析失败）")
+        patterns = _extract_patterns_from_cases(cases, skill_name)
+        # 仍然用 LLM 增强技能分解
+        llm_subs = _llm_decompose_skill_name(skill_name, cases)
+        if llm_subs:
+            added_ids = {p["id"] for p in patterns}
+            for i, (sub_name, conf) in enumerate(llm_subs):
+                pid = f"P_domain_llm_{i+1}"
+                if pid not in added_ids:
+                    patterns.append({
+                        "id": pid,
+                        "principle": sub_name,
+                        "confidence": conf,
+                        "level": "domain"
+                    })
+                    added_ids.add(pid)
+    else:
+        # LLM 模式提取成功，仍用 LLM 补充技能分解子主题
+        llm_subs = _llm_decompose_skill_name(skill_name, cases)
+        if llm_subs:
+            existing_ids = {p["id"] for p in patterns}
+            for i, (sub_name, conf) in enumerate(llm_subs):
+                pid = f"P_domain_llm_{i+1}"
+                if pid not in existing_ids:
+                    patterns.append({
+                        "id": pid,
+                        "principle": sub_name,
+                        "confidence": conf,
+                        "level": "domain"
+                    })
+                    existing_ids.add(pid)
+
+    # 合并历史模式（如果有继承）——过滤掉不相关的领域模式
+    SKILL_DOMAIN_PREFIXES = {
+        "async": ["P_fastapi_", "P_async_"],
+        "fastapi": ["P_fastapi_", "P_async_"],
+        "web_scraping": ["P_scrape_"],
+        "scrape": ["P_scrape_"],
+        "crawl": ["P_scrape_"],
+        "database": ["P_db_"],"sql":["P_db_"],
+        "db": ["P_db_"],
+        "git": ["P_git_"],
+        "graph": ["P_gql_"],
+        "neo4j": ["P_gql_"],
+        "cypher": ["P_gql_"],
+        "graph_database": ["P_gql_"],
+        "network": ["P_net_"],
+        "networking": ["P_net_"],
+        "security": ["P_net_", "P_sec_"],
+        "finance": ["P_doc_", "P_fin_"],
+        "image": ["P_img_", "P_doc_"],
+        "document": ["P_doc_"],
+        "凭证": ["P_doc_"],
+        "鉴定": ["P_doc_"],
+        "satellite": ["P_rem_"],
+        "remote_sensing": ["P_rem_"],
+        "testing": ["P_test_"],
+        "kubernetes": ["P_k8s_"],
+        "k8s": ["P_k8s_"],
+        "frontend": ["P_fe_"],
+        "react": ["P_fe_"],
+        "performance": ["P_perf_"],
+        "wiki": ["P_domain_"],
+        "search": ["P_domain_"],
+        "知识": ["P_domain_"],
+        "文档": ["P_domain_"],
+    }
     existing = ctx.get("inherited_patterns", [])
-    existing_ids = {p["id"] for p in existing}
-    merged = list(existing)
+    skill_lower = skill_name.lower()
+    # 找出当前技能相关的领域前缀
+    relevant_prefixes = set()
+    for kw, prefixes in SKILL_DOMAIN_PREFIXES.items():
+        if kw in skill_lower:
+            relevant_prefixes.update(prefixes)
+    # 通用模式（P_pin_, P_env_, P_res_ 等）总是保留
+    always_keep = {"P_pin_", "P_env_", "P_res_", "P_health_", "P_log_", "P_cfg_"}
+    
+    filtered_existing = []
+    filtered_count = 0
+    for p in existing:
+        pid = p.get("id", "")
+        # 保留: 通用模式 / 技能相关领域模式 / domain模式 / llm模式
+        if (any(pid.startswith(pre) for pre in always_keep) or
+            any(pid.startswith(pre) for pre in relevant_prefixes) or
+            pid.startswith("P_domain_") or
+            pid.startswith("P_domain_llm_") or
+            p.get("level") in ("basic", "generic")):
+            filtered_existing.append(p)
+        else:
+            # 标记为已存在但不再加入
+            filtered_count += 1
+    
+    existing_ids = {p["id"] for p in filtered_existing}
+    merged = list(filtered_existing)
     for p in patterns:
         if p["id"] not in existing_ids:
             merged.append(p)
@@ -627,7 +998,7 @@ def _phase3_analyze(ctx: dict):
         json.dump(merged, f, indent=2, ensure_ascii=False)
     ctx["patterns"] = merged
 
-    print(f"  继承: {len(existing)} 个")
+    print(f"  继承: {len(filtered_existing)} 个 (过滤掉 {filtered_count} 个不相关)")
     print(f"  新增: {len(patterns)} 个")
     print(f"  总计: {len(merged)} 个")
     for p in merged[:5]:
@@ -730,10 +1101,28 @@ def _phase5_validate(ctx: dict):
 
     # 直接在本 Python 进程中运行
     try:
-        sys.path.insert(0, str(tool_file.parent))
+        # 安全：从父进程复制环境变量，过滤掉敏感密钥
+        subprocess_env = os.environ.copy()
+        # 过滤掉所有已知 API 密钥（避免泄露给子进程）
+        _sensitive_suffixes = ("_API_KEY", "_API_SECRET", "_SECRET", "_TOKEN", "_PASSWORD", "_KEY")
+        for key in list(subprocess_env.keys()):
+            if any(key.upper().endswith(suf) for suf in _sensitive_suffixes):
+                del subprocess_env[key]
+        # 确保 LLM 变量被传递
+        for key in ("SKILL_LLM_ENABLE", "LLM_API_BASE", "LLM_API_KEY", "LLM_MODEL", "LLM_TIMEOUT"):
+            if key in os.environ:
+                subprocess_env[key] = os.environ[key]
+        # GA_ROOT = Path(__file__).resolve().parents[2]
+        ga_root = str(Path(__file__).resolve().parents[2])
+        subprocess_env.setdefault("PYTHONPATH", "")
+        paths = subprocess_env["PYTHONPATH"].split(os.pathsep) if subprocess_env["PYTHONPATH"] else []
+        if ga_root not in paths:
+            subprocess_env["PYTHONPATH"] = ga_root + os.pathsep + subprocess_env["PYTHONPATH"]
+        
         result = subprocess.run(
             [sys.executable, str(tool_file)],
-            capture_output=True, text=True, timeout=30
+            capture_output=True, text=True, timeout=90,
+            env=subprocess_env
         )
         print(result.stdout)
         if result.stderr:

@@ -730,7 +730,7 @@ class CopilotSDKSession(BaseSession):
         self.cli_log_to_console = cfg.get('cli_log_to_console', True)
         self.response_log_to_console = cfg.get('response_log_to_console', True)
         self.provider = cfg.get('provider')
-        self.permission_mode = str(cfg.get('permission_mode', 'deny_all') or 'deny_all').strip().lower()
+        self.permission_mode = str(cfg.get('permission_mode') or 'deny_all').strip().lower()
         self.enforce_agent_tool_calls = cfg.get('enforce_agent_tool_calls', True)
     def make_messages(self, raw_list): return _msgs_claude2oai(_fix_messages(raw_list))
     def _emit_cli_logs(self, client):
@@ -768,6 +768,8 @@ class CopilotSDKSession(BaseSession):
             lines.append(f"=== {role} ===\n{content if isinstance(content, str) else str(content)}")
         prompt = "\n\n".join(lines).strip()
         if not self.enforce_agent_tool_calls: return prompt
+        # Copilot SDK runtime can execute commands/scripts through its own permission flow.
+        # We inject a hard policy so execution requests are returned as tool calls for this agent to run.
         policy = (
             "=== SYSTEM ===\n"
             "[Execution Policy] Do NOT execute shell commands or scripts through Copilot runtime permissions.\n"
@@ -783,6 +785,7 @@ class CopilotSDKSession(BaseSession):
         for attr in ('deny_all', 'reject_all', 'disallow_all'):
             h = getattr(permission_handler_cls, attr, None)
             if h is not None: return h
+        # Safe fallback: deny all permission requests when SDK doesn't expose named deny handlers.
         return lambda *_args, **_kwargs: False
     async def _send_with_session(self, prompt):
         from copilot import CopilotClient, SubprocessConfig

@@ -77,6 +77,7 @@ PR 提交后等 CI：
 - ✅ 全过 → 等 review
 - ❌ 有失败 → 看日志，修自己的问题
   - CI 失败是 upstream 问题（跟你的改动无关）→ 在 PR 里说明
+  - 若是为 fork PR 解决 merge conflict / rebase upstream 后才出现的测试失败：在 `upstream/dev` 与当前分支分别复跑同一组失败测试；若 `upstream/dev` 也失败，则归类为 upstream baseline，不要误判成自己合并坏了，但需在 PR/汇报里注明
   ```
   code_run('bash', 'gh run view --log-failed')
   ```

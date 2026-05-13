@@ -3,15 +3,17 @@ autonomous_task.py - 自主行动任务管理API
 放置: memory/autonomous_operation_sop/
 用法: import autonomous_task (或 from autonomous_operation_sop import autonomous_task)
 
-4个函数:
+5个函数:
   get_todo()        → 返回TODO内容
   get_history(n)    → 返回最近n条历史
   complete_task()   → 移报告+编号+写history+返回改TODO指令
   set_todo()        → 返回TODO真实路径
+  run_subagent()    → 启动subagent执行一次性任务（绝对路径防cwd bug）
 """
 
 import os
 import re
+import sys
 import shutil
 from pathlib import Path
 from datetime import datetime
@@ -36,6 +38,70 @@ def _next_report_number() -> int:
     if not nums:
         return 1
     return max(nums) + 1
+
+
+def run_subagent(task_name: str, input_content: str) -> dict:
+    """
+    启动 subagent 执行一次性任务（文件IO模式）。
+    使用绝对路径，避免 cwd 拼接 bug。
+    
+    Args:
+        task_name: 任务目录名（无特殊字符，用于 temp/{task_name}）
+        input_content: 任务描述文本（写入 input.txt 供agent读取）
+    
+    Returns:
+        dict: {success: bool, task_dir: str|None, pid: int|None, error: str|None}
+    """
+    import subprocess
+    import platform
+    
+    ga_root = str(_AGENT_DIR)
+    task_dir = os.path.join(ga_root, 'temp', task_name)
+    
+    try:
+        os.makedirs(task_dir, exist_ok=True)
+        
+        # 写入 input.txt
+        in_file = os.path.join(task_dir, 'input.txt')
+        with open(in_file, 'w', encoding='utf-8') as f:
+            f.write(input_content)
+        
+        # 启动 agentmain.py --task (无 --nobg → 自动进入background mode)
+        agentmain = os.path.join(ga_root, 'agentmain.py')
+        cmd = [sys.executable, agentmain, '--task', task_name]
+        creationflags = 0x08000000 if platform.system() == 'Windows' else 0  # CREATE_NO_WINDOW
+        
+        proc = subprocess.Popen(
+            cmd, cwd=ga_root,
+            creationflags=creationflags,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        # agentmain.py background mode prints PID to stdout then exits
+        stdout, stderr = proc.communicate(timeout=10)
+        pid_str = stdout.strip()
+        pid = int(pid_str) if pid_str.isdigit() else None
+        
+        if proc.returncode != 0:
+            return {
+                'success': False,
+                'task_dir': task_dir,
+                'pid': None,
+                'error': f'agentmain exited code={proc.returncode}, stderr={stderr[:200]}'
+            }
+        
+        return {
+            'success': True,
+            'task_dir': task_dir,
+            'pid': pid,
+            'error': None
+        }
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        return {'success': False, 'task_dir': task_dir, 'pid': None, 'error': 'Timeout waiting for agentmain to spawn'}
+    except Exception as e:
+        return {'success': False, 'task_dir': task_dir, 'pid': None, 'error': str(e)}
 
 
 def get_todo() -> str:
@@ -118,7 +184,16 @@ def complete_task(taskname: str, historyline: str, report_path: str) -> str:
             pass
         return f"[ERROR] 写入 history 失败: {e}（报告已回滚）"
 
-    # ── 3. 返回改 TODO 指令 ──
+    # ── 3. 同步重建 report_index.json（确保查询立即可用） ──
+    try:
+        sys.path.insert(0, str(_TEMP_DIR))
+        from rebuild_report_index import main as rebuild_index
+        rebuild_index()
+    except Exception as e:
+        # 索引重建失败不影响主流程，仅记录
+        print(f"[WARN] 索引自动重建失败: {e}")
+
+    # ── 4. 返回改 TODO 指令 ──
     return (
         f"✅ 完成！报告已保存: {dest_name}\n"
         f"历史已记录: {line}\n"

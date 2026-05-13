@@ -672,17 +672,24 @@ class GenericAgentTUI(App[None]):
         log.clear()
         if self.current_id is None:
             return
+        all_msgs = self.current.messages
+        # Limit to last 150 messages for performance
+        if len(all_msgs) > 150:
+            display_msgs = all_msgs[-150:]
+            log.write(Text(f"  ↑ {len(all_msgs) - 150} older messages hidden ↑", style="dim italic"))
+        else:
+            display_msgs = all_msgs
         # Collect recent task_ids to only expand the latest 3 tasks
         recent_task_ids: set[int] = set()
         if not self.fold_mode:
             seen: list[int] = []
-            for msg in reversed(self.current.messages):
+            for msg in reversed(display_msgs):
                 if msg.role == "assistant" and msg.task_id not in seen:
                     seen.append(msg.task_id)
                     if len(seen) == 5:
                         break
             recent_task_ids = set(seen)
-        for msg in self.current.messages:
+        for msg in display_msgs:
             if msg.role == "user":
                 if msg._rendered_panel is None:
                     msg._rendered_panel = Panel(Markdown(msg.content), title="You", border_style="blue")

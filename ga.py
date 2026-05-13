@@ -9,88 +9,13 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from agent_loop import BaseHandler, StepOutcome, json_default
 script_dir = os.path.dirname(os.path.abspath(__file__))
 
-def code_run(code, code_type="python", timeout=60, cwd=None, code_cwd=None, stop_signal=[]):
+def code_run(code, code_type="python", timeout=60, cwd=None, code_cwd=None, stop_signal=None, maxlen=10000):
     """代码执行器
     python: 运行复杂的 .py 脚本（文件模式）
     powershell/bash: 运行单行指令（命令模式）
     优先使用python，仅在必要系统操作时使用powershell"""
     preview = (code[:60].replace('\n', ' ') + '...') if len(code) > 60 else code.strip()
     yield f"[Action] Running {code_type} in {os.path.basename(cwd)}: {preview}\n"
-
-    # ── 高危命令黑名单 ──────────────────────────────────────────────
-    DANGEROUS_PATTERNS = [
-        # Unix 递归删除根目录
-        (r'\brm\s+(-[rR]+|-[rR][fF]|-[fF][rR])\s*/[/\s]', '递归删除根目录'),
-        (r'\brm\s+(-[rR]+|-[rR][fF]|-[fF][rR])\s+/\*\s*[-.]', '递归删除 /usr 等系统目录'),
-        (r'\brm\s+(-[rR]+|-[rR][fF]|-[fF][rR])\s+/\s+--no-preserve-root', '强制删除根目录'),
-        # Windows 递归删除
-        (r'\brd\s+/[sS]\s+/[qQ]\s+[A-Za-z]:\\', '递归删除驱动器'),
-        (r'\brmdir\s+/[sS]\s+/[qQ]\s+[A-Za-z]:\\', '递归删除驱动器'),
-        (r'\bdel\s+/[fF]\s+/[sS]\s+[A-Za-z]:\\', '递归删除驱动器文件'),
-        (r'\bRemove-Item\s+-Recurse\s+-Force\s+-Path\s+["\']?[A-Za-z]:\\', '递归删除驱动器'),
-        # 格式化磁盘
-        (r'\bformat\s+[A-Za-z]:', '格式化磁盘'),
-        (r'\bFormat-Volume\b', '格式化卷'),
-        (r'\bClear-Volume\b', '清空卷'),
-        # 磁盘直接写入
-        (r'\bdd\s+if=.*\s+of=\s*/dev/(sda|sdb|sdc|sdd|nvme|hd[ab])', '直接写入块设备'),
-        (r'\bdd\s+if=/dev/zero\s+of=', '用零覆盖'),
-        (r'\bdd\s+if=/dev/random\s+of=', '用随机数据覆盖'),
-        (r'[>|]\s*\\\\\.\\\\(PhysicalDrive|C:)\b', '直接写入物理驱动器'),
-        # 关机/重启
-        (r'\bshutdown\s+[/-][sprh]', '关机/重启操作'),
-        (r'\bStop-Computer\b', '关闭计算机'),
-        (r'\bRestart-Computer\b', '重启计算机'),
-        (r'\binit\s+0\b', '关机'),
-        (r'\bpoweroff\b', '关机'),
-        (r'\breboot\b', '重启'),
-        # Fork 炸弹
-        (r':\(\)\s*\{\s*:\s*\|\s*:&\s*\}\s*;?\s*:', 'fork 炸弹'),
-        # 权限破坏
-        (r'\bchmod\s+-R\s+0{2,3}\s+', '递归清除权限'),
-        (r'\bchown\s+-R\s+0:0\s+/', '递归更改根目录所有者'),
-        # 破坏性 mv
-        (r'\bmv\s+/\s+/\*?\s+/dev/null', '移动根目录到空设备'),
-        # 清空系统关键路径
-        (r'[>|]\s+/dev/sda', '直接写入块设备'),
-        (r'[>|]\s+/dev/zero\s+of=', '用零覆盖'),
-        # Diskpart (Windows)
-        (r'\bdiskpart\b', '磁盘分区操作'),
-        (r'\bclean\s+all\b', '清除整个磁盘'),
-        # 注册表删除
-        (r'\breg\s+delete\s+HK', '删除注册表项'),
-        (r'\bRemove-Item\s+-Path\s+["\']?HK', '删除注册表项'),
-        # 账户操作
-        (r'\bnet\s+user\s+[/\\]?[a-z]', '用户账户操作'),
-        (r'\bnet\s+localgroup\s+[/\\]?[a-z]', '用户组操作'),
-        # 强制杀关键进程
-        (r'\btaskkill\s+/[fF]\s+/[iI][Mm]\s+', '强制终止进程'),
-        (r'\bkill\s+-9\s+[-1\s]', '强制终止所有进程'),
-    ]
-
-    _code_lower = code.lower()
-    for pattern, desc in DANGEROUS_PATTERNS:
-        if re.search(pattern, _code_lower):
-            yield f"[Security] ⛔ 检测到高危操作: {desc}，已拦截\n"
-            return {"status": "blocked", "reason": f"高危命令被拦截: {desc}"}
-
-    # ── Python 代码中的危险模式扫描 ──
-    if code_type in ["python", "py"]:
-        PY_DANGEROUS_COMMANDS = [
-            (r'os\.system\s*\(\s*["\'].*?\brm\b.*?[/\\]', 'os.system 中调用 rm'),
-            (r'os\.system\s*\(\s*["\'].*?\brd\b.*?/s', 'os.system 中调用 rd'),
-            (r'os\.system\s*\(\s*["\'].*?\bformat\b', 'os.system 中调用 format'),
-            (r'os\.system\s*\(\s*["\'].*?\bshutdown\b', 'os.system 中调用 shutdown'),
-            (r'os\.system\s*\(\s*["\'].*?\bdd\b.*?/dev/', 'os.system 中调用 dd'),
-            (r'subprocess\.(run|Popen|call)\s*\(.*?shell=True.*?["\'].*?\brm\b.*?[/\\]', 'subprocess shell=True + rm'),
-            (r'subprocess\.(run|Popen|call)\s*\(.*?shell=True.*?["\'].*?\bshutdown\b', 'subprocess shell=True + shutdown'),
-            (r'subprocess\.(run|Popen|call)\s*\(.*?shell=True.*?["\'].*?\bformat\b', 'subprocess shell=True + format'),
-        ]
-        for pattern, desc in PY_DANGEROUS_COMMANDS:
-            if re.search(pattern, code):
-                yield f"[Security] ⛔ Python 代码检测到高危操作: {desc}，已拦截\n"
-                return {"status": "blocked", "reason": f"高危命令被拦截: {desc}"}
-
     cwd = cwd or os.path.join(script_dir, 'temp'); tmp_path = None
     if code_type in ["python", "py"]:
         tmp_file = tempfile.NamedTemporaryFile(suffix=".ai.py", delete=False, mode='w', encoding='utf-8', dir=code_cwd)
@@ -156,7 +81,7 @@ def code_run(code, code_type="python", timeout=60, cwd=None, code_cwd=None, stop
         if process.stdout: threading.Thread(target=process.stdout.close, daemon=True).start()
         return {
             "status": status,
-            "stdout": smart_format(stdout_str, max_str_len=10000, omit_str='\n\n[omitted long output]\n\n'),
+            "stdout": smart_format(stdout_str, max_str_len=maxlen, omit_str='\n\n[omitted long output]\n\n'),
             "exit_code": exit_code
         }
     except Exception as e:
@@ -186,7 +111,7 @@ def first_init_driver():
         #driver.newtab()
         time.sleep(3)
 
-def web_scan(tabs_only=False, switch_tab_id=None, text_only=False):
+def web_scan(tabs_only=False, switch_tab_id=None, text_only=False, maxlen=35000):
     """获取当前页面的简化HTML内容和标签页列表。注意：简化过程会过滤边栏、浮动元素等非主体内容。
     tabs_only: 仅返回标签页列表，不获取HTML内容（节省token）。
     switch_tab_id: 可选参数，如果提供，则在扫描前切换到该标签页。
@@ -211,8 +136,8 @@ def web_scan(tabs_only=False, switch_tab_id=None, text_only=False):
             }
         }
         if not tabs_only: 
-            importlib.reload(simphtml); result["content"] = simphtml.get_html(driver, cutlist=True, maxchars=35000, text_only=text_only)
-            if text_only: result['content'] = smart_format(result['content'], max_str_len=10000, omit_str='\n\n[omitted long content]\n\n')
+            importlib.reload(simphtml); result["content"] = simphtml.get_html(driver, cutlist=True, maxchars=maxlen, text_only=text_only)
+            if text_only: result['content'] = smart_format(result['content'], max_str_len=maxlen//3, omit_str='\n\n[omitted long content]\n\n')
         return result
     except Exception as e:
         return {"status": "error", "msg": format_error(e)}
@@ -365,6 +290,7 @@ class GenericAgentHandler(BaseHandler):
         raw_path = os.path.join(self.cwd, args.get("cwd", './'))
         cwd = os.path.normpath(os.path.abspath(raw_path))
         code_cwd = os.path.normpath(self.cwd)
+        maxlen = 10000 // args.get('_tool_num', 1)
         if code_type == 'python' and args.get("inline_eval"):
             ns = {'handler':self, 'parent':self.parent, 'history':json.dumps(self.parent.llmclient.backend.history)}
             old_cwd = os.getcwd()
@@ -375,7 +301,7 @@ class GenericAgentHandler(BaseHandler):
                     except SyntaxError: exec(code, ns); result = ns.get('_r', 'OK')
                 except Exception as e: result = f'Error: {e}'
             finally: os.chdir(old_cwd)
-        else: result = yield from code_run(code, code_type, timeout, cwd, code_cwd=code_cwd, stop_signal=self.code_stop_signal)
+        else: result = yield from code_run(code, code_type, timeout, cwd, code_cwd=code_cwd, stop_signal=self.code_stop_signal, maxlen=maxlen)
         next_prompt = self._get_anchor_prompt(skip=args.get('_index', 0) > 0)
         return StepOutcome(result, next_prompt=next_prompt)
     
@@ -393,7 +319,8 @@ class GenericAgentHandler(BaseHandler):
         tabs_only = args.get("tabs_only", False)
         switch_tab_id = args.get("switch_tab_id", None)
         text_only = args.get("text_only", False)
-        result = web_scan(tabs_only=tabs_only, switch_tab_id=switch_tab_id, text_only=text_only)
+        maxlen = 35000 // args.get('_tool_num', 1)
+        result = web_scan(tabs_only=tabs_only, switch_tab_id=switch_tab_id, text_only=text_only, maxlen=maxlen)
         content = result.pop("content", None)
         yield f'[Info] {str(result)}\n'
         if content: result = json.dumps(result, ensure_ascii=False, default=json_default) + f"\n```html\n{content}\n```"
@@ -418,15 +345,15 @@ class GenericAgentHandler(BaseHandler):
             try:
                 with open(abs_path, 'w', encoding='utf-8') as f: f.write(str(content))
                 result["js_return"] += f"\n\n[已保存完整内容到 {abs_path}]"
-            except:
-                result['js_return'] += f"\n\n[保存失败，无法写入文件 {abs_path}]"
+            except: result['js_return'] += f"\n\n[保存失败，无法写入文件 {abs_path}]"
         show = smart_format(json.dumps(result, ensure_ascii=False, indent=2, default=json_default), max_str_len=300)
         try: print("Web Execute JS Result:", show)
         except: pass
         yield f"JS 执行结果:\n{show}\n"
         next_prompt = self._get_anchor_prompt(skip=args.get('_index', 0) > 0)
         result = json.dumps(result, ensure_ascii=False, default=json_default)
-        return StepOutcome(smart_format(result, max_str_len=8000), next_prompt=next_prompt)
+        maxlen = 8000 // args.get('_tool_num', 1)
+        return StepOutcome(smart_format(result, max_str_len=maxlen), next_prompt=next_prompt)
     
     def do_file_patch(self, args, response):
         path = self._get_abs_path(args.get("path", ""))
@@ -487,7 +414,8 @@ class GenericAgentHandler(BaseHandler):
                            count=count, show_linenos=show_linenos)
         if show_linenos and not result.startswith("Error:"): result = '由于设置了show_linenos，以下返回信息为：(行号|)内容 。\n' + result 
         if ' ... [TRUNCATED]' in result: result += '\n\n（某些行被截断，如需完整内容可改用 code_run 读取）'
-        result = smart_format(result, max_str_len=20000, omit_str='\n\n[omitted long content]\n\n')
+        maxlen = 20000 // args.get('_tool_num', 1)
+        result = smart_format(result, max_str_len=maxlen, omit_str='\n\n[omitted long content]\n\n')
         next_prompt = self._get_anchor_prompt(skip=args.get('_index', 0) > 0)
         log_memory_access(path)
         if 'memory' in path or 'sop' in path: 

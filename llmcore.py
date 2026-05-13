@@ -730,7 +730,12 @@ class CopilotSDKSession(BaseSession):
         self.cli_log_to_console = cfg.get('cli_log_to_console', True)
         self.response_log_to_console = cfg.get('response_log_to_console', True)
         self.provider = cfg.get('provider')
-        self.permission_mode = str(cfg.get('permission_mode') or 'deny_all').strip().lower()
+        raw_permission_mode = cfg.get('permission_mode', 'deny_all')
+        self.permission_mode = (
+            raw_permission_mode.strip().lower()
+            if isinstance(raw_permission_mode, str)
+            else 'deny_all'
+        )
         self.enforce_agent_tool_calls = cfg.get('enforce_agent_tool_calls', True)
     def make_messages(self, raw_list): return _msgs_claude2oai(_fix_messages(raw_list))
     def _emit_cli_logs(self, client):
@@ -779,14 +784,15 @@ class CopilotSDKSession(BaseSession):
         return f"{policy}\n\n{prompt}" if prompt else policy
     def _resolve_permission_handler(self, permission_handler_cls):
         mode = self.permission_mode
-        if mode in {'approve_all', 'allow_all', 'allow', 'unsafe'}:
+        if mode in {'approve_all', 'allow_all', 'allow'}:
             h = getattr(permission_handler_cls, 'approve_all', None)
             if h is not None: return h
         for attr in ('deny_all', 'reject_all', 'disallow_all'):
             h = getattr(permission_handler_cls, attr, None)
             if h is not None: return h
         # Safe fallback: deny all permission requests when SDK doesn't expose named deny handlers.
-        return lambda *_args, **_kwargs: False
+        def _deny_all(*_args, **_kwargs): return False
+        return _deny_all
     async def _send_with_session(self, prompt):
         from copilot import CopilotClient, SubprocessConfig
         from copilot.session import PermissionHandler

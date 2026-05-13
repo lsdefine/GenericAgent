@@ -45,7 +45,9 @@ class _StubSession:
                     yield chunk
             except StopIteration:
                 pass
-            self.history.append({"role": "assistant", "content": [{"type": "text", "text": "".join(chunks)}]})
+            self.history.append(
+                {"role": "assistant", "content": [{"type": "text", "text": "".join(chunks)}]}
+            )
         return _gen()
 
 

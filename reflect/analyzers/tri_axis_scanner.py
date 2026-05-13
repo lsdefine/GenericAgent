@@ -105,7 +105,7 @@ class TriAxisScanner:
         if new_lines < EMOTION_MIN_NEW_LINES and not self.force_full:
             msg = f"新增行数不足({new_lines}<{EMOTION_MIN_NEW_LINES})，跳过情绪扫描"
             if self.verbose:
-                print(f"  ⏭️ {msg}")
+                print(f"  [SKIP] {msg}")
             return {"skipped": True, "reason": msg, "new_lines": new_lines}
         
         if self.verbose:
@@ -123,21 +123,20 @@ class TriAxisScanner:
         # 更新状态
         self.state["emotion_last_line"] = total_lines
         
-        # 精简报告
+        # 完整报告：保留全部检出 + 聚类作为辅助视图
         emotion_report = {
             "scan_range": [last_line + 1, total_lines],
             "new_lines_scanned": new_lines,
-            "tier1_clusters": len(results.get("tier1_clusters", [])),
-            "tier2_isolated": len(results.get("tier2_isolated", [])),
+            "all_detections": results.get("all_detections", []),
+            "clusters": results.get("tier1_clusters", []),
+            "tier2_isolated": results.get("tier2_isolated", []),
             "stats": results.get("stats", {}),
-            "top_clusters": results.get("tier1_clusters", [])[:5],
-            "top_isolated": results.get("tier2_isolated", [])[:5],
         }
         
         if self.verbose:
-            t1 = emotion_report["tier1_clusters"]
-            t2 = emotion_report["tier2_isolated"]
-            print(f"  [OK] 完成: {t1}个波动区 + {t2}个孤立高强度点")
+            t1 = len(emotion_report["clusters"])
+            t2 = len(emotion_report.get("all_detections", []))
+            print(f"  [OK] 完成: {t1}个波动区 + {t2}条检出")
         
         return emotion_report
     
@@ -171,14 +170,14 @@ class TriAxisScanner:
                 "weeks_active": item["weeks_active"],
                 "total_count": item["total_count"],
                 "span": item["span"],
-                "source_lines_count": len(item.get("source_lines", []))
+                "source_lines": item.get("source_lines", [])
             } for item in results]
         }
         
         if self.verbose:
             print(f"  [OK] 习惯追踪: {habits_report['count']}项持续活跃")
             for item in results[:5]:
-                print(f"     ★ {item['task']} ({item['total_count']}次, span={item['span']}周)")
+                print(f"     * {item['task']} ({item['total_count']}次, span={item['span']}周)")
         
         return habits_report
     
@@ -216,7 +215,7 @@ class TriAxisScanner:
         if self.verbose:
             print(f"  [OK] 消失检测: {abandoned_report['count']}项已消失")
             for item in results[:5]:
-                print(f"     ✗ {item['task']} ({item['total_count']}次, gap={item['gap']}周)")
+                print(f"     [X] {item['task']} ({item['total_count']}次, gap={item['gap']}周)")
         
         return abandoned_report
     
@@ -231,13 +230,13 @@ class TriAxisScanner:
         start_time = time.time()
         
         if self.verbose:
-            print("╔══════════════════════════════════════════════════════════╗")
-            print("║            统一扫描器 (Unified Scanner)                 ║")
-            print("╠══════════════════════════════════════════════════════════╣")
+            print("============================================================")
+            print("            统一扫描器 (Unified Scanner)")
+            print("============================================================")
             mode = "全量" if self.force_full else "增量"
-            print(f"║  模式: {mode}  |  第{self.state.get('scan_count',0)+1}次扫描")
-            print(f"║  时间: {self.report['scan_time']}")
-            print("╚══════════════════════════════════════════════════════════╝")
+            print(f"  模式: {mode}  |  第{self.state.get('scan_count',0)+1}次扫描")
+            print(f"  时间: {self.report['scan_time']}")
+            print("============================================================")
         
         # --- 情绪扫描 ---
         try:
@@ -279,6 +278,9 @@ class TriAxisScanner:
             json.dump(self.report, f, ensure_ascii=False, indent=2)
         self._save_state()
         
+        # 写 done 目录的 md 报告（供 scheduler 判断完成状态）
+        self._write_done_report()
+        
         if self.verbose:
             print(f"\n{'='*60}")
             print(f"扫描完成 ({elapsed:.1f}s)")
@@ -288,6 +290,41 @@ class TriAxisScanner:
         
         return self.report
     
+    def _write_done_report(self):
+        """写 sche_tasks/done/ 目录的 md 报告"""
+        done_dir = os.path.join(PROJECT_ROOT, 'sche_tasks', 'done')
+        os.makedirs(done_dir, exist_ok=True)
+        ts = datetime.now().strftime('%Y-%m-%d_%H%M')
+        rpt_path = os.path.join(done_dir, f'{ts}_tri_axis_scan.md')
+        
+        lines = [
+            f'# 三轴统一扫描报告',
+            f'- 执行时间: {datetime.now().strftime("%Y-%m-%d %H:%M")}',
+            f'- 模式: {"全量" if self.force_full else "增量"} | '
+            f'第{self.state.get("scan_count", 0) + 1}次扫描',
+            f'- 耗时: {self.report.get("elapsed_seconds", "?")}s',
+            '',
+            f'## 核心结论',
+            self.report.get('summary', '无'),
+            '',
+            '## 详细数据',
+            f'完整结构化数据见: {REPORT_FILE}',
+            '',
+            '## 错误记录',
+        ]
+        errors = self.report.get('errors', [])
+        if errors:
+            for e in errors:
+                lines.append(f'- {e}')
+        else:
+            lines.append('无')
+        
+        with open(rpt_path, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(lines))
+        
+        if self.verbose:
+            print(f"  Done报告: {rpt_path}")
+
     def _build_summary(self):
         """生成人类可读的摘要"""
         lines = []
@@ -299,8 +336,8 @@ class TriAxisScanner:
         elif emo.get("error"):
             lines.append(f"情绪: 错误 - {emo['error']}")
         else:
-            t1 = emo.get("tier1_clusters", 0)
-            t2 = emo.get("tier2_isolated", 0)
+            t1 = len(emo.get("clusters", []))
+            t2 = len(emo.get("tier2_isolated", []))
             lines.append(f"情绪: {t1}个波动区 + {t2}个高强度点")
         
         # 习惯
@@ -328,6 +365,12 @@ class TriAxisScanner:
 # CLI入口
 # ============================================================
 if __name__ == "__main__":
+    import traceback
     force = "--full" in sys.argv
-    scanner = TriAxisScanner(verbose=True, force_full=force)
-    report = scanner.run()
+    try:
+        scanner = TriAxisScanner(verbose=True, force_full=force)
+        report = scanner.run()
+        sys.exit(0)
+    except Exception:
+        traceback.print_exc()
+        sys.exit(1)

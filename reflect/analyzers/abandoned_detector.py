@@ -162,7 +162,7 @@ class AbandonedDetector:
             
             if self.verbose:
                 tagged = sum(1 for s in batch if 'tasks' in s)
-                status = "\u2705" if success else "\u274c"
+                status = "OK" if success else "FAIL"
                 print(f"  Batch {batch_idx+1}/{total_batches}: {status} {tagged}/{len(batch)}")
             
             time.sleep(0.3)

@@ -175,7 +175,7 @@ class HabitTracker:
             
             if self.verbose:
                 tagged = sum(1 for s in batch if 'tasks' in s)
-                status = "\u2705" if success else "\u274c"
+                status = "OK" if success else "FAIL"
                 print(f"  Batch {batch_idx+1}/{total_batches}: {status} {tagged}/{len(batch)}")
             
             time.sleep(0.3)
@@ -345,12 +345,18 @@ class HabitTracker:
                     })
                     collected += 1
             else:
-                # 无精确匹配（LLM从语义判断的），fallback取首行
-                if clean_lines:
-                    source_lines.append({
-                        "text": clean_lines[0][1],
-                        "session": session_name
-                    })
+                # 无精确匹配（LLM从语义判断的），fallback取首条有意义的行
+                # 过滤掉长度<=4或纯寒暄的行（如"你好"、"嗯"、"好的"等）
+                _GREETINGS = {'你好', '嗯', '好的', '好', '谢谢', '感谢', '是的', '对',
+                              '可以', '行', '没问题', 'hi', 'hello', '嗨', '在吗'}
+                for _, line_text in clean_lines:
+                    stripped_text = line_text.strip()
+                    if len(stripped_text) > 4 and stripped_text not in _GREETINGS:
+                        source_lines.append({
+                            "text": line_text,
+                            "session": session_name
+                        })
+                        break
         
         return source_lines[:max_total]
     

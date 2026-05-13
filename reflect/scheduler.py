@@ -1,4 +1,4 @@
-import os, json, time as _time, socket as _socket, logging
+import os, json, time as _time, socket as _socket, logging, subprocess
 from datetime import datetime, timedelta
 
 # 端口锁：防止重复启动，bind失败时agentmain会直接崩溃退出
@@ -28,6 +28,47 @@ if not _logger.handlers:
 # 默认最大延迟窗口（小时），超过此时间不触发
 DEFAULT_MAX_DELAY = 6
 _l4_t = 0  # last L4 archive time
+_running = {}  # tid -> Popen, 跟踪direct模式子进程
+
+def _exec_direct(tid, task):
+    """直接用子进程运行任务脚本，不经过agent，无超时限制"""
+    global _running
+    # 如果已有同名进程在跑，检查是否结束
+    if tid in _running:
+        proc = _running[tid]
+        if proc.poll() is None:
+            return  # 还在跑，跳过
+        else:
+            del _running[tid]  # 已结束，允许重新触发
+    
+    script = task.get('exec_script', '')
+    if not script:
+        _logger.error(f'direct task {tid} missing exec_script')
+        return
+    
+    script_path = os.path.normpath(os.path.join(TASKS, '..', script))
+    if not os.path.isfile(script_path):
+        _logger.error(f'direct task {tid} script not found: {script_path}')
+        return
+    
+    python = os.path.join(os.path.dirname(os.sys.executable), 'python.exe')
+    if not os.path.isfile(python):
+        python = os.sys.executable  # fallback
+    
+    _logger.info(f'DIRECT_START {tid}: {script_path}')
+    env = os.environ.copy()
+    env['PYTHONIOENCODING'] = 'utf-8'
+    log_path = os.path.join(DONE, f'{tid}_stderr.log')
+    stderr_f = open(log_path, 'w', encoding='utf-8')
+    proc = subprocess.Popen(
+        [python, script_path],
+        cwd=os.path.dirname(script_path),
+        stdout=subprocess.DEVNULL,
+        stderr=stderr_f,
+        env=env,
+    )
+    _running[tid] = proc
+    proc._stderr_file = stderr_f  # 保持引用防止GC关闭
 
 def _parse_cooldown(repeat):
     """解析repeat为冷却时间(比实际周期略短,防漂移)"""
@@ -119,6 +160,12 @@ def check():
         # 触发
         _logger.info(f'TRIGGER {tid} (repeat={repeat}, schedule={sched}, '
                      f'last_run={last})')
+        
+        # exec_mode=direct: 子进程直接运行，不经过agent
+        if task.get('exec_mode') == 'direct':
+            _exec_direct(tid, task)
+            continue
+        
         ts = now.strftime('%Y-%m-%d_%H%M')
         rpt = os.path.join(DONE, f'{ts}_{tid}.md')
         prompt = task.get('prompt', '')

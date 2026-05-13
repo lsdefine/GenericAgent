@@ -713,6 +713,12 @@ class NativeOAISession(NativeClaudeSession):
         return (yield from _openai_stream(self, _msgs_claude2oai(messages)))
 
 class CopilotSDKSession(BaseSession):
+    EXECUTION_POLICY_TEXT = (
+        "=== SYSTEM ===\n"
+        "[Execution Policy] Do NOT execute shell commands or scripts through Copilot runtime permissions.\n"
+        "When execution is needed, return the command/script to this agent as a tool call "
+        "(for example code_run) and wait for tool_result."
+    )
     def __init__(self, cfg):
         github_token = cfg.get('github_token') or cfg.get('apikey') or os.environ.get('COPILOT_GITHUB_TOKEN') or os.environ.get('GH_TOKEN') or os.environ.get('GITHUB_TOKEN')
         ccfg = dict(cfg)
@@ -736,6 +742,8 @@ class CopilotSDKSession(BaseSession):
             if isinstance(raw_permission_mode, str)
             else 'deny_all'
         )
+        if not isinstance(raw_permission_mode, str):
+            print(f"[WARN] Invalid permission_mode {raw_permission_mode!r}, fallback to 'deny_all'.")
         self.enforce_agent_tool_calls = cfg.get('enforce_agent_tool_calls', True)
     def make_messages(self, raw_list): return _msgs_claude2oai(_fix_messages(raw_list))
     def _emit_cli_logs(self, client):
@@ -775,12 +783,7 @@ class CopilotSDKSession(BaseSession):
         if not self.enforce_agent_tool_calls: return prompt
         # Copilot SDK runtime can execute commands/scripts through its own permission flow.
         # We inject a hard policy so execution requests are returned as tool calls for this agent to run.
-        policy = (
-            "=== SYSTEM ===\n"
-            "[Execution Policy] Do NOT execute shell commands or scripts through Copilot runtime permissions.\n"
-            "When execution is needed, return the command/script to this agent as a tool call "
-            "(for example code_run) and wait for tool_result."
-        )
+        policy = self.EXECUTION_POLICY_TEXT
         return f"{policy}\n\n{prompt}" if prompt else policy
     def _resolve_permission_handler(self, permission_handler_cls):
         mode = self.permission_mode

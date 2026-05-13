@@ -65,7 +65,7 @@ class CopilotSDKSessionTests(unittest.TestCase):
             self._saved_modules[name] = sys.modules.get(name)
         sys.modules[name] = module
 
-    def _install_copilot_stubs(self, error=False):
+    def _install_copilot_stubs(self, error=False, missing_deny=False, simulate_permission_request=None):
         record = self.record
 
         class FakeSubprocessConfig:
@@ -76,6 +76,9 @@ class CopilotSDKSessionTests(unittest.TestCase):
         class FakeSession:
             async def send_and_wait(self, prompt):
                 record["prompt"] = prompt
+                cb = record.get("create_session_kwargs", {}).get("on_permission_request")
+                if simulate_permission_request is not None and callable(cb):
+                    cb(simulate_permission_request)
                 if error:
                     raise RuntimeError("Copilot CLI unavailable")
                 return types.SimpleNamespace(data=types.SimpleNamespace(content="stubbed copilot reply"))
@@ -109,7 +112,8 @@ class CopilotSDKSessionTests(unittest.TestCase):
 
         class PermissionHandler:
             approve_all = object()
-            reject_all = object()
+            if not missing_deny:
+                reject_all = object()
 
         session_mod.PermissionHandler = PermissionHandler
         self._swap_module("copilot", copilot_mod)
@@ -164,6 +168,25 @@ class CopilotSDKSessionTests(unittest.TestCase):
             self.record["create_session_kwargs"]["on_permission_request"],
             sys.modules["copilot.session"].PermissionHandler.reject_all,
         )
+
+    def test_copilot_sdk_emits_code_run_tool_use_when_deny_handler_missing(self):
+        self._install_copilot_stubs(
+            missing_deny=True,
+            simulate_permission_request={"command": "echo hello from copilot"},
+        )
+        cfg = {"model": "gpt-5", "permission_mode": "approve_all", "enforce_agent_tool_calls": True}
+        tool_prompt = (
+            "=== SYSTEM ===\n"
+            "### Tools (mounted, always in effect):\n"
+            '[{"type":"function","function":{"name":"code_run"}}]\n'
+            "=== ASSISTANT ===\n"
+        )
+        with patch.object(llmcore, "reload_mykeys", return_value=({"copilot_sdk_config": cfg}, True)):
+            session = llmcore.resolve_session("copilot_sdk_config")
+            output = "".join(session.ask(tool_prompt))
+        self.assertIn("<tool_use>", output)
+        self.assertIn('"name": "code_run"', output)
+        self.assertIn("echo hello from copilot", output)
 
     def test_resolve_client_wraps_copilot_sdk_as_tool_client(self):
         cfg = {"model": "gpt-5"}

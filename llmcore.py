@@ -748,6 +748,7 @@ class CopilotSDKSession(BaseSession):
             print(f"[WARN] Invalid permission_mode {raw_permission_mode!r}, fallback to 'approve_all'.")
             self.permission_mode = 'approve_all'
         self.enforce_agent_tool_calls = cfg.get('enforce_agent_tool_calls', True)
+        self._denied_permission_requests = []
     def make_messages(self, raw_list): return _msgs_claude2oai(_fix_messages(raw_list))
     def _emit_cli_logs(self, client):
         if not self.cli_log_to_console: return
@@ -791,9 +792,16 @@ class CopilotSDKSession(BaseSession):
     def _resolve_permission_handler(self, permission_handler_cls, prompt=''):
         deny_handler = self._resolve_deny_handler(permission_handler_cls)
         if self.enforce_agent_tool_calls and self._has_mounted_tools(prompt):
+            if callable(deny_handler):
+                def _deny_and_capture(*args, **kwargs):
+                    self._record_denied_permission_request({"args": args, "kwargs": kwargs})
+                    return deny_handler(*args, **kwargs)
+                return _deny_and_capture
             if deny_handler is not None: return deny_handler
             print("[WARN] Copilot SDK PermissionHandler missing deny/reject handler in tool-mounted mode, using deny-all function fallback.")
-            def _deny_all_for_tools(*_args, **_kwargs): return False
+            def _deny_all_for_tools(*args, **kwargs):
+                self._record_denied_permission_request({"args": args, "kwargs": kwargs})
+                return False
             return _deny_all_for_tools
         mode = self.permission_mode
         approve_modes = {'approve_all', 'allow_all', 'allow'}
@@ -814,9 +822,48 @@ class CopilotSDKSession(BaseSession):
         if not isinstance(prompt, str) or not prompt: return False
         # Marker strings come from ToolClient._prepare_tool_instruction and its token-saving variant.
         return any(marker in prompt for marker in self.TOOL_MARKERS)
+    def _record_denied_permission_request(self, request):
+        code, code_type = self._extract_code_from_permission_request(request)
+        self._denied_permission_requests.append({"code": code, "code_type": code_type, "raw": request})
+    def _extract_code_from_permission_request(self, request):
+        candidates = []
+        def _walk(obj, path=''):
+            if isinstance(obj, dict):
+                for k, v in obj.items(): _walk(v, f"{path}.{k}" if path else str(k))
+                return
+            if isinstance(obj, (list, tuple)):
+                for i, v in enumerate(obj): _walk(v, f"{path}[{i}]")
+                return
+            if hasattr(obj, '__dict__') and not isinstance(obj, type):
+                _walk(vars(obj), path or obj.__class__.__name__)
+                return
+            if isinstance(obj, str):
+                s = obj.strip()
+                if not s: return
+                lk = path.lower()
+                score = 1
+                if any(t in lk for t in ('command', 'cmd', 'script', 'code', 'shell', 'bash', 'python')): score += 5
+                candidates.append((score, lk, s))
+        _walk(request)
+        if not candidates: return '', 'bash'
+        _, key, code = max(candidates, key=lambda x: (x[0], len(x[2])))
+        is_python = ('python' in key) or bool(re.search(r'^\s*(import |from\s+\w+\s+import |def |class )', code))
+        return code, ('python' if is_python else 'bash')
+    def _append_tool_call_from_denied_permission(self, text):
+        if '<tool_use>' in (text or '') or '<tool_call>' in (text or ''): return text
+        for req in reversed(self._denied_permission_requests):
+            code = (req.get("code") or '').strip()
+            if not code: continue
+            payload = {"name": "code_run", "arguments": {"code": code, "code_type": req.get("code_type", "bash")}}
+            block = f'<tool_use>{json.dumps(payload, ensure_ascii=False)}</tool_use>'
+            if isinstance(text, str) and text.strip(): return text.rstrip() + '\n\n' + block
+            return block
+        return text
     async def _send_with_session(self, prompt):
         from copilot import CopilotClient, SubprocessConfig
         from copilot.session import PermissionHandler
+        tool_mode = self.enforce_agent_tool_calls and self._has_mounted_tools(prompt)
+        self._denied_permission_requests = []
         subprocess_kwargs = {}
         if self.github_token: subprocess_kwargs["github_token"] = self.github_token
         if self.copilot_home: subprocess_kwargs["copilot_home"] = self.copilot_home
@@ -841,8 +888,9 @@ class CopilotSDKSession(BaseSession):
                     except Exception as e: print(f"[WARN] CopilotSDKSession disconnect failed: {type(e).__name__}: {e}")
                 self._emit_cli_logs(client)
             data = getattr(reply, "data", reply)
-            if isinstance(data, dict): return str(data.get("content", ""))
-            return str(getattr(data, "content", data) or "")
+            text = str(data.get("content", "")) if isinstance(data, dict) else str(getattr(data, "content", data) or "")
+            if tool_mode: text = self._append_tool_call_from_denied_permission(text)
+            return text
     def raw_ask(self, messages):
         try: text = _run_async_sync(self._send_with_session(self._messages_to_prompt(messages)))
         except Exception as e:

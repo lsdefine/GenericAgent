@@ -783,7 +783,14 @@ class CopilotSDKSession(BaseSession):
         # We inject a hard policy so execution requests are returned as tool calls for this agent to run.
         policy = self.EXECUTION_POLICY_TEXT
         return f"{policy}\n\n{prompt}" if prompt else policy
-    def _resolve_permission_handler(self, permission_handler_cls):
+    def _resolve_permission_handler(self, permission_handler_cls, prompt=''):
+        if self.enforce_agent_tool_calls and self._has_mounted_tools(prompt):
+            for attr in ('deny_all', 'reject_all', 'disallow_all'):
+                h = getattr(permission_handler_cls, attr, None)
+                if h is not None: return h
+            print("[WARN] Copilot SDK PermissionHandler missing deny/reject handler in tool-mounted mode, using deny-all function fallback.")
+            def _deny_all_for_tools(*_args, **_kwargs): return False
+            return _deny_all_for_tools
         mode = self.permission_mode
         approve_modes = {'approve_all', 'allow_all', 'allow'}
         if mode in approve_modes:
@@ -801,6 +808,13 @@ class CopilotSDKSession(BaseSession):
         print("[WARN] Copilot SDK PermissionHandler missing known handlers, using deny-all function fallback.")
         def _deny_all(*_args, **_kwargs): return False
         return _deny_all
+    def _has_mounted_tools(self, prompt):
+        if not isinstance(prompt, str) or not prompt: return False
+        return (
+            "### Tools (mounted, always in effect):" in prompt
+            or "### 工具库状态：持续有效" in prompt
+            or "### Tools: still active, **ready to call**." in prompt
+        )
     async def _send_with_session(self, prompt):
         from copilot import CopilotClient, SubprocessConfig
         from copilot.session import PermissionHandler
@@ -815,7 +829,7 @@ class CopilotSDKSession(BaseSession):
         cfg = SubprocessConfig(**subprocess_kwargs) if subprocess_kwargs else None
         async with CopilotClient(config=cfg) as client:
             session = None
-            kwargs = {"on_permission_request": self._resolve_permission_handler(PermissionHandler), "streaming": False}
+            kwargs = {"on_permission_request": self._resolve_permission_handler(PermissionHandler, prompt=prompt), "streaming": False}
             if self.model: kwargs["model"] = self.model
             if self.reasoning_effort: kwargs["reasoning_effort"] = self.reasoning_effort
             if self.provider is not None: kwargs["provider"] = self.provider

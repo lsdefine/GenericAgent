@@ -149,6 +149,22 @@ class CopilotSDKSessionTests(unittest.TestCase):
             sys.modules["copilot.session"].PermissionHandler.reject_all,
         )
 
+    def test_copilot_sdk_uses_reject_all_when_tools_are_mounted(self):
+        cfg = {"model": "gpt-5", "permission_mode": "approve_all", "enforce_agent_tool_calls": True}
+        tool_prompt = (
+            "=== SYSTEM ===\n"
+            "### Tools (mounted, always in effect):\n"
+            '[{"type":"function","function":{"name":"code_run"}}]\n'
+            "=== ASSISTANT ===\n"
+        )
+        with patch.object(llmcore, "reload_mykeys", return_value=({"copilot_sdk_config": cfg}, True)):
+            session = llmcore.resolve_session("copilot_sdk_config")
+            _ = "".join(session.ask(tool_prompt))
+        self.assertIs(
+            self.record["create_session_kwargs"]["on_permission_request"],
+            sys.modules["copilot.session"].PermissionHandler.reject_all,
+        )
+
     def test_resolve_client_wraps_copilot_sdk_as_tool_client(self):
         cfg = {"model": "gpt-5"}
         with patch.object(llmcore, "reload_mykeys", return_value=({"copilot_sdk_config": cfg}, True)):

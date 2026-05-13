@@ -358,7 +358,7 @@ def _stream_with_retry(sess, url, headers, payload, parse_fn):
     for attempt in range(sess.max_retries + 1):
         streamed = False
         try:
-            with requests.post(url, headers=headers, json=payload, stream=sess.stream, 
+            with requests.post(url, headers=headers, json=payload, stream=sess.stream,
                                timeout=(sess.connect_timeout, sess.read_timeout), proxies=sess.proxies, verify=sess.verify) as r:
                 if r.status_code >= 400:
                     if r.status_code in _RETRYABLE and attempt < sess.max_retries:
@@ -566,6 +566,15 @@ class BaseSession:
         return _ask_gen() if self.stream else ''.join(list(_ask_gen()))
 
 def _keep_claude_block(b): return not isinstance(b, dict) or b.get("type") != "thinking" or b.get("signature")
+def _fill_empty_signatures(messages):
+    """Fill empty thinking signatures so they survive _drop_unsigned_thinking."""
+    for m in messages:
+        c = m.get("content")
+        if not isinstance(c, list): continue
+        for b in c:
+            if isinstance(b, dict) and b.get("type") == "thinking" and b.get("thinking") and not b.get("signature"):
+                b["signature"] = "placeholder"
+    return messages
 def _drop_unsigned_thinking(messages):
     for m in messages:
         c = m.get("content")
@@ -635,7 +644,7 @@ class NativeClaudeSession(BaseSession):
         self._device_id = uuid.uuid4().hex + uuid.uuid4().hex[:32]
         self.tools = None
     def raw_ask(self, messages):
-        messages = _ensure_thinking_blocks(_drop_unsigned_thinking(_fix_messages(messages)), self.model)
+        messages = _ensure_thinking_blocks(_drop_unsigned_thinking(_fill_empty_signatures(_fix_messages(messages))), self.model)
         if self.max_tokens is None: self.max_tokens = 8192
         model = self.model
         beta_parts = ["claude-code-20250219", "interleaved-thinking-2025-05-14", "redact-thinking-2026-02-12", "prompt-caching-scope-2026-01-05"]

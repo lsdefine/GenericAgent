@@ -728,6 +728,7 @@ class CopilotSDKSession(BaseSession):
         self.cli_env = cfg.get('cli_env')
         self.cli_log_level = cfg.get('cli_log_level')
         self.cli_log_to_console = cfg.get('cli_log_to_console', True)
+        self.response_log_to_console = cfg.get('response_log_to_console', True)
         self.provider = cfg.get('provider')
     def make_messages(self, raw_list): return _msgs_claude2oai(_fix_messages(raw_list))
     def _emit_cli_logs(self, client):
@@ -740,6 +741,14 @@ class CopilotSDKSession(BaseSession):
         try:
             sys.stderr.write(logs if logs.endswith('\n') else logs + '\n')
             sys.stderr.flush()
+        except OSError:
+            pass
+    def _emit_response_log(self, text):
+        if not self.response_log_to_console: return
+        if not text: return
+        try:
+            sys.stdout.write(text if text.endswith('\n') else text + '\n')
+            sys.stdout.flush()
         except OSError:
             pass
     def _messages_to_prompt(self, messages):
@@ -790,6 +799,7 @@ class CopilotSDKSession(BaseSession):
         except Exception as e:
             err = f"!!!Error: {type(e).__name__}: {e}"
             yield err; return [{"type": "text", "text": err}]
+        self._emit_response_log(text)
         if text: yield text
         return [{"type": "text", "text": text or ""}]
 

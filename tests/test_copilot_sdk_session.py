@@ -187,6 +187,27 @@ class CopilotSDKSessionTests(unittest.TestCase):
         self.assertIn("<tool_use>", output)
         self.assertIn('"name": "code_run"', output)
         self.assertIn("echo hello from copilot", output)
+        self.assertIn('"code_type": "bash"', output)
+
+    def test_copilot_sdk_preserves_powershell_for_denied_permission_requests(self):
+        self._install_copilot_stubs(
+            missing_deny=True,
+            simulate_permission_request={"powershell_command": "Get-ChildItem Env:"},
+        )
+        cfg = {"model": "gpt-5", "permission_mode": "approve_all", "enforce_agent_tool_calls": True}
+        tool_prompt = (
+            "=== SYSTEM ===\n"
+            "### Tools (mounted, always in effect):\n"
+            '[{"type":"function","function":{"name":"code_run"}}]\n'
+            "=== ASSISTANT ===\n"
+        )
+        with patch.object(llmcore, "reload_mykeys", return_value=({"copilot_sdk_config": cfg}, True)):
+            session = llmcore.resolve_session("copilot_sdk_config")
+            output = "".join(session.ask(tool_prompt))
+        self.assertIn("<tool_use>", output)
+        self.assertIn('"name": "code_run"', output)
+        self.assertIn("Get-ChildItem Env:", output)
+        self.assertIn('"code_type": "powershell"', output)
 
     def test_resolve_client_wraps_copilot_sdk_as_tool_client(self):
         cfg = {"model": "gpt-5"}

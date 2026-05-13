@@ -848,11 +848,16 @@ class CopilotSDKSession(BaseSession):
                 if not s: return
                 lk = path.lower()
                 score = 1
-                if any(t in lk for t in ('command', 'cmd', 'script', 'code', 'shell', 'bash', 'python')): score += 5
+                if any(t in lk for t in ('command', 'cmd', 'script', 'code', 'shell', 'bash', 'python', 'powershell', 'pwsh', 'ps1')): score += 5
                 candidates.append((score, lk, s))
         _walk(request)
         if not candidates: return '', 'bash'
         _, key, code = max(candidates, key=lambda x: (x[0], len(x[2])))
+        is_powershell = (
+            any(t in key for t in ('powershell', 'pwsh', 'ps1'))
+            or bool(re.search(r'^\s*(?:powershell|pwsh)(?:\s|$)', code, flags=re.IGNORECASE))
+        )
+        if is_powershell: return code, 'powershell'
         is_python = ('python' in key) or bool(re.search(r'^\s*(import\s|from\s+\w+\s+import\s|def\s|class\s)', code))
         return code, ('python' if is_python else 'bash')
     def _append_tool_call_from_denied_permission(self, text):

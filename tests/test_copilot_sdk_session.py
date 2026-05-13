@@ -1,4 +1,5 @@
 import io
+import json
 import sys
 import types
 import unittest
@@ -298,15 +299,18 @@ class CopilotSDKSessionTests(unittest.TestCase):
         self.assertIn("Get-Content README.md", output)
         self.assertIn("Get-ChildItem src", output)
         # Neither extracted command should contain <tool_use> in its code field
-        import json as _json
         for block_start in [i for i in range(len(output)) if output[i:].startswith('<tool_use>')]:
-            block_end = output.index('</tool_use>', block_start) + len('</tool_use>')
-            payload_str = output[block_start + len('<tool_use>'):block_end - len('</tool_use>')]
+            close_tag = '</tool_use>'
+            block_end_idx = output.find(close_tag, block_start)
+            if block_end_idx == -1:
+                continue  # malformed block, skip
+            block_end = block_end_idx + len(close_tag)
+            payload_str = output[block_start + len('<tool_use>'):block_end_idx]
             try:
-                payload = _json.loads(payload_str)
+                payload = json.loads(payload_str)
                 code = payload.get('arguments', {}).get('code', '') or payload.get('arguments', {}).get('script', '')
                 self.assertNotIn('<tool_use>', code, f"tool_use tag leaked into code arg: {code[:80]}")
-            except _json.JSONDecodeError:
+            except json.JSONDecodeError:
                 pass  # original_tool_use payload is checked separately
 
     def test_ran_terminal_command_bash_classified_correctly(self):

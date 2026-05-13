@@ -341,7 +341,7 @@ class InputArea(TextArea):
         if self.read_only or self._paste_image_from_clipboard():
             return
         if clipboard := getattr(self.app, "clipboard", ""):
-            self._insert_via_keyboard(clipboard)
+            self._insert_paste_text(clipboard, "key")
 
     def action_paste_image(self) -> None:
         self._paste_image_from_clipboard()
@@ -361,6 +361,7 @@ class InputArea(TextArea):
         self._history_index: int = -1         # -1 = not browsing
         self._history_stash: str = ""         # unsaved draft while browsing
         self._HISTORY_MAX = 200
+        self._last_paste: tuple[str, str, float] = ("", "", 0.0)
 
     def expand_placeholders(self, text: str) -> str:
         def repl_paste(m):
@@ -433,17 +434,18 @@ class InputArea(TextArea):
         self._history_index = -1
         self._history_stash = ""
 
-    def action_newline(self) -> None:
-        self._insert_via_keyboard("\n")
+    def _insert_paste_text(self, text: str, source: str) -> bool:
+        text = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+        if not text:
+            return False
 
-    async def _on_paste(self, event: events.Paste) -> None:
-        # 终端 Ctrl+V 在 bracketed-paste 模式下走这里（绕过 action_paste）。
-        # 优先尝试系统剪贴板里的图片：命中则插占位、原 paste 文本丢弃。
-        if self.read_only:
-            return
-        if self._paste_image_from_clipboard():
-            event.stop(); event.prevent_default(); return
-        text = event.text.replace("\r\n", "\n").replace("\r", "\n")
+        normalized = text
+        last_source, last_text, last_at = self._last_paste
+        now = time.monotonic()
+        if normalized == last_text and source != last_source and now - last_at < 0.25:
+            self._last_paste = (source, normalized, now)
+            return True
+
         line_count = len(text.splitlines()) or 1
         if line_count > 2:
             self._paste_counter += 1
@@ -451,7 +453,20 @@ class InputArea(TextArea):
             self._pastes[sid] = text
             text = f"[Pasted text #{sid} +{line_count} lines]"
         self._insert_via_keyboard(text)
-        event.stop(); event.prevent_default()
+        self._last_paste = (source, normalized, now)
+        return True
+
+    def action_newline(self) -> None:
+        self._insert_via_keyboard("\n")
+
+    async def _on_paste(self, event: events.Paste) -> None:
+        # Terminal Ctrl+V can arrive as bracketed paste and bypass action_paste.
+        if self.read_only:
+            return
+        if self._paste_image_from_clipboard():
+            event.stop(); event.prevent_default(); return
+        if self._insert_paste_text(event.text, "event"):
+            event.stop(); event.prevent_default()
 
     async def _on_key(self, event: events.Key) -> None:
         # 1) 命令面板 (#palette) 路由

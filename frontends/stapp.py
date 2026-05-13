@@ -157,6 +157,16 @@ def render_segments(segments, suffix=''):
             # restores a multi-turn body).
             st.markdown(_SUMMARY_TAG_RE.sub('', seg['content']) + suffix)
 
+def _now_ts():
+    return time.strftime("%Y-%m-%d %H:%M:%S")
+
+def _chat_msg(role, content, ts=None):
+    return {"role": role, "content": content, "time": ts or _now_ts()}
+
+def _render_msg_time(msg):
+    ts = msg.get("time")
+    if ts: st.caption(ts)
+
 def agent_backend_stream(prompt=None):
     """Drain main task display_queue.
     - prompt given:  start a fresh task; new dq is kept in session_state.
@@ -199,7 +209,10 @@ def agent_backend_stream(prompt=None):
 
 def render_main_stream(prompt=None):
     """Render the assistant bubble for the main task (new or resumed). Saves final to messages."""
+    reply_ts = st.session_state.get('reply_ts') or _now_ts()
+    st.session_state.reply_ts = reply_ts
     with st.chat_message("assistant"):
+        st.caption(reply_ts)
         frozen = 0; live = st.empty(); response = ''
         CURSOR = ' ▌'
         for response in agent_backend_stream(prompt):
@@ -214,8 +227,9 @@ def render_main_stream(prompt=None):
             with live.container(): render_segments([segs[i]])
             if i < len(segs) - 1: live = st.empty()
     if response:
-        st.session_state.messages.append({"role": "assistant", "content": response})
+        st.session_state.messages.append(_chat_msg("assistant", response, reply_ts))
         st.session_state.last_reply_time = int(time.time())
+        st.session_state.reply_ts = ""
 
 if "messages" not in st.session_state: st.session_state.messages = []
 for msg in st.session_state.messages:
@@ -223,6 +237,7 @@ for msg in st.session_state.messages:
         # 用 slot=st.empty() + with slot.container(): ... 的外壳，DOM 路径和流式渲染完全一致，跨 rerun 对齐
         slot = st.empty()
         with slot.container():
+            _render_msg_time(msg)
             if msg["role"] == "assistant": render_segments(fold_turns(msg["content"]))
             else: st.markdown(msg["content"])
 
@@ -255,10 +270,22 @@ _js_ime_fix = ("" if os.name == 'nt' else
     "e.key==='Enter'&&!e.shiftKey&&(e.isComposing||c||e.keyCode===229)&&"
     "(e.stopImmediatePropagation(),e.preventDefault())},!0))})}"
     "f();new MutationObserver(f).observe(d.body,{childList:1,subtree:1})}()")
-_embed_html(f'<script>{_js_scroll_fix};{_js_ime_fix}</script>', height=0)
+_js_homeend_fix = (
+    "!function(){if(window.parent.__homeEndFix)return;window.parent.__homeEndFix=1;"
+    "var d=window.parent.document;"
+    "function f(){d.querySelectorAll('textarea[data-testid=stChatInputTextArea]')"
+    ".forEach(t=>{if(t.__homeEndFix)return;t.__homeEndFix=1;"
+    "t.addEventListener('keydown',e=>{"
+    "if(e.key==='Home'||e.key==='End'){"
+    "e.preventDefault();e.stopPropagation();"
+    "t.selectionStart=t.selectionEnd=(e.key==='Home')?0:t.value.length;"
+    "}},!0)})}"
+    "f();new MutationObserver(f).observe(d.body,{childList:1,subtree:1})}()"
+)
+_embed_html(f'<script>{_js_scroll_fix};{_js_ime_fix};{_js_homeend_fix}</script>', height=0)
 
 if prompt := st.chat_input("any task?"):
-    ts = time.strftime("%Y-%m-%d %H:%M:%S")
+    ts = _now_ts()
     cmd = (prompt or "").strip()
     def _reset_and_rerun():
         st.session_state.streaming = False
@@ -270,7 +297,7 @@ if prompt := st.chat_input("any task?"):
         st.session_state.last_reply_time = int(time.time())
         st.rerun()
     if cmd == "/new":
-        st.session_state.messages = [{"role": "assistant", "content": reset_conversation(agent), "time": ts}]
+        st.session_state.messages = [_chat_msg("assistant", reset_conversation(agent), ts)]
         _reset_and_rerun()
     if cmd.startswith("/continue"):
         m = re.match(r'/continue\s+(\d+)\s*$', cmd.strip())
@@ -280,18 +307,18 @@ if prompt := st.chat_input("any task?"):
         target = sessions[idx][0] if 0 <= idx < len(sessions) else None
         result = handle_frontend_command(agent, cmd)
         history = extract_ui_messages(target) if target and result.startswith('✅') else None
-        tail = [{"role": "assistant", "content": result, "time": ts}]
+        tail = [_chat_msg("assistant", result, ts)]
         if history:
             st.session_state.messages = history + tail
         else:
             st.session_state.messages = list(st.session_state.messages) + \
-                [{"role": "user", "content": cmd, "time": ts}] + tail
+                [_chat_msg("user", cmd, ts)] + tail
         _reset_and_rerun()
     if cmd.startswith("/btw"):
         answer = btw_handle_frontend(agent, cmd)  # sync; bypasses put_task → main agent.run() untouched
         st.session_state.messages = list(st.session_state.messages) + [
-            {"role": "user", "content": prompt, "time": ts},
-            {"role": "assistant", "content": answer, "time": ts},
+            _chat_msg("user", prompt, ts),
+            _chat_msg("assistant", answer, ts),
         ]
         st.rerun()  # preserve display_queue/partial_response so resume path drains the running main task
     if cmd.startswith("/export"):
@@ -322,15 +349,17 @@ if prompt := st.chat_input("any task?"):
                 except Exception as e:
                     result = f"❌ 导出失败: {e}"
         st.session_state.messages = list(st.session_state.messages) + [
-            {"role": "user", "content": cmd, "time": ts},
-            {"role": "assistant", "content": result, "time": ts},
+            _chat_msg("user", cmd, ts),
+            _chat_msg("assistant", result, ts),
         ]
         _reset_and_rerun()
     # Regular prompt: any in-flight task will be aborted by the finally block in
     # agent_backend_stream when StopException interrupts the prior generator.
-    st.session_state.messages.append({"role": "user", "content": prompt})
+    st.session_state.messages.append(_chat_msg("user", prompt, ts))
     if hasattr(agent, '_pet_req') and not prompt.startswith('/'): agent._pet_req('state=walk')
-    with st.chat_message("user"): st.markdown(prompt)
+    with st.chat_message("user"):
+        st.caption(ts)
+        st.markdown(prompt)
     render_main_stream(prompt)
 elif st.session_state.get('display_queue') is not None:
     # No new prompt but a task is mid-flight (typically a /btw rerun) — resume drain.

@@ -744,7 +744,6 @@ class GenericAgentTUI(App[None]):
             yield Static("", id="sidebar")
             with Vertical(id="main"):
                 yield VerticalScroll(id="messages")
-                yield OptionList(id="palette")
                 yield InputArea(
                     "",
                     id="input",
@@ -754,6 +753,7 @@ class GenericAgentTUI(App[None]):
                     highlight_cursor_line=False,
                     placeholder="输入指令或问题... (Enter 发送, Ctrl+J 换行, / 唤起命令面板)",
                 )
+                yield OptionList(id="palette")
         yield Static(render_bottombar(), id="bottombar")
 
     def on_mount(self) -> None:

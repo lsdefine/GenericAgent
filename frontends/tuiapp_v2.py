@@ -396,7 +396,7 @@ class InputArea(TextArea):
             pass
 
     def _history_up(self) -> bool:
-        """Move to older entry. Returns True if handled."""
+        """回到更旧的一条历史；到最旧时只吞掉按键。"""
         if not self._input_history:
             return False
         if self._history_index == -1:
@@ -406,7 +406,7 @@ class InputArea(TextArea):
         elif self._history_index > 0:
             self._history_index -= 1
         else:
-            return True  # already at oldest, absorb key
+            return True  # 已在最旧项，直接吞键
         self._suppress_palette_next_change()
         self.text = self._input_history[self._history_index]
         return True
@@ -419,7 +419,7 @@ class InputArea(TextArea):
             self._history_index += 1
             new_text = self._input_history[self._history_index]
         else:
-            # back to draft
+            # 回到草稿
             self._history_index = -1
             new_text = self._history_stash
         self._suppress_palette_next_change()
@@ -480,15 +480,14 @@ class InputArea(TextArea):
                 choice.action_select(); event.stop(); event.prevent_default(); return
             if event.key in ("left", "escape"):
                 self.app._cancel_choice(choice.msg); event.stop(); event.prevent_default(); return
-        # 3) 输入历史浏览 (shell-style ↑/↓)
-        #    仅在单行输入（cursor row==0）且无 palette/choice 时生效
-        if event.key == "up" and self.cursor_location[0] == 0:
+        # 3) 输入历史：只在首行首列 / 尾行尾列时接管 ↑/↓。既保留原有光标移动，又允许在行内任意位置浏览历史（不强制先跳到行首/行尾）。
+        if event.key == "up" and self.cursor_location == (0, 0):
             if self._history_up():
                 event.stop(); event.prevent_default(); return
         if event.key == "down":
-            row, _ = self.cursor_location
-            total_lines = len(self.text.split("\n"))
-            if row >= total_lines - 1:
+            row, col = self.cursor_location
+            lines = self.text.split("\n")
+            if row == len(lines) - 1 and col == len(lines[-1]):
                 if self._history_down():
                     event.stop(); event.prevent_default(); return
         if event.key == "enter":  # 换行键已被 BINDINGS 拦走

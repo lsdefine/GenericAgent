@@ -737,13 +737,11 @@ class CopilotSDKSession(BaseSession):
         self.response_log_to_console = cfg.get('response_log_to_console', True)
         self.provider = cfg.get('provider')
         raw_permission_mode = cfg.get('permission_mode', 'deny_all')
-        self.permission_mode = (
-            raw_permission_mode.strip().lower()
-            if isinstance(raw_permission_mode, str)
-            else 'deny_all'
-        )
-        if not isinstance(raw_permission_mode, str):
+        if isinstance(raw_permission_mode, str):
+            self.permission_mode = raw_permission_mode.strip().lower()
+        else:
             print(f"[WARN] Invalid permission_mode {raw_permission_mode!r}, fallback to 'deny_all'.")
+            self.permission_mode = 'deny_all'
         self.enforce_agent_tool_calls = cfg.get('enforce_agent_tool_calls', True)
     def make_messages(self, raw_list): return _msgs_claude2oai(_fix_messages(raw_list))
     def _emit_cli_logs(self, client):
@@ -793,7 +791,8 @@ class CopilotSDKSession(BaseSession):
         for attr in ('deny_all', 'reject_all', 'disallow_all'):
             h = getattr(permission_handler_cls, attr, None)
             if h is not None: return h
-        # Safe fallback: deny all permission requests when SDK doesn't expose named deny handlers.
+        # Safe fallback: if SDK exposes no known deny handler, force-deny every permission request.
+        print("[WARN] Copilot SDK PermissionHandler missing deny/reject handler, using deny-all fallback.")
         def _deny_all(*_args, **_kwargs): return False
         return _deny_all
     async def _send_with_session(self, prompt):

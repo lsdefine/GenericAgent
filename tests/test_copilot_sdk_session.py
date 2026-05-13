@@ -34,9 +34,9 @@ class _StubSession:
 
     def ask(self, prompt):
         def _gen():
-            self.history.append({"role": "user", "content": [{"type": "text", "text": prompt}]})
-            msgs = [{"role": "user", "content": [{"type": "text", "text": prompt}]}]
-            gen = self.raw_ask(msgs)
+            msg = {"role": "user", "content": [{"type": "text", "text": prompt}]}
+            self.history.append(msg)
+            gen = self.raw_ask([msg])
             chunks = []
             try:
                 while True:

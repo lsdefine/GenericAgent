@@ -22,30 +22,7 @@ sys.path.insert(0, str(GA_ROOT))
 sys.path.insert(0, str(GA_ROOT / "memory" / "skill_search"))
 
 from tools.skill_learn_from_cases import dir_manager
-
-
-def _import_skill_search():
-    """延迟导入 skill_search，失败时降级"""
-    try:
-        from skill_search import search
-        return search
-    except Exception:
-        return None
-
-
-def _import_web_search():
-    """导入搜索引擎模块，通过环境变量 SEARCH_ENGINE_MODULE 配置"""
-    import importlib
-    import os
-    module_name = os.environ.get("SEARCH_ENGINE_MODULE")
-    func_name = os.environ.get("SEARCH_ENGINE_FUNC", "search")
-    if not module_name:
-        return None
-    try:
-        mod = importlib.import_module(module_name)
-        return getattr(mod, func_name)
-    except Exception:
-        return None
+from tools.skill_learn_from_cases.restore_funcs import _import_skill_search, _import_web_search, _web_search_wikipedia
 
 
 def _detect_docker():
@@ -57,21 +34,14 @@ def _detect_docker():
         )
         if r.returncode == 0 and r.stdout.strip():
             ver = r.stdout.strip()
-        else:
-            # 尝试直接运行
-            r2 = subprocess.run(
-                ["docker", "--version"],
-                capture_output=True, text=True, timeout=5
-            )
-            ver = r2.stdout.strip()
-        return ver if ver else None
+            print(f"  Docker: [OK] {ver}")
+            return ver
     except Exception:
-        return None
+        pass
 
+    
+    return None
 
-# ===============================================================
-# Phase 0: 启动
-# ===============================================================
 
 def _phase0_bootstrap(skill_name: str) -> dict:
     """启动环境 + 创建 revN 目录"""
@@ -154,6 +124,47 @@ def _phase1_define(ctx: dict):
                 print(f"  Skill Hub: {len(results)} 条相关技能卡")
         except Exception as e:
             print(f"  Skill Hub: [!] {e}")
+    
+    # 尝试用 Web 搜索增强定义（含 Wikipedia fallback）
+    web_fn = _import_web_search()
+    wiki_fn = None
+    try:
+        from tools.skill_learn_from_cases.engine import _web_search_wikipedia as wiki_fn
+    except Exception:
+        pass
+    snippets = []
+    if web_fn:
+        try:
+            web_results = web_fn(keyword=name_clean, size=3)
+            if web_results and isinstance(web_results, list):
+                for r in web_results[:3]:
+                    s = r.get("snippet", "") or r.get("summary", "") or ""
+                    if s:
+                        snippets.append(s[:200])
+                if snippets:
+                    brief = "；".join(snippets)[:300]
+                    ctx["skill_definition"]["description"] = brief
+                    ctx["skill_definition"]["web_summary"] = brief
+                    print(f"  Web 摘要: {len(snippets)} 条")
+        except Exception:
+            pass
+    
+    # ── 搜索引擎无结果时，Wikipedia 降级 ├────
+    if not snippets and wiki_fn:
+        try:
+            wiki_results = wiki_fn(keyword=name_clean, size=3)
+            if wiki_results:
+                for r in wiki_results[:3]:
+                    s = r.get("snippet", "") or ""
+                    if s:
+                        snippets.append(s[:200])
+                if snippets:
+                    brief = "；".join(snippets)[:300]
+                    ctx["skill_definition"]["description"] = brief
+                    ctx["skill_definition"]["wiki_summary"] = brief
+                    print(f"  Wikipedia 摘要: {len(snippets)} 条")
+        except Exception:
+            pass
 
     # 写入定义
     def_file = ctx["rev_dir"] / "reports" / "skill_definition.json"
@@ -198,38 +209,99 @@ def _phase2_search(ctx: dict):
     search_engine = _import_web_search()
     if search_engine:
         try:
-            queries = [
-                f"{ctx['skill_name'].replace('_',' ')} best practices 2025",
-                f"{ctx['skill_name'].replace('_',' ')} 实战 经验",
-                f"{ctx['skill_name'].replace('_',' ')} production 案例"
-            ]
+            name = ctx["skill_name"]
+            # 检测是否包含中文，调整查询策略
+            has_cjk = any('\u4e00' <= c <= '\u9fff' for c in name)
+            
+            # 提取英文关键词（含字母数字组合词如 neo4j）
+            import re as _re
+            # 匹配至少包含一个字母的连续字符（保留数字，如 neo4j）
+            en_kws = _re.findall(r'[a-zA-Z][a-zA-Z0-9]*', name)
+            # 去重并排除单字母无意义词
+            en_kws = sorted(set(w for w in en_kws if len(w) > 2))
+            en_kw = " ".join(en_kws) if en_kws else ""
+            
+            queries = []
+            if has_cjk:
+                # 中文查询
+                queries.extend([
+                    f"{name} 最佳实践",
+                    f"{name} 实战 经验",
+                    f"{name} 技术方案 案例",
+                    f"{name.split('图像')[0] if '图像' in name else name} 图像识别 凭证验证",
+                ])
+                # 如果有英文关键词，额外生成英文查询
+                if en_kw and len(en_kw) > 3:
+                    queries.extend([
+                        f"{en_kw} best practices tutorial",
+                        f"{en_kw} guide examples",
+                    ])
+            else:
+                queries = [
+                    f"{name.replace('_',' ')} best practices 2025",
+                    f"{name.replace('_',' ')} production experience",
+                    f"{name.replace('_',' ')} tutorial guide"
+                ]
             web_cases = []
+            seen_urls = set()
             for q in queries:
                 results = search_engine(q, size=5)
                 for r in results:
-                    web_cases.append({
-                        "source": "web",
-                        "title": r.get("title", ""),
-                        "url": r.get("url", ""),
-                        "snippet": r.get("snippet", "")[:200]
-                    })
+                    url = r.get("url", "")
+                    if url and url not in seen_urls:
+                        seen_urls.add(url)
+                        web_cases.append({
+                            "source": "web",
+                            "title": r.get("title", ""),
+                            "url": url,
+                            "snippet": r.get("snippet", "")[:300]
+                        })
             all_cases.extend(web_cases)
-            print(f"  Web: {len(web_cases)} 条")
+            print(f"  Web: {len(web_cases)} 条 (去重)")
+
+            # ── 搜索引擎返回 0 条时，自动降级到 Wikipedia 搜索 ──
+            if len(web_cases) == 0:
+                try:
+                    wiki_fn = _web_search_wikipedia
+                    wiki_queries = [f"{en_kw}", name] if en_kws else [name]
+                    wiki_seen = set()
+                    wiki_cases = []
+                    for wq in wiki_queries:
+                        wiki_results = wiki_fn(wq, size=5)
+                        for wr in wiki_results:
+                            title = wr.get("title", "")
+                            url = wr.get("url", "")
+                            if url and url not in wiki_seen:
+                                wiki_seen.add(url)
+                                wiki_cases.append({
+                                    "source": "wikipedia",
+                                    "title": title,
+                                    "url": url,
+                                    "snippet": wr.get("snippet", "")[:300]
+                                })
+                    if wiki_cases:
+                        print(f"  Wikipedia: {len(wiki_cases)} 条 (搜索引擎降级)")
+                        all_cases.extend(wiki_cases)
+                except Exception as e:
+                    print(f"  Wikipedia: [FAIL] {e}")
         except Exception as e:
             print(f"  Web: [FAIL] {e}")
     else:
         print(f"  Web: [FAIL] 搜索引擎不可用")
 
-    # 继承上一版案例
-    inherited_cases = dir_manager.get_latest_cases(ctx["skill_name"])
-    if inherited_cases:
-        # 去重（按 URL/Key 去重）
-        seen_keys = set()
-        for c in all_cases:
-            key = c.get("url") or c.get("key") or ""
-            seen_keys.add(key)
-        for c in inherited_cases:
-            key = c.get("url") or c.get("key") or ""
+    # 继承上一版案例（--force 时跳过）
+    if os.environ.get("SKILL_FORCE_REFRESH") == "1":
+        print(f"  --force: 跳过继承旧案例")
+    else:
+        inherited_cases = dir_manager.get_latest_cases(ctx["skill_name"])
+        if inherited_cases:
+            # 去重（按 URL/Key 去重）
+            seen_keys = set()
+            for c in all_cases:
+                key = c.get("url") or c.get("key") or ""
+                seen_keys.add(key)
+            for c in inherited_cases:
+                key = c.get("url") or c.get("key") or ""
             if key and key not in seen_keys:
                 all_cases.append(c)
                 seen_keys.add(key)
@@ -247,6 +319,120 @@ def _phase2_search(ctx: dict):
 # ===============================================================
 # Phase 3: 分析提炼知识模式
 # ===============================================================
+
+def _decompose_skill_name(skill_name: str, cases: list) -> list:
+    """将技能名分解为子主题，生成初始模式（0案例fallback用）"""
+    if not cases:
+        cases = []
+    
+    # 从技能名称中提取有意义片段
+    words = skill_name.replace("_", " ").replace("-", " ")
+    # 对中文名按语义切分
+    parts = []
+    buf = ""
+    for ch in words:
+        if '\u4e00' <= ch <= '\u9fff':
+            if buf and not any('\u4e00' <= c <= '\u9fff' for c in buf):
+                parts.append(buf.strip())
+                buf = ""
+            buf += ch
+        elif ch == ' ':
+            if buf:
+                parts.append(buf.strip())
+                buf = ""
+        else:
+            buf += ch
+    if buf:
+        parts.append(buf.strip())
+    parts = [p for p in parts if len(p) > 1]
+    
+    # 基于常见技能后缀生成子主题模板映射
+    topic_map = {
+        "图像": "图像采集与预处理最佳实践",
+        "图片": "图像采集与预处理最佳实践",
+        "凭证": "凭证标准化与格式校验规范",
+        "证件": "凭证标准化与格式校验规范",
+        "鉴定": "鉴定流程与判定标准",
+        "验证": "验证流程与防篡改机制",
+        "识别": "识别算法选型与准确率优化",
+        "检测": "异常检测与告警阈值设定",
+        "审核": "审核流程自动化与风控策略",
+        "审查": "审核流程自动化与风控策略",
+        "贷款": "贷款业务场景与合规要求",
+        "信贷": "贷款业务场景与合规要求",
+        "金融": "金融级安全与数据隐私保护",
+        "风控": "金融级安全与数据隐私保护",
+        "OCR": "OCR识别与文字提取技术选型",
+        "ocr": "OCR识别与文字提取技术选型",
+        "防伪": "防伪特征检测与真伪鉴别",
+        "篡改": "图像篡改检测与完整性校验",
+        "安全": "安全防护与数据隐私合规",
+        "合规": "合规审查与审计追溯",
+        "小微": "小微金融业务风控体系",
+        "文档": "文档结构化解析与关键信息提取",
+        "合同": "合同关键条款抽取与比对",
+        "报表": "报表自动生成与数据可视化",
+        "签名": "电子签名与数字证书验证",
+        "水印": "水印检测与防伪溯源",
+        "卫星": "卫星影像几何校正与预处理",
+        "遥感": "多光谱遥感数据分析与解译",
+        "无人机": "无人机影像处理与拼接",
+        "航拍": "航拍影像三维重建与正射校正",
+        "SAR": "SAR雷达影像处理与目标识别",
+        "雷达": "SAR雷达影像处理与目标识别",
+        "光谱": "光谱分析在地物分类中的应用",
+        "测绘": "测绘数据标准化与地图制图",
+        "地理": "地理空间分析与GIS集成",
+        "像素": "像素级影像融合与分辨率增强",
+        "neo4j": "Neo4j图数据库建模与Cypher查询",
+        "cypher": "Cypher查询语言核心语法与模式匹配",
+        "图数据": "图数据建模与路径查询优化",
+        "图查询": "图查询语言与遍历算法",
+        "节点": "图数据库节点类型与属性设计",
+        "关系": "图数据库关系建模与关联分析",
+        "知识图谱": "知识图谱构建与图数据库存储",
+        "图算法": "图算法在路径分析与社区发现中的应用",
+    }
+    
+    sub_patterns = []
+    seen = set()
+    for part in parts:
+        for keyword, pattern_text in topic_map.items():
+            if keyword in part or keyword in skill_name:
+                if keyword not in seen:
+                    seen.add(keyword)
+                    sub_patterns.append((f"{pattern_text}（{skill_name[:20]}）", 78))
+    
+    # 从案例标题/摘要中提取关键词，新增为低置信度模式
+    case_keywords_found = set()
+    for c in cases:
+        text = (c.get("title","") + " " + c.get("snippet","")).lower()
+        # 提取案例中的技术/业务关键词
+        for tech_term in ["ocr","深度学习","cnn","数字签名","哈希校验",
+                          "篡改检测","防伪","水印","合规","审计",
+                          "风控","信用","评估","识别率","准确率",
+                          "卫星","遥感","光谱","雷达","sar","gis",
+                          "变化检测","目标检测","语义分割","像素",
+                          "多光谱","高光谱","无人机","航拍","配准",
+                          "neo4j","cypher","图数据库","知识图谱",
+                          "图算法","图查询","图遍历","节点","关系"]:
+            if tech_term in text and tech_term not in seen:
+                case_keywords_found.add(tech_term)
+    
+    for kw in case_keywords_found:
+        sub_patterns.append((f"{kw}相关技术与最佳实践（{skill_name[:20]}）", 72))
+        seen.add(kw)
+    
+    # 如果找不到匹配，生成通用结构
+    if not sub_patterns:
+        generic_subs = [
+            f"{skill_name[:30]}核心概念与术语体系",
+            f"{skill_name[:30]}常见场景与解决方案",
+            f"{skill_name[:30]}工具链与环境搭建",
+        ]
+        sub_patterns = [(s, 70) for s in generic_subs]
+    
+    return sub_patterns[:5]
 
 def _extract_patterns_from_cases(cases: list[dict], skill_name: str) -> list[dict]:
     """从案例中提取知识模式（关键词匹配 + 启发式 + 技能感知）"""
@@ -277,141 +463,24 @@ def _extract_patterns_from_cases(cases: list[dict], skill_name: str) -> list[dic
     }
 
     # ── 技能领域模式库（按技能名和案例内容自动匹配） ──
-    skill_domain_patterns = {
-        "async": {
-            "keywords": ["async", "asyncio", "await", "coroutine", "event loop",
-                         "异步", "协程", "concurrent", "parallel", "非阻塞"],
-            "principles": [
-                ("使用 async/await 而非回调模式", "P_async_await", 93),
-                ("避免在异步中使用阻塞 IO 操作", "P_async_no_block", 92),
-                ("使用 asyncio 正确管理事件循环", "P_async_event_loop", 91),
-                ("合理使用 asyncio.gather 并发执行", "P_async_gather", 89),
-                ("掌握异步编程核心模式", "P_async_patterns", 88),
-                ("使用 asyncio.Semaphore 控制并发数", "P_async_semaphore", 85),
-                ("使用 asyncio.TaskGroup 管理任务生命周期", "P_async_taskgroup", 87),
-                ("使用 asyncio.timeout 设置超时控制", "P_async_timeout", 86),
-                ("使用 asyncio.Queue 实现生产者消费者模式", "P_async_queue", 84),
-                ("使用异步上下文管理器处理资源释放", "P_async_context", 83),
-                ("使用 asyncio.create_task 启动后台任务", "P_async_createtask", 82),
-                ("使用 asyncio.as_completed 处理最先完成的任务", "P_async_ascompleted", 80),
-            ]
-        },
-        "performance": {
-            "keywords": ["performance", "optimize", "profiling", "benchmark", "speed",
-                         "性能", "优化", "cProfile", "memory", "latency", "throughput"],
-            "principles": [
-                ("使用 cProfile/py-spy 定位性能瓶颈", "P_perf_profiling", 90),
-                ("使用 LRU/本地缓存减少重复计算", "P_perf_cache", 87),
-                ("批量操作代替逐条处理", "P_perf_batch", 86),
-                ("使用 local cache/redis 缓存热点数据", "P_perf_cache_strategy", 85),
-                ("数据库查询优化(N+1, 索引, 连接池)", "P_perf_db_query", 88),
-            ]
-        },
-        "fastapi": {
-            "keywords": ["fastapi", "api", "endpoint", "middleware", "rest"],
-            "principles": [
-                ("使用异步路由处理 IO 密集型请求", "P_fastapi_async", 90),
-                ("合理使用依赖注入管理资源", "P_fastapi_di", 85),
-                ("配置请求验证(Pydantic模型)", "P_fastapi_validation", 88),
-            ]
-        },
-        "web_scraping": {
-            "keywords": ["scraping", "crawl", "爬虫", "request", "fetch", "http"],
-            "principles": [
-                ("异步批量请求避免串行等待", "P_scrape_async_batch", 90),
-                ("使用连接池复用 TCP 连接", "P_scrape_conn_pool", 85),
-                ("添加退避重试机制应对限流", "P_scrape_retry", 88),
-            ]
-        },
-        "kubernetes": {
-            "keywords": ["kubernetes", "k8s", "pod", "deployment", "service", "ingress", "helm",
-                         "容器编排", "container orchestration", "kubectl",
-                         "namespace", "configmap", "statefulset", "daemonset", "hpa"],
-            "principles": [
-                ("使用 Deployment + ReplicaSet 管理无状态服务", "P_k8s_deployment", 92),
-                ("使用 Service + Ingress 暴露服务", "P_k8s_service_ingress", 90),
-                ("使用 ConfigMap + Secret 管理配置", "P_k8s_config", 90),
-                ("使用 PV/PVC 管理持久化存储", "P_k8s_storage", 88),
-                ("使用 HPA 实现自动扩缩容", "P_k8s_hpa", 85),
-                ("使用 Namespace 做多环境隔离", "P_k8s_namespace", 85),
-                ("使用 Readiness/Liveness Probe 确保服务健康", "P_k8s_probe", 90),
-                ("使用 Helm Charts 管理复杂部署", "P_k8s_helm", 82),
-                ("使用 RBAC 实现权限控制", "P_k8s_rbac", 85),
-                ("使用 NetworkPolicy 实现网络隔离", "P_k8s_network_policy", 82),
-            ]
-        },
-        "database": {
-            "keywords": ["database", "数据库", "sql", "mysql", "postgresql", "mongodb",
-                         "redis", "query", "查询", "migration", "迁移",
-                         "orm", "sqlalchemy", "connection pool", "connection pooling",
-                         "index", "索引", "transaction", "事务",
-                         "backup", "备份", "replica", "sharding", "分库分表"],
-            "principles": [
-                ("使用连接池管理数据库连接", "P_db_conn_pool", 90),
-                ("合理设计索引提升查询性能", "P_db_index", 92),
-                ("使用 ORM 管理数据库迁移", "P_db_migration", 87),
-                ("避免 N+1 查询问题", "P_db_n_plus_one", 90),
-                ("读写分离提升吞吐量", "P_db_read_write", 85),
-                ("定期备份和验证恢复流程", "P_db_backup", 88),
-                ("使用 EXPLAIN 分析查询执行计划", "P_db_explain", 90),
-                ("合理使用 CTE 代替子查询提升可读性", "P_db_cte", 83),
-                ("窗口函数优化分组聚合查询", "P_db_window", 85),
-                ("正确使用 JOIN 类型避免笛卡尔积", "P_db_join", 88),
-                ("使用事务保证数据一致性(ACID)", "P_db_transaction", 90),
-                ("分批处理大数据量操作避免锁表", "P_db_batch", 86),
-            ]
-        },
-        "frontend_react": {
-            "keywords": ["react", "vue", "frontend", "前端", "component", "组件",
-                         "hook", "hooks", "jsx", "state", "props", "redux", "typescript"],
-            "principles": [
-                ("使用函数组件 + Hooks 替代类组件", "P_react_hooks", 90),
-                ("合理拆分组件保持单一职责", "P_react_component", 88),
-                ("使用 React.memo/useMemo 避免不必要渲染", "P_react_memo", 86),
-                ("状态管理: 避免 prop drilling，使用 Context/Redux", "P_react_state", 85),
-                ("使用 TypeScript 提升代码健壮性", "P_react_typescript", 87),
-                ("代码分割 + 懒加载优化首屏性能", "P_react_lazy", 85),
-            ]
-        },
-        "git": {
-            "keywords": ["git", "version control", "版本控制", "branch", "分支",
-                         "merge", "rebase", "ci/cd", "pipeline", "github actions"],
-            "principles": [
-                ("使用 Git Flow 或 Trunk-Based 分支策略", "P_git_branch", 88),
-                ("提交信息规范(Conventional Commits)", "P_git_commit", 85),
-                ("使用 CI/CD 自动化测试和部署", "P_git_cicd", 90),
-                ("PR/MR 代码审查流程", "P_git_review", 86),
-                ("使用 rebase 保持提交历史整洁", "P_git_rebase", 82),
-                ("cherry-pick 选择性合并特定提交", "P_git_cherry", 80),
-                ("git bisect 二分查找引入 bug 的提交", "P_git_bisect", 78),
-                ("使用 git hooks 自动化代码检查", "P_git_hooks", 84),
-                ("git stash 暂存未完成的工作", "P_git_stash", 82),
-                ("子模块管理(submodule)多仓库项目", "P_git_submodule", 76),
-                ("git tag 版本标记与发布管理", "P_git_tag", 83),
-                ("解决合并冲突的策略和技巧", "P_git_conflict", 87),
-            ]
-        },
-        "testing": {
-            "keywords": ["test", "testing", "测试", "unit test", "pytest", "unittest",
-                         "integration", "集成测试", "tdd", "mock", "coverage"],
-            "principles": [
-                ("使用 pytest 编写单元测试", "P_test_pytest", 90),
-                ("使用 Mock 隔离外部依赖", "P_test_mock", 87),
-                ("测试覆盖核心逻辑和边界情况", "P_test_coverage", 88),
-                ("集成测试验证组件间协作", "P_test_integration", 85),
-            ]
-        },
-        "networking": {
-            "keywords": ["network", "网络", "tcp", "http", "dns", "load balancer",
-                         "负载均衡", "firewall", "防火墙", "proxy", "代理", "ssl", "tls"],
-            "principles": [
-                ("合理规划网络拓扑和安全策略", "P_net_topology", 85),
-                ("使用 CDN 加速静态内容分发", "P_net_cdn", 82),
-                ("配置负载均衡实现高可用", "P_net_lb", 88),
-                ("使用 HTTPS/TLS 加密传输", "P_net_tls", 92),
-            ]
-        },
-    }
+    # 从 JSON 文件加载，方便用户扩展/修改
+    _patterns_file = Path(__file__).parent / "skill_domain_patterns.json"
+    if _patterns_file.exists():
+        with open(_patterns_file, "r", encoding="utf-8") as _f:
+            _raw = json.load(_f)
+        # 将 JSON 中的 dict 格式 principles 还原为 (principle, id, confidence) 三元组
+        skill_domain_patterns = {}
+        for _domain, _info in _raw.items():
+            skill_domain_patterns[_domain] = {
+                "keywords": _info["keywords"],
+                "principles": [
+                    (_p["principle"], _p["id"], _p["confidence"])
+                    for _p in _info["principles"]
+                ]
+            }
+    else:
+        skill_domain_patterns = {}
+        print("  [WARN] skill_domain_patterns.json 不存在，跳过领域模式匹配")
 
     # ── 合并文本用于匹配 ──
     all_text = ""
@@ -462,19 +531,73 @@ def _extract_patterns_from_cases(cases: list[dict], skill_name: str) -> list[dic
             # 完全没匹配到任何模式时，生成一个兜底模式
             break
 
-    # 仍然无匹配时生成默认模式
-    if not patterns:
-        skill_words = skill_keywords.split()
-        clean_name = " ".join(w.capitalize() for w in skill_words[:3])
-        patterns.append({
-            "id": "P_skill_basics",
-            "principle": f"掌握 {clean_name} 核心概念和最佳实践",
-            "confidence": 80,
-            "level": "basic"
-        })
+    # ── 始终合并领域专有模式（不依赖案例，直接从技能名语义分解） ──
+    sub_ideas = _decompose_skill_name(skill_name, cases)
+    added_domain_ids = set()
+    for i, (sub_name, conf) in enumerate(sub_ideas):
+        pid = f"P_domain_{i+1}"
+        if pid not in seen_ids and pid not in added_domain_ids:
+            patterns.append({
+                "id": pid,
+                "principle": sub_name,
+                "confidence": conf,
+                "level": "domain"
+            })
+            seen_ids.add(pid)
+            added_domain_ids.add(pid)
 
-    # 排序
-    patterns.sort(key=lambda x: x.get("confidence", 0), reverse=True)
+    # ── 技能相关性评分：过滤/降权不相关的通用模式 ──
+    skill_lower = skill_name.lower()
+    # 从 skill_domain_patterns 中提取与技能名相关的领域前缀
+    relevant_prefixes = set()
+    for domain, info in skill_domain_patterns.items():
+        if domain in skill_lower or any(kw in skill_lower for kw in info["keywords"]):
+            # 从该领域第一条原则的ID提取领域前缀（如 P_fin_、P_img_、P_doc_）
+            for p in info["principles"]:
+                pid_str = p[1] if isinstance(p, tuple) else (p.get("id", "") if isinstance(p, dict) else "")
+                parts = pid_str.split("_")
+                if len(parts) >= 2 and parts[0] == "P":
+                    relevant_prefixes.add(f"P_{parts[1]}_")
+                    break
+    # 始终包含 DOMAIN 模式
+    relevant_prefixes.add("P_domain_")
+
+    # ── 领域互斥：如果技能名含图数据库相关词，排除SQL的database领域 ──
+    if any(kw in skill_lower for kw in ["图数据库", "neo4j", "cypher", "graph", "知识图谱",
+                                         "图数据", "图查询", "图算法"]):
+        if "P_db_" in relevant_prefixes:
+            relevant_prefixes.discard("P_db_")
+            print(f"  检测到图数据库技能，排除 SQL database 领域模式")
+
+    for p in patterns:
+        pid = p["id"]
+        level = p.get("level", "basic")
+        # DOMAIN 模式直接从 skill name 生成，保持高置信度
+        if level == "domain":
+            p["confidence"] = min(p["confidence"] + 5, 95)
+            continue
+        # 检查模式是否属于相关领域（按ID前缀匹配）
+        is_relevant = any(pid.startswith(prefix) for prefix in relevant_prefixes)
+        if level == "advanced":
+            if is_relevant:
+                p["confidence"] = min(p["confidence"] + 3, 95)
+            else:
+                # 不相关的高级模式降权
+                p["confidence"] = max(p["confidence"] - 20, 40)
+        # BASIC 通用模式降权
+        if level == "basic":
+            p["confidence"] = max(p["confidence"] - 10, 35)
+
+    # ── 过滤低分噪声模式（置信度 < 65 的不保留） ──
+    before = len(patterns)
+    patterns = [p for p in patterns if p.get("confidence", 0) >= 65]
+    filtered = before - len(patterns)
+    if filtered:
+        print(f"  过滤掉 {filtered} 个低相关性模式（置信度 < 65）")
+    print(f"  保留 {len(patterns)} 个有效模式")
+
+    # 排序（按置信度降序，domain 模式优先于同分）
+    patterns.sort(key=lambda x: (x.get("confidence", 0), x.get("level", "")), reverse=True)
     return patterns
 
 
@@ -484,7 +607,7 @@ def _phase3_analyze(ctx: dict):
     print("  Phase 3: 模式提炼")
     print(f"{'-'*55}")
 
-    cases = ctx.get("all_cases", [])
+    cases = ctx.get("cases", [])
     skill_name = ctx["skill_name"]
     patterns = _extract_patterns_from_cases(cases, skill_name)
 
@@ -531,6 +654,7 @@ def _phase4_build_tool(ctx: dict):
 
     patterns = ctx.get("patterns", [])
     patterns_json = json.dumps(patterns, indent=2, ensure_ascii=False)
+    case_count = len(ctx.get("cases", []))
 
     # 从外部模板文件读取
     template_file = Path(__file__).parent / 'assess_template.py'
@@ -540,6 +664,7 @@ def _phase4_build_tool(ctx: dict):
     tool_code = tool_code.replace("__SKILL_DISPLAY__",
         ctx.get("skill_definition", {}).get("display_name", ctx["skill_name"]))
     tool_code = tool_code.replace("__PATTERNS_JSON__", patterns_json)
+    tool_code = tool_code.replace("__CASE_COUNT__", str(case_count))
 
     tool_file = ctx["rev_dir"] / "tools" / "assess.py"
     with open(tool_file, "w", encoding="utf-8") as f:
@@ -678,3 +803,80 @@ def learn_skill(skill_name: str):
           f"模式: {len(ctx.get('patterns',[]))}个 | "
           f"评分: {assessment.get('final_score','?')}/100")
     print(f"  目录: {ctx.get('rev_dir','')}")
+
+    # 生成 Markdown 报告
+    _generate_markdown_report(ctx)
+
+
+def _generate_markdown_report(ctx: dict):
+    """生成人类可读的 Markdown 学习报告"""
+    rev_dir = ctx.get("rev_dir")
+    if not rev_dir:
+        return
+    skill = ctx.get("skill_name", "unknown")
+    version = ctx.get("version", 0)
+    patterns = ctx.get("patterns", [])
+    cases = ctx.get("cases", [])
+    assessment = ctx.get("assessment", {})
+    score = assessment.get("final_score", 0)
+    passed = assessment.get("passed", False)
+    inherited = ctx.get("inherited_patterns", [])
+    inherited_ids = {p["id"] for p in inherited}
+    prev_version = version - 1 if version > 1 else None
+
+    # 分割模式
+    domains = [p for p in patterns if p.get("level") == "domain"]
+    advanced = [p for p in patterns if p.get("level") == "advanced"]
+    basics = [p for p in patterns if p.get("level") == "basic"]
+    
+    # 区分继承vs新增
+    inherited_cnt = sum(1 for p in patterns if p["id"] in inherited_ids)
+    new_cnt = len(patterns) - inherited_cnt
+
+    lines = []
+    lines.append(f"# 技能学习报告: {skill}")
+    lines.append(f"")
+    lines.append(f"| 属性 | 值 |")
+    lines.append(f"|------|-----|")
+    lines.append(f"| 版本 | rev{version} |")
+    lines.append(f"| 评分 | {score}/100 {'PASS' if passed else 'FAIL'} |")
+    lines.append(f"| 案例数 | {len(cases)} 条 |")
+    lines.append(f"| 模式总数 | {len(patterns)} 个 |")
+    if prev_version:
+        lines.append(f"| 继承自 rev{prev_version} | {inherited_cnt} 个 |")
+        lines.append(f"| 新增 | {new_cnt} 个 |")
+    lines.append(f"")
+    lines.append(f"## 知识模式")
+    lines.append(f"")
+    if domains:
+        lines.append(f"### 领域专有 ({len(domains)}个)")
+        for p in sorted(domains, key=lambda x: -x.get("confidence", 0)):
+            lines.append(f"- [{p['confidence']}%] {p['principle']}")
+        lines.append(f"")
+    if advanced:
+        lines.append(f"### 高级模式 ({len(advanced)}个)")
+        for p in sorted(advanced, key=lambda x: -x.get("confidence", 0)):
+            lines.append(f"- [{p['confidence']}%] {p['principle']}")
+        lines.append(f"")
+    if basics:
+        lines.append(f"### 基础模式 ({len(basics)}个)")
+        for p in sorted(basics, key=lambda x: -x.get("confidence", 0)):
+            lines.append(f"- [{p['confidence']}%] {p['principle']}")
+        lines.append(f"")
+
+    # 案例摘要
+    if cases:
+        lines.append(f"## 参考案例 ({len(cases)}条)")
+        lines.append(f"")
+        for c in cases[:10]:
+            title = c.get("title", c.get("key", "?"))
+            url = c.get("url", "")
+            if url:
+                lines.append(f"- [{title}]({url})")
+            else:
+                lines.append(f"- {title}")
+
+    report_path = rev_dir / "reports" / "learning_report.md"
+    with open(report_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+    print(f"  [OK] 学习报告: reports/learning_report.md")

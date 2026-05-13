@@ -730,6 +730,8 @@ class CopilotSDKSession(BaseSession):
         self.cli_log_to_console = cfg.get('cli_log_to_console', True)
         self.response_log_to_console = cfg.get('response_log_to_console', True)
         self.provider = cfg.get('provider')
+        self.permission_mode = str(cfg.get('permission_mode', 'deny_all') or 'deny_all').strip().lower()
+        self.enforce_agent_tool_calls = cfg.get('enforce_agent_tool_calls', True)
     def make_messages(self, raw_list): return _msgs_claude2oai(_fix_messages(raw_list))
     def _emit_cli_logs(self, client):
         if not self.cli_log_to_console: return
@@ -764,7 +766,24 @@ class CopilotSDKSession(BaseSession):
                     elif p.get("type") == "image_url": parts.append("[image]")
                 content = "\n".join(parts)
             lines.append(f"=== {role} ===\n{content if isinstance(content, str) else str(content)}")
-        return "\n\n".join(lines).strip()
+        prompt = "\n\n".join(lines).strip()
+        if not self.enforce_agent_tool_calls: return prompt
+        policy = (
+            "=== SYSTEM ===\n"
+            "[Execution Policy] Do NOT execute shell commands or scripts through Copilot runtime permissions.\n"
+            "When execution is needed, return the command/script to this agent as a tool call "
+            "(for example code_run) and wait for tool_result."
+        )
+        return f"{policy}\n\n{prompt}" if prompt else policy
+    def _resolve_permission_handler(self, permission_handler_cls):
+        mode = self.permission_mode
+        if mode in {'approve_all', 'allow_all', 'allow', 'unsafe'}:
+            h = getattr(permission_handler_cls, 'approve_all', None)
+            if h is not None: return h
+        for attr in ('deny_all', 'reject_all', 'disallow_all'):
+            h = getattr(permission_handler_cls, attr, None)
+            if h is not None: return h
+        return lambda *_args, **_kwargs: False
     async def _send_with_session(self, prompt):
         from copilot import CopilotClient, SubprocessConfig
         from copilot.session import PermissionHandler
@@ -779,7 +798,7 @@ class CopilotSDKSession(BaseSession):
         cfg = SubprocessConfig(**subprocess_kwargs) if subprocess_kwargs else None
         async with CopilotClient(config=cfg) as client:
             session = None
-            kwargs = {"on_permission_request": PermissionHandler.approve_all, "streaming": False}
+            kwargs = {"on_permission_request": self._resolve_permission_handler(PermissionHandler), "streaming": False}
             if self.model: kwargs["model"] = self.model
             if self.reasoning_effort: kwargs["reasoning_effort"] = self.reasoning_effort
             if self.provider is not None: kwargs["provider"] = self.provider

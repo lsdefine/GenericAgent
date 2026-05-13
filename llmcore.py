@@ -749,6 +749,8 @@ class CopilotSDKSession(BaseSession):
             self.permission_mode = 'approve_all'
         self.enforce_agent_tool_calls = cfg.get('enforce_agent_tool_calls', True)
         self._denied_permission_requests = []
+        self._warned_missing_tool_deny_handler = False
+        self._warned_missing_known_handler = False
     def make_messages(self, raw_list): return _msgs_claude2oai(_fix_messages(raw_list))
     def _emit_cli_logs(self, client):
         if not self.cli_log_to_console: return
@@ -798,7 +800,9 @@ class CopilotSDKSession(BaseSession):
                     return deny_handler(*args, **kwargs)
                 return _deny_and_capture
             if deny_handler is not None: return deny_handler
-            print("[WARN] Copilot SDK PermissionHandler missing deny/reject handler in tool-mounted mode, using deny-all function fallback.")
+            if not self._warned_missing_tool_deny_handler:
+                print("[WARN] Copilot SDK PermissionHandler missing deny/reject handler in tool-mounted mode, using deny-all function fallback.")
+                self._warned_missing_tool_deny_handler = True
             def _deny_all_for_tools(*args, **kwargs):
                 self._record_denied_permission_request({"args": args, "kwargs": kwargs})
                 return False
@@ -810,7 +814,9 @@ class CopilotSDKSession(BaseSession):
             if h is not None: return h
         if deny_handler is not None: return deny_handler
         # Safe fallback: if SDK exposes no known handlers, force-deny every permission request.
-        print("[WARN] Copilot SDK PermissionHandler missing known handlers, using deny-all function fallback.")
+        if not self._warned_missing_known_handler:
+            print("[WARN] Copilot SDK PermissionHandler missing known handlers, using deny-all function fallback.")
+            self._warned_missing_known_handler = True
         def _deny_all(*_args, **_kwargs): return False
         return _deny_all
     def _resolve_deny_handler(self, permission_handler_cls):
@@ -847,7 +853,7 @@ class CopilotSDKSession(BaseSession):
         _walk(request)
         if not candidates: return '', 'bash'
         _, key, code = max(candidates, key=lambda x: (x[0], len(x[2])))
-        is_python = ('python' in key) or bool(re.search(r'^\s*(import |from\s+\w+\s+import |def |class )', code))
+        is_python = ('python' in key) or bool(re.search(r'^\s*(import\s|from\s+\w+\s+import\s|def\s|class\s)', code))
         return code, ('python' if is_python else 'bash')
     def _append_tool_call_from_denied_permission(self, text):
         if '<tool_use>' in (text or '') or '<tool_call>' in (text or ''): return text

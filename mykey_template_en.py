@@ -69,7 +69,7 @@ native_oai_config = {
 #     # 'cli_args': ['--some-flag'],                 # optional extra flags passed to the Copilot CLI
 #     # 'cli_log_level': 'debug',                   # optional CLI log level
 #     # 'cli_log_to_console': True,                 # optional forward CLI stderr logs to this console
-#     # 'permission_mode': 'deny_all',              # default deny_all: block Copilot-side command/script execution
+#     # 'permission_mode': 'approve_all',           # default approve_all; set reject_all/deny_all to block Copilot-side execution
 #     # 'enforce_agent_tool_calls': True,           # default True: inject policy to return execution requests to this agent
 # }
 #

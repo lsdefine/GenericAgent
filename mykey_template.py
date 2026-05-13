@@ -336,7 +336,7 @@ native_oai_config = {
 #     # 'cli_args': ['--some-flag'],             # 可选；透传给 Copilot CLI 的额外参数
 #     # 'cli_log_level': 'debug',                 # 可选；让 Copilot CLI 产生日志
 #     # 'cli_log_to_console': True,               # 可选；把 CLI stderr 日志转发到当前控制台
-#     # 'permission_mode': 'deny_all',            # 默认 deny_all：禁止 Copilot 直接执行命令/脚本，转为让本 agent 调用 code_run
+#     # 'permission_mode': 'approve_all',         # 默认 approve_all；如需禁止 Copilot 执行命令/脚本可改为 reject_all/deny_all
 #     # 'enforce_agent_tool_calls': True,         # 默认 True：在 prompt 注入“命令/脚本交由本 agent 执行”的约束
 # }
 #

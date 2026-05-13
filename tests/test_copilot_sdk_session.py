@@ -138,19 +138,19 @@ class CopilotSDKSessionTests(unittest.TestCase):
         self.assertIn("on_permission_request", self.record["create_session_kwargs"])
         self.assertIs(
             self.record["create_session_kwargs"]["on_permission_request"],
-            sys.modules["copilot.session"].PermissionHandler.reject_all,
+            sys.modules["copilot.session"].PermissionHandler.approve_all,
         )
         self.assertEqual(self.record["subprocess_kwargs"]["github_token"], "ghp_test")
         self.assertTrue(self.record.get("disconnected"))
 
-    def test_copilot_sdk_allows_approve_all_by_permission_mode(self):
-        cfg = {"model": "gpt-5", "permission_mode": "approve_all"}
+    def test_copilot_sdk_can_force_reject_all_by_permission_mode(self):
+        cfg = {"model": "gpt-5", "permission_mode": "reject_all"}
         with patch.object(llmcore, "reload_mykeys", return_value=({"copilot_sdk_config": cfg}, True)):
             session = llmcore.resolve_session("copilot_sdk_config")
             _ = "".join(session.ask("hello copilot sdk"))
         self.assertIs(
             self.record["create_session_kwargs"]["on_permission_request"],
-            sys.modules["copilot.session"].PermissionHandler.approve_all,
+            sys.modules["copilot.session"].PermissionHandler.reject_all,
         )
 
     def test_resolve_client_wraps_copilot_sdk_as_tool_client(self):

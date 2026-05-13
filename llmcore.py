@@ -736,12 +736,12 @@ class CopilotSDKSession(BaseSession):
         self.cli_log_to_console = cfg.get('cli_log_to_console', True)
         self.response_log_to_console = cfg.get('response_log_to_console', True)
         self.provider = cfg.get('provider')
-        raw_permission_mode = cfg.get('permission_mode', 'deny_all')
+        raw_permission_mode = cfg.get('permission_mode', 'approve_all')
         if isinstance(raw_permission_mode, str):
             self.permission_mode = raw_permission_mode.strip().lower()
         else:
-            print(f"[WARN] Invalid permission_mode {raw_permission_mode!r}, fallback to 'deny_all'.")
-            self.permission_mode = 'deny_all'
+            print(f"[WARN] Invalid permission_mode {raw_permission_mode!r}, fallback to 'approve_all'.")
+            self.permission_mode = 'approve_all'
         self.enforce_agent_tool_calls = cfg.get('enforce_agent_tool_calls', True)
     def make_messages(self, raw_list): return _msgs_claude2oai(_fix_messages(raw_list))
     def _emit_cli_logs(self, client):
@@ -791,8 +791,12 @@ class CopilotSDKSession(BaseSession):
         for attr in ('deny_all', 'reject_all', 'disallow_all'):
             h = getattr(permission_handler_cls, attr, None)
             if h is not None: return h
-        # Safe fallback: if SDK exposes no known deny handler, force-deny every permission request.
-        print("[WARN] Copilot SDK PermissionHandler missing deny/reject handler, using deny-all fallback.")
+        h = getattr(permission_handler_cls, 'approve_all', None)
+        if h is not None:
+            print("[WARN] Copilot SDK PermissionHandler missing deny/reject handler, fallback to approve_all.")
+            return h
+        # Safe fallback: if SDK exposes no known handlers, force-deny every permission request.
+        print("[WARN] Copilot SDK PermissionHandler missing known handlers, using deny-all function fallback.")
         def _deny_all(*_args, **_kwargs): return False
         return _deny_all
     async def _send_with_session(self, prompt):

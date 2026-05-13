@@ -713,6 +713,11 @@ class NativeOAISession(NativeClaudeSession):
         return (yield from _openai_stream(self, _msgs_claude2oai(messages)))
 
 class CopilotSDKSession(BaseSession):
+    TOOL_MARKERS = (
+        "### Tools (mounted, always in effect):",
+        "### 工具库状态：持续有效",
+        "### Tools: still active, **ready to call**.",
+    )
     EXECUTION_POLICY_TEXT = (
         "=== SYSTEM ===\n"
         "[Execution Policy] Do NOT execute shell commands or scripts through Copilot runtime permissions.\n"
@@ -784,10 +789,9 @@ class CopilotSDKSession(BaseSession):
         policy = self.EXECUTION_POLICY_TEXT
         return f"{policy}\n\n{prompt}" if prompt else policy
     def _resolve_permission_handler(self, permission_handler_cls, prompt=''):
+        deny_handler = self._resolve_deny_handler(permission_handler_cls)
         if self.enforce_agent_tool_calls and self._has_mounted_tools(prompt):
-            for attr in ('deny_all', 'reject_all', 'disallow_all'):
-                h = getattr(permission_handler_cls, attr, None)
-                if h is not None: return h
+            if deny_handler is not None: return deny_handler
             print("[WARN] Copilot SDK PermissionHandler missing deny/reject handler in tool-mounted mode, using deny-all function fallback.")
             def _deny_all_for_tools(*_args, **_kwargs): return False
             return _deny_all_for_tools
@@ -796,9 +800,7 @@ class CopilotSDKSession(BaseSession):
         if mode in approve_modes:
             h = getattr(permission_handler_cls, 'approve_all', None)
             if h is not None: return h
-        for attr in ('deny_all', 'reject_all', 'disallow_all'):
-            h = getattr(permission_handler_cls, attr, None)
-            if h is not None: return h
+        if deny_handler is not None: return deny_handler
         if mode in approve_modes:
             h = getattr(permission_handler_cls, 'approve_all', None)
             if h is not None:
@@ -808,13 +810,15 @@ class CopilotSDKSession(BaseSession):
         print("[WARN] Copilot SDK PermissionHandler missing known handlers, using deny-all function fallback.")
         def _deny_all(*_args, **_kwargs): return False
         return _deny_all
+    def _resolve_deny_handler(self, permission_handler_cls):
+        for attr in ('deny_all', 'reject_all', 'disallow_all'):
+            h = getattr(permission_handler_cls, attr, None)
+            if h is not None: return h
+        return None
     def _has_mounted_tools(self, prompt):
         if not isinstance(prompt, str) or not prompt: return False
-        return (
-            "### Tools (mounted, always in effect):" in prompt
-            or "### 工具库状态：持续有效" in prompt
-            or "### Tools: still active, **ready to call**." in prompt
-        )
+        # Marker strings come from ToolClient._prepare_tool_instruction and its token-saving variant.
+        return any(marker in prompt for marker in self.TOOL_MARKERS)
     async def _send_with_session(self, prompt):
         from copilot import CopilotClient, SubprocessConfig
         from copilot.session import PermissionHandler

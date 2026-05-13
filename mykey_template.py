@@ -325,17 +325,25 @@ native_oai_config = {
 # ══════════════════════════════════════════════════════════════════════════════
 #  变量名同时含 'copilot' + 'sdk'。使用官方 github-copilot-sdk（底层走 Copilot CLI）。
 #  需要 Python 3.11+ 且安装: pip install ".[copilot-sdk]"
+#  支持在 mixin_config 的 llm_nos 中按下标或 name 引用，与其他非 Native session 混用。
 #
 # copilot_sdk_config = {
-#     'name': 'copilot-sdk',                      # /llms 显示名
+#     'name': 'copilot-sdk',                      # /llms 显示名 & mixin 引用名
 #     'model': 'gpt-5',                           # Copilot 可用模型（如 gpt-5/claude-sonnet-4.5）
 #     'github_token': 'ghp_<your_github_token>', # 可选；已登录 copilot CLI 可不填
 #     # 'copilot_home': './temp/copilot_home',   # 可选；受限环境建议显式指定
 #     # 'cli_path': '/path/to/copilot',          # 可选；自定义 copilot CLI 路径
+#     # 'cli_args': ['--some-flag'],             # 可选；透传给 Copilot CLI 的额外参数
 #     # 'cli_log_level': 'debug',                 # 可选；让 Copilot CLI 产生日志
 #     # 'cli_log_to_console': True,               # 可选；把 CLI stderr 日志转发到当前控制台
 # }
 #
+#  示例：把 CopilotSDKSession 加入 mixin 故障转移（与其他非 Native session 混用）：
+#
+# mixin_copilot_config = {
+#     'llm_nos': ['copilot-sdk', 'my-oai-proxy'],  # copilot 优先，失败自动切 oai
+#     'max_retries': 3,
+# }
 #
 # ══════════════════════════════════════════════════════════════════════════════
 #  4. LLMSession / ClaudeSession — 非 Native 文本协议工具（deprecated）

@@ -59,21 +59,31 @@ native_oai_config = {
 # ── 2b. CopilotSDKSession — GitHub Copilot SDK (optional) ────────────────────
 #  Requires: `pip install .[copilot-sdk]` (Python 3.11+)
 #  Uses the official github-copilot-sdk runtime (Copilot CLI under the hood).
+#  Can be referenced by name in mixin_config llm_nos (mixed with other non-Native sessions).
 # copilot_sdk_config = {
-#     'name': 'copilot-sdk',
-#     'model': 'gpt-5',                         # any model available in Copilot
-#     'github_token': 'ghp_<your_github_token>',  # optional if CLI login / GH_TOKEN / GITHUB_TOKEN is already available
-#     # 'copilot_home': './temp/copilot_home',  # optional writable home dir
-#     # 'cli_path': '/path/to/copilot',         # optional custom copilot CLI
-#     # 'cli_log_level': 'debug',               # optional CLI log level
-#     # 'cli_log_to_console': True,             # optional forward CLI stderr logs to this console
+#     'name': 'copilot-sdk',                        # display name & mixin reference name
+#     'model': 'gpt-5',                             # any model available in Copilot
+#     'github_token': 'ghp_<your_github_token>',    # optional if CLI login / GH_TOKEN / GITHUB_TOKEN is already available
+#     # 'copilot_home': './temp/copilot_home',       # optional writable home dir
+#     # 'cli_path': '/path/to/copilot',              # optional custom copilot CLI
+#     # 'cli_args': ['--some-flag'],                 # optional extra flags passed to the Copilot CLI
+#     # 'cli_log_level': 'debug',                   # optional CLI log level
+#     # 'cli_log_to_console': True,                 # optional forward CLI stderr logs to this console
 # }
+#
+#  Example: add CopilotSDKSession to a mixin failover pool (non-Native sessions only):
+# mixin_copilot_config = {
+#     'llm_nos': ['copilot-sdk', 'my-oai-proxy'],   # copilot first, fall back to oai on error
+#     'max_retries': 3,
+# }
+
 
 
 # ── 3. Mixin failover (optional) ─────────────────────────────────────────────
 #  List sessions by 'name'; if one fails, the next is tried automatically.
-#  Constraint: all referenced sessions must be Native (mixing Native Claude
-#  and Native OAI is fine; mixing Native with non-Native is not).
+#  Constraint: all referenced sessions must be in the same group — either all
+#  Native (NativeClaudeSession / NativeOAISession) or all non-Native
+#  (LLMSession / ClaudeSession / CopilotSDKSession). Mixing groups is not supported.
 # mixin_config = {
 #     'llm_nos': ['claude', 'gpt'],
 #     'max_retries': 5,

@@ -7,6 +7,48 @@ from unittest.mock import patch
 import llmcore
 
 
+class _StubSession:
+    """Minimal session stub for MixinSession integration tests."""
+
+    def __init__(self, name, reply="stub-fallback-reply", should_error=False):
+        self.name = name
+        self.model = "stub-model"
+        self.max_retries = 0
+        self.history = []
+        self.system = ""
+        self.tools = None
+        self.temperature = 1
+        self.max_tokens = None
+        self.reasoning_effort = None
+        self.context_win = 28000
+        self._reply = reply
+        self._should_error = should_error
+
+    def raw_ask(self, messages):
+        if self._should_error:
+            err = "!!!Error: StubError: intentional failure"
+            yield err
+            return [{"type": "text", "text": err}]
+        yield self._reply
+        return [{"type": "text", "text": self._reply}]
+
+    def ask(self, prompt):
+        def _gen():
+            self.history.append({"role": "user", "content": [{"type": "text", "text": prompt}]})
+            msgs = [{"role": "user", "content": [{"type": "text", "text": prompt}]}]
+            gen = self.raw_ask(msgs)
+            chunks = []
+            try:
+                while True:
+                    chunk = next(gen)
+                    chunks.append(chunk)
+                    yield chunk
+            except StopIteration:
+                pass
+            self.history.append({"role": "assistant", "content": [{"type": "text", "text": "".join(chunks)}]})
+        return _gen()
+
+
 class CopilotSDKSessionTests(unittest.TestCase):
     def setUp(self):
         self._saved_modules = {}
@@ -25,7 +67,7 @@ class CopilotSDKSessionTests(unittest.TestCase):
             self._saved_modules[name] = sys.modules.get(name)
         sys.modules[name] = module
 
-    def _install_copilot_stubs(self):
+    def _install_copilot_stubs(self, error=False):
         record = self.record
 
         class FakeSubprocessConfig:
@@ -36,6 +78,8 @@ class CopilotSDKSessionTests(unittest.TestCase):
         class FakeSession:
             async def send_and_wait(self, prompt):
                 record["prompt"] = prompt
+                if error:
+                    raise RuntimeError("Copilot CLI unavailable")
                 return types.SimpleNamespace(data=types.SimpleNamespace(content="stubbed copilot reply"))
 
             async def disconnect(self):
@@ -135,6 +179,52 @@ class CopilotSDKSessionTests(unittest.TestCase):
                 output = "".join(session.ask("hello copilot sdk"))
         self.assertIn("stubbed copilot reply", output)
         self.assertNotIn("stubbed copilot reply", stdout.getvalue())
+
+    def test_copilot_sdk_in_mixin_session_by_index(self):
+        """CopilotSDKSession referenced by integer index in MixinSession returns copilot reply."""
+        cfg = {"name": "copilot-sdk", "model": "gpt-5"}
+        with patch.object(llmcore, "reload_mykeys", return_value=({"copilot_sdk_config": cfg}, True)):
+            sdk_client = llmcore.resolve_client("copilot_sdk_config")
+        mixin = llmcore.MixinSession([sdk_client], {"llm_nos": [0], "max_retries": 0})
+        output = "".join(mixin.ask("hello from mixin"))
+        self.assertIn("stubbed copilot reply", output)
+
+    def test_copilot_sdk_in_mixin_session_by_name(self):
+        """CopilotSDKSession referenced by name in MixinSession llm_nos returns copilot reply."""
+        cfg = {"name": "copilot-sdk", "model": "gpt-5"}
+        with patch.object(llmcore, "reload_mykeys", return_value=({"copilot_sdk_config": cfg}, True)):
+            sdk_client = llmcore.resolve_client("copilot_sdk_config")
+        mixin = llmcore.MixinSession([sdk_client], {"llm_nos": ["copilot-sdk"], "max_retries": 0})
+        output = "".join(mixin.ask("hello from mixin by name"))
+        self.assertIn("stubbed copilot reply", output)
+
+    def test_mixin_session_falls_back_from_copilot_sdk_on_error(self):
+        """MixinSession falls back to a second session when CopilotSDKSession reports an error."""
+        self._install_copilot_stubs(error=True)
+        cfg = {"name": "copilot-sdk", "model": "gpt-5"}
+        with patch.object(llmcore, "reload_mykeys", return_value=({"copilot_sdk_config": cfg}, True)):
+            sdk_client = llmcore.resolve_client("copilot_sdk_config")
+        fallback = _StubSession("fallback", reply="fallback reply")
+        fallback_client = llmcore.ToolClient(fallback)
+        mixin = llmcore.MixinSession(
+            [sdk_client, fallback_client],
+            {"llm_nos": [0, 1], "max_retries": 1},
+        )
+        output = "".join(mixin.ask("hello with fallback"))
+        self.assertIn("fallback reply", output)
+        self.assertNotIn("stubbed copilot reply", output)
+
+    def test_mixin_session_wraps_copilot_sdk_as_tool_client(self):
+        """ToolClient wrapping a MixinSession backed by CopilotSDKSession is usable for chat."""
+        cfg = {"name": "copilot-sdk", "model": "gpt-5"}
+        with patch.object(llmcore, "reload_mykeys", return_value=({"copilot_sdk_config": cfg}, True)):
+            sdk_client = llmcore.resolve_client("copilot_sdk_config")
+        mixin = llmcore.MixinSession([sdk_client], {"llm_nos": [0], "max_retries": 0})
+        tool_client = llmcore.ToolClient(mixin)
+        self.assertIsInstance(tool_client, llmcore.ToolClient)
+        messages = [{"role": "user", "content": "hello"}]
+        output = "".join(tool_client.chat(messages))
+        self.assertIn("stubbed copilot reply", output)
 
 
 if __name__ == "__main__":

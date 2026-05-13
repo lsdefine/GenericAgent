@@ -24,4 +24,7 @@ def _pinit(self, *a, **k):
     if os.name == 'nt': k['creationflags'] = (k.get('creationflags') or 0) | 0x08000000
     _Pi(self, *a, **k)
 subprocess.Popen.__init__ = _pinit
+if hasattr(os, 'startfile'):
+    def _nosf(*a, **k): raise RuntimeError("startfile disabled in sandbox")
+    os.startfile = _nosf
 sys.excepthook = lambda t, v, tb: (sys.__excepthook__(t, v, tb), print(f"\n[Agent Hint]: NO GUESSING! You MUST probe first. If missing common package, pip.")) if issubclass(t, (ImportError, AttributeError)) else sys.__excepthook__(t, v, tb)

@@ -268,6 +268,47 @@ class CopilotSDKSessionTests(unittest.TestCase):
         self.assertIn("Get-ChildItem", output)
         self.assertNotIn("Ran terminal command:", output)
 
+    def test_ran_terminal_commands_followed_by_existing_tool_use(self):
+        """Regression: last Ran terminal command must NOT swallow a subsequent <tool_use> block.
+
+        Previously, the regex _RAN_TERMINAL_RE used \\Z as the terminal stop which caused
+        the second (last) match to consume everything to end-of-string, including any
+        <tool_use> block that followed.  This stripped the original tool call from the
+        response and put corrupt JSON (with embedded XML) into the generated tool args.
+        """
+        original_tool_use = '{"name": "code_run", "arguments": {"script": "import os"}}'
+        reply = (
+            "Let me read the files.\n\n"
+            "Ran terminal command: Get-Content README.md -ErrorAction SilentlyContinue\n"
+            "Write-Host \"---PACKAGE---\"\n"
+            "Get-Content package.json -ErrorAction SilentlyContinue\n\n"
+            f"Ran terminal command: Get-ChildItem src -Recurse\n\n"
+            f"<tool_use>{original_tool_use}</tool_use>"
+        )
+        self._install_copilot_stubs(copilot_reply=reply)
+        cfg = {"model": "gpt-5", "enforce_agent_tool_calls": True}
+        with patch.object(llmcore, "reload_mykeys", return_value=({"copilot_sdk_config": cfg}, True)):
+            session = llmcore.resolve_session("copilot_sdk_config")
+            output = "".join(session.ask(self._tool_prompt()))
+        # Original tool_use must be preserved verbatim
+        self.assertIn(original_tool_use, output)
+        # Ran terminal command: markers must be gone
+        self.assertNotIn("Ran terminal command:", output)
+        # Both terminal commands must produce separate tool_use blocks
+        self.assertIn("Get-Content README.md", output)
+        self.assertIn("Get-ChildItem src", output)
+        # Neither extracted command should contain <tool_use> in its code field
+        import json as _json
+        for block_start in [i for i in range(len(output)) if output[i:].startswith('<tool_use>')]:
+            block_end = output.index('</tool_use>', block_start) + len('</tool_use>')
+            payload_str = output[block_start + len('<tool_use>'):block_end - len('</tool_use>')]
+            try:
+                payload = _json.loads(payload_str)
+                code = payload.get('arguments', {}).get('code', '') or payload.get('arguments', {}).get('script', '')
+                self.assertNotIn('<tool_use>', code, f"tool_use tag leaked into code arg: {code[:80]}")
+            except _json.JSONDecodeError:
+                pass  # original_tool_use payload is checked separately
+
     def test_ran_terminal_command_bash_classified_correctly(self):
         """Shell commands without PowerShell indicators are classified as bash."""
         reply = "Ran terminal command: ls -la /tmp\n"

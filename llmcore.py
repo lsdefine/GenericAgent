@@ -727,7 +727,7 @@ class CopilotSDKSession(BaseSession):
         "and wait for the tool_result from this agent."
     )
     _RAN_TERMINAL_RE = re.compile(
-        r'Ran terminal command:\s*(.*?)(?=\nRan terminal command:|\Z)',
+        r'Ran terminal command:\s*(.*?)(?=\nRan terminal command:|<tool_use>|<tool_call>|\Z)',
         re.DOTALL,
     )
     def __init__(self, cfg):

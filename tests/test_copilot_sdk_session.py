@@ -38,13 +38,9 @@ class _StubSession:
             self.history.append(msg)
             gen = self.raw_ask([msg])
             chunks = []
-            try:
-                while True:
-                    chunk = next(gen)
-                    chunks.append(chunk)
-                    yield chunk
-            except StopIteration:
-                pass
+            for chunk in gen:
+                chunks.append(chunk)
+                yield chunk
             self.history.append(
                 {"role": "assistant", "content": [{"type": "text", "text": "".join(chunks)}]}
             )

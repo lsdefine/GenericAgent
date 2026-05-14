@@ -18,7 +18,7 @@ def get_screen_width():
 
 def start_streamlit(port):
     global proc
-    cmd = [sys.executable, "-m", "streamlit", "run", os.path.join(frontends_dir, "stapp.py"), "--server.port", str(port), "--server.address", "localhost", "--server.headless", "true", "--client.toolbarMode", "viewer"]
+    cmd = [sys.executable, "-m", "streamlit", "run", os.path.join(frontends_dir, "stapp2.py"), "--server.port", str(port), "--server.address", "localhost", "--server.headless", "true"]
     proc = subprocess.Popen(cmd)
     atexit.register(proc.kill)
 
@@ -67,9 +67,13 @@ PASTE_HOOK_JS = """if (!window._pasteHooked) { window._pasteHooked = true;
 
 def idle_monitor():
     last_trigger_time = 0
+    # 等待窗口加载完毕再开始监控
+    time.sleep(12)
     while True:
         time.sleep(5)
         try:
+            if not window or not window.evaluate_js('document.readyState'):
+                continue
             window.evaluate_js(PASTE_HOOK_JS)
             now = time.time()
             if now - last_trigger_time < 120: continue
@@ -146,7 +150,7 @@ if __name__ == '__main__':
         screen_width = get_screen_width()
         x_pos = screen_width - WINDOW_WIDTH - RIGHT_PADDING
     else: x_pos = 100
-    time.sleep(2) 
+    time.sleep(5)
     window = webview.create_window(
         title='GenericAgent', url=f'http://localhost:{port}',
         width=WINDOW_WIDTH, height=WINDOW_HEIGHT, x=x_pos, y=TOP_PADDING,

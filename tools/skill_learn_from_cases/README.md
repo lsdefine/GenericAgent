@@ -1,9 +1,9 @@
-# skill_learn_from_cases   案例驱动技能学习 CLI 工具
+# skill\_learn\_from\_cases   案例驱动技能学习 CLI 工具
 
-通过真实案例学习一项技能，并用案例验证能力习得  
+通过真实案例学习一项技能，并用案例验证能力习得\
 零外部依赖 除搜索引擎 API key   可选大模型增强
 
----
+***
 
 ## 快速开始
 
@@ -29,7 +29,7 @@ python -m tools.skill_learn_from_cases 人机交互ui设计原型handoff
 
 ```text
 Phase 0:    启动  目录创建 + 环境探测
-Phase 0.5:  探测  自动扫描 Neo4j/Docker/SQLite/Git/PaddleOCR 缺密码时交互询问
+Phase 0.5:  探测  自动扫描 /Docker/SQLite/Git/PaddleOCR 缺密码时交互询问
 Phase 1:    定义  LLM 结构化定义 Wikipedia 摘要
 Phase 2:    搜索  多个渠道并行搜索 + 同义词扩展 + 多步案例过滤
 Phase 3:    模式  LLM 智能提取 + 技能分解  规则匹配 16 个领域
@@ -49,43 +49,43 @@ Phase 5:    验证  知识测试 + 实操测试 + 模式覆盖率
 
 已成功完成 5 轮元学习闭环:
 
-| 轮次 | 学习技能 | 评分 | 应用到 CLI 工具 |
-|:----:|---------|:----:|----------------|
-| 1 | structured_logging | 95/100 | 新建 logging_setup.py, llm_helper.py print logger |
-| 2 | cli_ux_design | 86/100 | --help 重写为结构化文档 |
-| 3 | test_strategy | 94/100 | 15 个测试覆盖 4 个模块 + CI 配置 |
-| 4 | wiki_search | 97/100 | 搜索词同义词扩展 多步案例过滤 |
-| 5 | error_handling | 84/100 | 异常分类 错误上下文日志 |
+|  轮次 | 学习技能                |   评分   | 应用到 CLI 工具                                        |
+| :-: | ------------------- | :----: | ------------------------------------------------- |
+|  1  | structured\_logging | 95/100 | 新建 logging\_setup.py, llm\_helper.py print logger |
+|  2  | cli\_ux\_design     | 86/100 | --help 重写为结构化文档                                   |
+|  3  | test\_strategy      | 94/100 | 15 个测试覆盖 4 个模块 + CI 配置                            |
+|  4  | wiki\_search        | 97/100 | 搜索词同义词扩展 多步案例过滤                                   |
+|  5  | error\_handling     | 84/100 | 异常分类 错误上下文日志                                      |
 
 ## 核心特性
 
 ### 1. LLM 增强 可选降级
 
-| 阶段 | LLM 路径 | 规则降级路径 |
-|------|---------|-------------|
-| 定义 | 结构化定义 前置知识 概念 陷阱 | Wikipedia 摘要 |
-| 搜索 | 6 个多样化搜索词 | 模板化搜索词 含同义词扩展 |
-| 模式 | 智能模式提取 + 技能分解 | 16 个领域关键词匹配 |
-| 验证 | 批量评估 + 实操题 | 模式覆盖质量评分 |
+| 阶段 | LLM 路径           | 规则降级路径        |
+| -- | ---------------- | ------------- |
+| 定义 | 结构化定义 前置知识 概念 陷阱 | Wikipedia 摘要  |
+| 搜索 | 6 个多样化搜索词        | 模板化搜索词 含同义词扩展 |
+| 模式 | 智能模式提取 + 技能分解    | 16 个领域关键词匹配   |
+| 验证 | 批量评估 + 实操题       | 模式覆盖质量评分      |
 
 ### 2. 环境探测 + 实操测试
 
-自动探测本机可用服务 缺密码时 ask_user 交互询问:
+自动探测本机可用服务 缺密码时 ask\_user 交互询问:
 
-| 服务 | 探测方式 | 用途 |
-|------|---------|------|
-| Neo4j | 端口 7687 + env | Cypher 实操测试 |
-| Docker | WSL Docker socket | Compose 实操测试 |
-| SQLite | CLI sqlite3 | SQL 实操测试 |
-| Git | git --version | Git 实操测试 |
-| PaddleOCR | 端口 8090 + API | 文档鉴权实操测试 |
+| 服务        | 探测方式              | 用途           |
+| --------- | ----------------- | ------------ |
+|      | 端口 7687 + env     | Cypher 实操测试  |
+| Docker    | WSL Docker socket | Compose 实操测试 |
+| SQLite    | CLI sqlite3       | SQL 实操测试     |
+| Git       | git --version     | Git 实操测试     |
+| PaddleOCR | 端口 8090 + API     | 文档鉴权实操测试     |
 
 结果存入 practice/ 目录:
 
 ```text
 rev5/
   practice/
-    neo4j_hook.py      真实 Neo4j 连接 100/100
+    _hook.py      真实  连接 100/100
     docker_compose.py  docker compose config 校验
     sql.py             SQLite 查询验证
     git.py             Git 操作验证
@@ -110,13 +110,13 @@ rev5/
 
 ### 4. 安全设计
 
-| 风险 | 防护措施 |
-|------|----------|
-| 路径遍历 | sanitize_skill_name 清洗目录名 |
-| API Key 泄漏 | 子进程过滤 API_KEY SECRET 等敏感后缀 |
-| 代码注入 | eval exec 限制 builtins 无 open import |
-| 模板注入 | json.dumps 自动转义 |
-| Shell 注入 | 列表参数调用 subprocess.run |
+| 风险         | 防护措施                                |
+| ---------- | ----------------------------------- |
+| 路径遍历       | sanitize\_skill\_name 清洗目录名         |
+| API Key 泄漏 | 子进程过滤 API\_KEY SECRET 等敏感后缀         |
+| 代码注入       | eval exec 限制 builtins 无 open import |
+| 模板注入       | json.dumps 自动转义                     |
+| Shell 注入   | 列表参数调用 subprocess.run               |
 
 ## CLI 参数
 
@@ -153,17 +153,17 @@ python -m tools.skill_learn_from_cases [skill_name] [选项]
 
 ## 环境变量
 
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| SKILL_LLM_ENABLE | 0 | 启用 LLM 增强 |
-| LLM_API_BASE | http://localhost:11434/v1 | LLM API 端点 |
-| LLM_API_KEY |  | API 密钥 |
-| LLM_MODEL | qwen2.5:7b | 模型名 |
-| LLM_TIMEOUT | 120 | HTTP 超时秒数 |
-| LLM_CACHE_ENABLE | 1 | 启用 LLM 响应缓存 |
-| LLM_CACHE_TTL | 86400 | 缓存有效期秒数 |
-| neo4j_password |  | Neo4j 数据库密码 |
-| SKILL_FORCE_REFRESH | 0 | 强制刷新案例 |
+| 变量                    | 默认值                         | 说明          |
+| --------------------- | --------------------------- | ----------- |
+| SKILL\_LLM\_ENABLE    | 0                           | 启用 LLM 增强   |
+| LLM\_API\_BASE        | <http://localhost:11434/v1> | LLM API 端点  |
+| LLM\_API\_KEY         | <br />                      | API 密钥      |
+| LLM\_MODEL            | qwen2.5:7b                  | 模型名         |
+| LLM\_TIMEOUT          | 120                         | HTTP 超时秒数   |
+| LLM\_CACHE\_ENABLE    | 1                           | 启用 LLM 响应缓存 |
+| LLM\_CACHE\_TTL       | 86400                       | 缓存有效期秒数     |
+| \_password       | <br />                      |  数据库密码 |
+| SKILL\_FORCE\_REFRESH | 0                           | 强制刷新案例      |
 
 ## 测试
 
@@ -198,7 +198,7 @@ tests/
 
 ### 新增领域
 
-编辑 skill_domain_patterns.json 添加新条目:
+编辑 skill\_domain\_patterns.json 添加新条目:
 
 ```json
 {
@@ -214,15 +214,9 @@ tests/
 
 ### 新增实操 hook
 
-在 practical_hooks/ 下创建文件实现 run env -> dict 接口,
-然后在 engine.py 的 hook_rules 列表中添加关键词匹配。
+在 practical\_hooks/ 下创建文件实现 run env -> dict 接口,
+然后在 engine.py 的 hook\_rules 列表中添加关键词匹配。
 
-## 依赖
+##
 
-Python 3.10+
-pip: neo4j  用于 Neo4j 实操测试
-可选: pytesseract/PIL/paddleocr  用于 OCR 实操测试
-
-## License
-
-MIT
+##

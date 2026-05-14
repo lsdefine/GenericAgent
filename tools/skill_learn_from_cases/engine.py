@@ -438,12 +438,23 @@ def _phase2_search(ctx: dict):
                     if wiki_cases:
                         print(f"  Wikipedia: {len(wiki_cases)} 条 (搜索引擎降级)")
                         all_cases.extend(wiki_cases)
+
                 except Exception as e:
                     print(f"  Wikipedia: [FAIL] {e}")
         except Exception as e:
             print(f"  Web: [FAIL] {e}")
     else:
         print(f"  Web: [FAIL] 搜索引擎不可用")
+
+    # ── 渠道 C: Sophub ──
+    try:
+        from tools.skill_learn_from_cases.restore_funcs import _search_sophub
+        sophub_cases = _search_sophub(ctx["skill_name"])
+        if sophub_cases:
+            print(f"  Sophub: {len(sophub_cases)} 条")
+            all_cases.extend(sophub_cases)
+    except Exception:
+        pass
 
     # 继承上一版案例（--force 时跳过）
     if os.environ.get("SKILL_FORCE_REFRESH") == "1":

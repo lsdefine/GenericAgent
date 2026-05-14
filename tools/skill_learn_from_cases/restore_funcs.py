@@ -81,3 +81,26 @@ def _web_search_wikipedia(keyword: str, size: int = 5) -> list[dict]:
         return results
     except Exception:
         return []
+
+
+def _search_sophub(skill_name: str) -> list[dict]:
+    """搜索 Sophub SOP 平台"""
+    import json as _json, urllib.request as _ur
+    try:
+        _req = _ur.Request("https://fudankw.cn/sophub/api/sops")
+        with _ur.urlopen(_req, timeout=10) as _resp:
+            _data = _json.loads(_resp.read())
+        _name = skill_name.lower().replace("_", " ").replace("-", " ")
+        _tokens = [w for w in _name.split() if len(w) > 2]
+        results = []
+        for _item in _data.get("items", []):
+            _text = (_item.get("title","") + " " + (_item.get("preview","") or "")).lower()
+            if any(t in _text for t in _tokens):
+                results.append({
+                    "source": "sophub", "title": _item["title"],
+                    "snippet": (_item.get("preview","") or "")[:200],
+                    "url": f"https://fudankw.cn/sophub/sops/{_item['id']}"
+                })
+        return results
+    except Exception:
+        return []

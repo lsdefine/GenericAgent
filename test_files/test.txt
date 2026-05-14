@@ -1,0 +1,9 @@
+This is a test file for GenericAgent file upload functionality.
+
+The file upload feature allows users to:
+1. Upload multiple files (images, documents, etc.)
+2. Preview files before sending
+3. Delete individual files
+4. Send files along with messages to the Agent
+
+The Agent can then use the file_read tool to access the uploaded files.

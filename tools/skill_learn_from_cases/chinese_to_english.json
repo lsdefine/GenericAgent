@@ -57,5 +57,17 @@
   "交易": "trading",
   "推荐": "recommendation",
   "搜索": "search",
-  "排序": "sorting"
+  "排序": "sorting",
+  "人机交互": "hci",
+  "交互设计": "interaction_design",
+  "原型": "prototype",
+  "界面": "interface",
+  "原型设计": "prototyping",
+  "界面设计": "ui_design",
+  "用户体验": "ux",
+  "交互原型": "interactive_prototype",
+  "设计交付": "handoff",
+  "设计规范": "design_system",
+  "线框图": "wireframe",
+  "可用性": "usability"
 }

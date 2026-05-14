@@ -218,12 +218,15 @@ def run(env: dict = None) -> dict:
     """统一入口: run(env) 接收 env_detector 的输出，返回测试结果"""
     if env is None:
         try:
-            from env_detector import detect_all
-            env = detect_all()
+            import contextlib, io
+            with contextlib.redirect_stdout(io.StringIO()):
+                from env_detector import detect_all
+                env = detect_all()
         except ImportError:
             import sys
-            sys.path.insert(0, r"""D:\open_claw_agent\GenericAgent\tools\skill_learn_from_cases""")
-            from env_detector import detect_all
+            with contextlib.redirect_stdout(io.StringIO()):
+                sys.path.insert(0, r"""D:\open_claw_agent\GenericAgent\tools\skill_learn_from_cases""")
+                from env_detector import detect_all
             env = detect_all()
     return main()
 

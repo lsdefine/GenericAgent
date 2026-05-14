@@ -67,12 +67,16 @@ def run(env: dict = None) -> dict:
     if env is None:
         try:
             from env_detector import detect_all
-            env = detect_all()
+            import contextlib, io
+            with contextlib.redirect_stdout(io.StringIO()):
+                env = detect_all()
         except ImportError:
             import sys
             sys.path.insert(0, r"""D:\\open_claw_agent\\GenericAgent\\tools\\skill_learn_from_cases""")
             from env_detector import detect_all
-            env = detect_all()
+            import contextlib, io
+            with contextlib.redirect_stdout(io.StringIO()):
+                env = detect_all()
     return main()
 
 

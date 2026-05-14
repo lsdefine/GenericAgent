@@ -55,7 +55,7 @@ def convert_name(skill_name: str) -> str:
     en_words = re.findall(r'[a-zA-Z][a-zA-Z0-9]*', skill_name)
     for w in en_words:
         w = w.lower()
-        if len(w) > 2 and w not in seen:
+        if len(w) >= 2 and w not in seen:
             seen.add(w)
             result.append(w)
     

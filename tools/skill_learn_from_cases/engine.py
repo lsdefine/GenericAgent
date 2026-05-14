@@ -1103,6 +1103,14 @@ def _phase4_build_tool(ctx: dict):
         ("鉴定", "document_check.py"),
         ("ocr", "document_check.py"),
         ("image", "document_check.py"),
+        ("ui", "ui_design_hook.py"),     # UI/UX设计技能 → 设计工具验证
+        ("ux", "ui_design_hook.py"),
+        ("设计", "ui_design_hook.py"),
+        ("prototype", "ui_design_hook.py"),
+        ("handoff", "ui_design_hook.py"),
+        ("react", "react_hook.py"),
+        ("frontend", "react_hook.py"),
+        ("hooks", "react_hook.py"),
     ]
 
     import shutil

@@ -310,7 +310,12 @@ def run_practical_test():
                                   capture_output=True, text=True, timeout=30)
                 if r.returncode == 0:
                     import json
-                    result = json.loads(r.stdout)
+                    # 自动剥离非JSON前缀（env_detector的探测输出）
+                    _out = r.stdout
+                    _brace = _out.find('{')
+                    if _brace > 0:
+                        _out = _out[_brace:]
+                    result = json.loads(_out)
                     score = result.get("score", 0)
                     note = result.get("note", "")
                     print(f"  [{hook_name}] {score}/100 - {note}")

@@ -7,6 +7,7 @@ if sys.stderr is None: sys.stderr = open(os.devnull, "w")
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from agent_loop import BaseHandler, StepOutcome, json_default
+import tinyfish_tools
 script_dir = os.path.dirname(os.path.abspath(__file__))
 
 def code_run(code, code_type="python", timeout=60, cwd=None, code_cwd=None, stop_signal=None, maxlen=10000):
@@ -354,6 +355,14 @@ class GenericAgentHandler(BaseHandler):
         result = json.dumps(result, ensure_ascii=False, default=json_default)
         maxlen = 8000 // args.get('_tool_num', 1)
         return StepOutcome(smart_format(result, max_str_len=maxlen), next_prompt=next_prompt)
+
+    def do_tinyfish_search(self, args, response):
+        query = args.get("query", "")
+        if not query: return StepOutcome({"status": "error", "msg": "query is required"}, next_prompt="\n")
+        yield f"[Action] TinyFish search: {query[:80]}\n"
+        result = tinyfish_tools.search(query, args.get("location", "US"), args.get("language", "en"), args.get("page", 0), args.get("max_results", 10))
+        yield f"[Status] {result.get('status')}\n"
+        return StepOutcome(result, next_prompt=self._get_anchor_prompt(skip=args.get('_index', 0) > 0))
     
     def do_file_patch(self, args, response):
         path = self._get_abs_path(args.get("path", ""))

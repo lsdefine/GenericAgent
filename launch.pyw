@@ -3,6 +3,7 @@ import webview, threading, subprocess, sys, time, os, ctypes, atexit, socket, ra
 WINDOW_WIDTH, WINDOW_HEIGHT, RIGHT_PADDING, TOP_PADDING = 600, 900, 0, 100
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
+window = None
 frontends_dir = os.path.join(script_dir, "frontends")
 
 def find_free_port(lo=18501, hi=18599):
@@ -151,8 +152,16 @@ if __name__ == '__main__':
         x_pos = screen_width - WINDOW_WIDTH - RIGHT_PADDING
     else: x_pos = 100
     time.sleep(5)
+    print(f'[Launch] Creating window at x={x_pos} y={TOP_PADDING} url=http://localhost:{port}')
     window = webview.create_window(
         title='GenericAgent', url=f'http://localhost:{port}',
         width=WINDOW_WIDTH, height=WINDOW_HEIGHT, x=x_pos, y=TOP_PADDING,
         resizable=True, text_select=True)
-    webview.start()
+    print(f'[Launch] Window object: {window}')
+    try:
+        webview.start()
+        print('[Launch] webview.start() returned normally — window was closed')
+    except Exception as e:
+        import traceback
+        print(f'[Launch] webview.start() raised: {e}')
+        traceback.print_exc()

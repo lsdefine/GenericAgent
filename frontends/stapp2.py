@@ -198,11 +198,19 @@ div[data-testid="stFileUploader"] section button:hover::before {
     background: #ef4444;
 }
 
-/* 输入区域布局 */
-.input-row-container {
-    display: flex;
-    gap: 8px;
-    align-items: center;
+/* 上传+输入行：禁止换行，上传列固定宽度，输入列填满剩余空间 */
+[data-testid="stHorizontalBlock"]:has([data-testid="stFileUploader"]) {
+    flex-wrap: nowrap !important;
+    align-items: flex-end !important;
+}
+[data-testid="stHorizontalBlock"]:has([data-testid="stFileUploader"]) > *:first-child {
+    flex: 0 0 54px !important;
+    min-width: 54px !important;
+    max-width: 54px !important;
+}
+[data-testid="stHorizontalBlock"]:has([data-testid="stFileUploader"]) > *:last-child {
+    flex: 1 1 0 !important;
+    min-width: 0 !important;
 }
 </style>
 """

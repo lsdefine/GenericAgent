@@ -115,4 +115,4 @@ reflect/*
 **/__pycache__/
 
 .claude/
-tools/skill_learn_from_cases/sync.ffs_db
+tools/skill_learn_from_cases/sync.ffs_db*

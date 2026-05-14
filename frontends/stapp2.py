@@ -16,17 +16,27 @@ def _embed_html(html_str, height=1, width=None, scrolling=False):
     h = max(int(height), 1) if height is not None else 1
     w = int(width) if (width is not None and int(width) > 0) else None
     return _cv1_html(html_str, width=w, height=h, scrolling=scrolling)
-import time, json, re, threading, queue, base64
+import time, json, re, threading, queue, base64, subprocess
+from urllib.request import urlopen
+from urllib.parse import quote
 from datetime import datetime
 from io import BytesIO
 from agentmain import GeneraticAgent
+script_dir = os.path.dirname(os.path.abspath(__file__))
 
 st.set_page_config(page_title="Cowork", layout="wide")
 
-# ─── Anthropic Light Theme CSS ───
+LANG = os.environ.get('GA_LANG', 'zh')
+if LANG not in ('zh', 'en'): LANG = 'zh'
+I18N = {
+    'zh': {'force_stop': '强行停止任务', 'reinject_tools': '重新注入工具', 'desktop_pet': '🐱 桌面宠物'},
+    'en': {'force_stop': 'Force Stop', 'reinject_tools': 'Reinject Tools', 'desktop_pet': '🐱 Desktop Pet'},
+}
+def T(key): return I18N.get(LANG, I18N['zh']).get(key, key)
+
+# ─── CSS variables (needed for FILE_UPLOAD_CSS) ───
 ANTHROPIC_CSS = """
 <style>
-/* ===== Root variables ===== */
 :root {
     --anthropic-primary: #D4A27F;
     --anthropic-primary-hover: #C4895F;
@@ -44,617 +54,6 @@ ANTHROPIC_CSS = """
     --anthropic-info: #5A7A8A;
     --anthropic-font: 'Source Sans Pro', sans-serif;
     --anthropic-mono: 'Source Code Pro', monospace;
-}
-
-/* ===== Global ===== */
-body, [data-testid="stAppViewContainer"] {
-    background-color: var(--anthropic-bg) !important;
-    color: var(--anthropic-text) !important;
-}
-
-.stApp {
-    background-color: var(--anthropic-bg) !important;
-}
-
-/* ===== Header / Top bar ===== */
-[data-testid="stHeader"], header[data-testid="stHeader"] {
-    background-color: var(--anthropic-bg) !important;
-    border-bottom: 1px solid var(--anthropic-border) !important;
-}
-/* Hide default Streamlit toolbar buttons (deploy, hamburger, etc.) */
-[data-testid="stToolbar"] {
-    visibility: hidden !important;
-}
-[data-testid="stDecoration"],
-#MainMenu {
-    display: none !important;
-    visibility: hidden !important;
-}
-/* Restore sidebar expand button (lives inside stToolbar) */
-[data-testid="stExpandSidebarButton"],
-[data-testid="stExpandSidebarButton"] * {
-    visibility: visible !important;
-}
-/* Only restore ancestor divs that contain the sidebar button */
-[data-testid="stToolbar"] div:has([data-testid="stExpandSidebarButton"]) {
-    visibility: visible !important;
-}
-/* Make top-left settings/sidebar toggle darker and easier to see */
-button[data-testid="stExpandSidebarButton"] {
-    visibility: visible !important;
-    background: #F4F1EA !important;
-    background-color: #F4F1EA !important;
-    border: none !important;
-    color: #3B2F2A !important;
-    border-radius: 10px !important;
-    box-shadow: none !important;
-}
-button[data-testid="stExpandSidebarButton"]:hover {
-    background: #EAE4D9 !important;
-    background-color: #EAE4D9 !important;
-    border-color: transparent !important;
-}
-button[data-testid="stExpandSidebarButton"],
-button[data-testid="stExpandSidebarButton"] *,
-button[data-testid="stExpandSidebarButton"] [data-testid="stIconMaterial"] {
-    color: #3B2F2A !important;
-    fill: #3B2F2A !important;
-    stroke: #3B2F2A !important;
-}
-/* Hide other toolbar buttons (deploy, etc.) */
-button[kind="header"] {
-    visibility: hidden !important;
-}
-
-/* ===== Sidebar ===== */
-[data-testid="stSidebar"], section[data-testid="stSidebar"] {
-    background-color: var(--anthropic-sidebar-bg) !important;
-    border-right: 1px solid var(--anthropic-border) !important;
-}
-
-[data-testid="stSidebar"] .stMarkdown,
-[data-testid="stSidebar"] p,
-[data-testid="stSidebar"] span,
-[data-testid="stSidebar"] label {
-    color: var(--anthropic-text) !important;
-}
-
-[data-testid="stSidebar"] hr {
-    border-color: var(--anthropic-border) !important;
-}
-
-/* ===== Sidebar Selectbox ===== */
-[data-testid="stSidebar"] [data-testid="stSelectbox"] {
-    width: fit-content !important;
-    max-width: 100% !important;
-}
-
-[data-testid="stSidebar"] [data-testid="stSelectbox"] > div {
-    width: fit-content !important;
-    max-width: 100% !important;
-}
-
-[data-testid="stSidebar"] [data-testid="stSelectbox"] label,
-[data-testid="stSidebar"] .stSelectbox label {
-    color: var(--anthropic-text-secondary) !important;
-    font-size: 0.9rem !important;
-    font-weight: 500 !important;
-}
-
-[data-testid="stSidebar"] [data-baseweb="select"] {
-    width: fit-content !important;
-    max-width: 100% !important;
-    display: inline-block !important;
-}
-
-[data-testid="stSidebar"] [data-baseweb="select"] > div {
-    width: fit-content !important;
-    max-width: 100% !important;
-    background: #F7F3EC !important;
-    border: none !important;
-    box-shadow: none !important;
-    border-radius: 12px !important;
-    min-height: 42px !important;
-    padding-right: 1.6rem !important;
-    position: relative !important;
-}
-
-[data-testid="stSidebar"] [data-baseweb="select"] > div:hover,
-[data-testid="stSidebar"] [data-baseweb="select"] > div:focus-within {
-    background: #EFE9DE !important;
-    border: none !important;
-    box-shadow: none !important;
-}
-
-[data-testid="stSidebar"] [data-baseweb="select"] input,
-[data-testid="stSidebar"] [data-baseweb="select"] span,
-[data-testid="stSidebar"] [data-baseweb="select"] div {
-    color: var(--anthropic-text) !important;
-}
-
-[data-testid="stSidebar"] [data-baseweb="select"] span {
-    white-space: nowrap !important;
-}
-
-[data-baseweb="popover"],
-[data-baseweb="menu"],
-[data-baseweb="popover"] > div,
-[data-baseweb="popover"] [role="presentation"],
-[data-baseweb="popover"] ul,
-[data-baseweb="popover"] li,
-[data-baseweb="popover"] [role="listbox"],
-[data-baseweb="popover"] [role="option"] {
-    background: #F7F3EC !important;
-    color: var(--anthropic-text) !important;
-}
-
-[role="listbox"] {
-    background: #F7F3EC !important;
-    border: 1px solid var(--anthropic-border) !important;
-    border-radius: 14px !important;
-    box-shadow: 0 10px 30px rgba(58, 47, 42, 0.12) !important;
-    padding: 0.35rem !important;
-    color: var(--anthropic-text) !important;
-}
-
-[role="option"] {
-    color: var(--anthropic-text) !important;
-    background: transparent !important;
-    border-radius: 10px !important;
-}
-
-[role="option"]:hover,
-[role="option"][aria-selected="true"] {
-    background: #EFE9DE !important;
-    color: var(--anthropic-text) !important;
-}
-
-/* ===== Title ===== */
-h1, .stTitle, [data-testid="stHeading"] h1 {
-    color: var(--anthropic-text) !important;
-    font-weight: 600 !important;
-    letter-spacing: -0.02em !important;
-}
-
-/* ===== Agent name input fixed in header bar ===== */
-[data-testid="stTextInput"] {
-    position: fixed !important;
-    top: 0 !important;
-    left: 50% !important;
-    transform: translateX(-50%) !important;
-    z-index: 999999 !important;
-    height: 60px !important;
-    display: flex !important;
-    align-items: center !important;
-    margin: 0 !important;
-    padding: 0 !important;
-}
-/* Hide the empty container left behind */
-[data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"] > [data-testid="stElementContainer"]:first-child {
-    height: 0 !important;
-    overflow: hidden !important;
-    margin: 0 !important;
-    padding: 0 !important;
-}
-[data-testid="stTextInput"] > div {
-    background-color: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
-    padding: 0 !important;
-    margin: 0 !important;
-    position: relative !important;
-}
-[data-testid="stTextInput"] > label {
-    display: none !important;
-}
-[data-testid="stTextInput"] input[type="text"] {
-    font-size: 1.6rem !important;
-    font-weight: 600 !important;
-    letter-spacing: -0.02em !important;
-    color: var(--anthropic-text) !important;
-    background-color: var(--anthropic-bg) !important;
-    border: none !important;
-    border-radius: 0 !important;
-    padding: 0.3rem 1.8rem 0.3rem 0.5rem !important;
-    box-shadow: none !important;
-    width: 320px !important;
-    text-align: center !important;
-    transition: all 0.2s ease !important;
-    cursor: default !important;
-    caret-color: #1a1714 !important;
-}
-[data-testid="stTextInput"] input[type="text"]:hover {
-    background-color: var(--anthropic-bg-secondary) !important;
-    border-radius: 6px !important;
-}
-[data-testid="stTextInput"] input[type="text"]:focus {
-    background-color: var(--anthropic-bg-secondary) !important;
-    border-radius: 6px !important;
-    box-shadow: none !important;
-    cursor: text !important;
-    caret-color: #1a1714 !important;
-}
-/* Edit pencil icon - visible by default, semi-transparent on focus */
-[data-testid="stTextInput"] > div::after {
-    content: '✎' !important;
-    position: absolute !important;
-    right: 8px !important;
-    top: 50% !important;
-    transform: translateY(-50%) !important;
-    font-size: 0.9rem !important;
-    color: var(--anthropic-text-secondary) !important;
-    pointer-events: none !important;
-    opacity: 0.6 !important;
-    transition: opacity 0.2s ease !important;
-}
-[data-testid="stTextInput"] > div:hover::after {
-    opacity: 0.85 !important;
-}
-[data-testid="stTextInput"] > div:focus-within::after {
-    opacity: 0 !important;
-}
-
-h2, h3, h4, h5, h6 {
-    color: var(--anthropic-text) !important;
-    font-weight: 500 !important;
-}
-
-/* ===== Buttons ===== */
-.stButton > button {
-    background-color: var(--anthropic-bg-secondary) !important;
-    color: var(--anthropic-text) !important;
-    border: 1px solid var(--anthropic-border) !important;
-    border-radius: 8px !important;
-    padding: 0.4rem 1rem !important;
-    font-weight: 500 !important;
-    transition: all 0.2s ease !important;
-}
-
-.stButton > button:hover {
-    background-color: var(--anthropic-primary) !important;
-    color: white !important;
-    border-color: var(--anthropic-primary) !important;
-}
-
-.stButton > button[kind="primary"],
-.stButton > button[data-testid="stBaseButton-primary"] {
-    background-color: var(--anthropic-primary) !important;
-    color: white !important;
-    border-color: var(--anthropic-primary) !important;
-}
-
-.stButton > button[kind="primary"]:hover,
-.stButton > button[data-testid="stBaseButton-primary"]:hover {
-    background-color: var(--anthropic-primary-hover) !important;
-    border-color: var(--anthropic-primary-hover) !important;
-}
-
-/* ===== Chat input ===== */
-[data-testid="stChatInput"],
-[data-testid="stChatInput"] > div {
-    background-color: var(--anthropic-bg) !important;
-    border-color: var(--anthropic-border) !important;
-}
-
-[data-testid="stChatInput"] {
-    margin-bottom: 12px !important;
-}
-
-[data-testid="stChatInput"] textarea,
-[data-testid="stChatInputTextArea"] {
-    color: var(--anthropic-text) !important;
-    background-color: var(--anthropic-bg) !important;
-    caret-color: #1A1714 !important;
-}
-
-[data-testid="stChatInput"] textarea::placeholder {
-    color: var(--anthropic-text-secondary) !important;
-    opacity: 0.7 !important;
-}
-
-/* Chat input container border */
-[data-testid="stChatInput"] > div {
-    border: 1px solid var(--anthropic-border) !important;
-    border-radius: 12px !important;
-    min-height: 60px !important;
-    padding: 0.35rem 0.45rem 0.35rem 0.8rem !important;
-    align-items: center !important;
-    gap: 0.5rem !important;
-    transition: none !important;
-    animation: none !important;
-}
-
-[data-testid="stChatInput"] > div:focus-within {
-    border-color: var(--anthropic-primary) !important;
-    box-shadow: 0 0 0 2px rgba(212, 162, 127, 0.2) !important;
-}
-
-[data-testid="stChatInput"] textarea,
-[data-testid="stChatInputTextArea"] {
-    min-height: 1.5rem !important;
-    padding: 0.35rem 0 !important;
-    line-height: 1.5 !important;
-    transition: none !important;
-    animation: none !important;
-}
-
-/* Chat send button */
-[data-testid="stChatInput"] button,
-[data-testid="stChatInputSubmitButton"] {
-    background-color: var(--anthropic-primary) !important;
-    color: white !important;
-    border-radius: 12px !important;
-    width: 60px !important;
-    height: 60px !important;
-    min-width: 60px !important;
-    min-height: 60px !important;
-    padding: 0 !important;
-    display: inline-flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    flex-shrink: 0 !important;
-    transition: none !important;
-    animation: none !important;
-}
-
-[data-testid="stChatInput"] button svg,
-[data-testid="stChatInputSubmitButton"] svg,
-[data-testid="stChatInput"] button [data-testid="stIconMaterial"],
-[data-testid="stChatInputSubmitButton"] [data-testid="stIconMaterial"] {
-    width: 1.25rem !important;
-    height: 1.25rem !important;
-    font-size: 1.25rem !important;
-}
-
-[data-testid="stChatInput"] button:hover {
-    background-color: var(--anthropic-primary-hover) !important;
-}
-
-/* Stop streaming button - fixed at bottom center, above chat input */
-.stop-btn-anchor {
-    display: none !important;
-}
-
-/* Collapse the wrapper so it doesn't push chat bubbles */
-[data-testid="stElementContainer"]:has(.stop-btn-anchor) {
-    height: 0 !important;
-    min-height: 0 !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    overflow: visible !important;
-}
-
-[data-testid="stVerticalBlock"]:has(.stop-btn-anchor):not(:has([data-testid="stChatMessage"])) {
-    position: fixed !important;
-    bottom: 5.75rem !important;
-    left: 50% !important;
-    transform: translateX(-50%) !important;
-    z-index: 1000 !important;
-    width: auto !important;
-    background: transparent !important;
-    pointer-events: none !important;
-    gap: 0 !important;
-}
-
-[data-testid="stVerticalBlock"]:has(.stop-btn-anchor):not(:has([data-testid="stChatMessage"])) > * {
-    pointer-events: auto !important;
-}
-
-[data-testid="stVerticalBlock"]:has(.stop-btn-anchor):not(:has([data-testid="stChatMessage"])) [data-testid="stButton"] {
-    margin: 0 !important;
-}
-
-[data-testid="stVerticalBlock"]:has(.stop-btn-anchor):not(:has([data-testid="stChatMessage"])) [data-testid="stButton"] > button {
-    border-radius: 999px !important;
-    padding: 0.35rem 1.1rem !important;
-    min-height: 2rem !important;
-    font-size: 0.84rem !important;
-    font-weight: 500 !important;
-    line-height: 1 !important;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.12) !important;
-    white-space: nowrap !important;
-}
-
-[data-testid="stVerticalBlock"]:has(.stop-btn-anchor):not(:has([data-testid="stChatMessage"])) [data-testid="stButton"] > button[kind="primary"],
-[data-testid="stVerticalBlock"]:has(.stop-btn-anchor):not(:has([data-testid="stChatMessage"])) [data-testid="stButton"] > button[data-testid="stBaseButton-primary"] {
-    background-color: rgba(212, 162, 127, 0.95) !important;
-    border-color: rgba(212, 162, 127, 0.95) !important;
-}
-
-[data-testid="stVerticalBlock"]:has(.stop-btn-anchor):not(:has([data-testid="stChatMessage"])) [data-testid="stButton"] > button:hover {
-    transform: translateY(-1px) !important;
-    box-shadow: 0 3px 12px rgba(0,0,0,0.15) !important;
-}
-
-/* ===== Chat messages ===== */
-[data-testid="stChatMessage"] {
-    background-color: var(--anthropic-bg) !important;
-    border: none !important;
-    border-radius: 12px !important;
-    padding: 1rem 1.2rem !important;
-    margin-bottom: 0.5rem !important;
-}
-
-/* Assistant messages - clean white like Anthropic */
-[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"]) {
-    background-color: var(--anthropic-bg) !important;
-}
-
-/* User messages - subtle bordered box */
-[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) {
-    background-color: var(--anthropic-bg) !important;
-    border: 1px solid var(--anthropic-border) !important;
-    border-radius: 12px !important;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04) !important;
-}
-
-/* Chat message text */
-[data-testid="stChatMessage"] p,
-[data-testid="stChatMessage"] .stMarkdown {
-    color: var(--anthropic-text) !important;
-    line-height: 1.6 !important;
-}
-
-/* Message timestamp */
-.msg-timestamp {
-    text-align: left;
-    font-size: 0.73rem;
-    color: var(--anthropic-text-secondary);
-    margin-top: -0.3rem;
-    margin-bottom: 0.2rem;
-    opacity: 0.55;
-    font-family: var(--anthropic-mono);
-    letter-spacing: 0.02em;
-}
-
-/* ===== Chat avatars ===== */
-[data-testid="stChatMessageAvatarContainer"] {
-    width: 36px !important;
-    height: 36px !important;
-}
-[data-testid="stChatMessageAvatarContainer"] > div,
-[data-testid*="stChatMessageAvatar"],
-[data-testid*="chatAvatar"] {
-    width: 36px !important;
-    height: 36px !important;
-    border-radius: 50% !important;
-    display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    overflow: hidden !important;
-}
-
-/* User avatar - warm brown gradient */
-[data-testid*="stChatMessageAvatar"]:has(svg),
-[data-testid*="chatAvatar"][data-testid*="user"],
-[data-testid*="stChatMessageAvatar"][data-testid*="User"],
-[data-testid*="stChatMessageAvatar"][data-testid*="user"] {
-    background: linear-gradient(145deg, #D8B08A 0%, #B98259 100%) !important;
-    border: 1px solid rgba(150, 102, 67, 0.22) !important;
-    box-shadow: inset 0 1px 0 rgba(255,255,255,0.34), 0 2px 6px rgba(104, 76, 54, 0.10) !important;
-}
-/* Assistant avatar - cream gradient */
-[data-testid*="chatAvatar"][data-testid*="assistant"],
-[data-testid*="stChatMessageAvatar"][data-testid*="Assistant"],
-[data-testid*="stChatMessageAvatar"][data-testid*="assistant"],
-[data-testid="stChatMessageAvatarContainer"] > div {
-    background: linear-gradient(145deg, #F6F1E9 0%, #E5D7C7 100%) !important;
-    border: 1px solid rgba(187, 165, 141, 0.50) !important;
-    box-shadow: inset 0 1px 0 rgba(255,255,255,0.72), 0 2px 6px rgba(104, 76, 54, 0.08) !important;
-}
-
-/* ===== Inline code (not inside pre/code blocks) ===== */
-:not(pre) > code {
-    background-color: var(--anthropic-code-bg) !important;
-    border: 1px solid var(--anthropic-border) !important;
-    border-radius: 4px !important;
-    padding: 0.15em 0.4em !important;
-    font-size: 0.9em !important;
-    color: var(--anthropic-text) !important;
-}
-
-/* ===== Code blocks (pre) ===== */
-pre, .stCodeBlock, .stCodeBlock pre {
-    background-color: var(--anthropic-code-bg) !important;
-    border: 1px solid var(--anthropic-border) !important;
-    border-radius: 8px !important;
-}
-
-/* Code inside pre blocks: no extra border/background */
-pre code,
-.stCodeBlock code,
-[data-testid="stChatMessage"] pre code,
-[data-testid="stChatMessage"] .stCodeBlock code {
-    background-color: transparent !important;
-    border: none !important;
-    padding: 0 !important;
-    font-size: inherit !important;
-    color: var(--anthropic-text) !important;
-}
-
-/* ===== Toast / Alerts ===== */
-[data-testid="stToast"] {
-    background-color: var(--anthropic-bg-secondary) !important;
-    border: 1px solid var(--anthropic-border) !important;
-    border-radius: 8px !important;
-    color: var(--anthropic-text) !important;
-}
-
-/* ===== Captions ===== */
-.stCaption, [data-testid="stCaptionContainer"] {
-    color: var(--anthropic-text-secondary) !important;
-}
-
-/* ===== Divider ===== */
-[data-testid="stHorizontalBlock"] hr,
-hr {
-    border-color: var(--anthropic-border) !important;
-}
-
-/* ===== Scrollbar ===== */
-::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
-}
-::-webkit-scrollbar-track {
-    background: var(--anthropic-bg);
-}
-::-webkit-scrollbar-thumb {
-    background: var(--anthropic-border);
-    border-radius: 3px;
-}
-::-webkit-scrollbar-thumb:hover {
-    background: var(--anthropic-text-secondary);
-}
-
-/* ===== Links ===== */
-a {
-    color: var(--anthropic-accent) !important;
-}
-a:hover {
-    color: var(--anthropic-primary-hover) !important;
-}
-
-/* ===== Error/Warning/Info/Success ===== */
-[data-testid="stAlert"] {
-    border-radius: 8px !important;
-}
-
-/* ===== Bottom padding for chat ===== */
-[data-testid="stBottomBlockContainer"] {
-    background-color: var(--anthropic-bg) !important;
-}
-
-/* ===== Gear icon to open sidebar ===== */
-#sidebar-gear-toggle {
-    position: fixed !important;
-    top: 12px !important;
-    left: 12px !important;
-    z-index: 999999 !important;
-    width: 36px !important;
-    height: 36px !important;
-    display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    font-size: 1.3rem !important;
-    color: var(--anthropic-text-secondary) !important;
-    background: var(--anthropic-bg-secondary) !important;
-    border: 1px solid var(--anthropic-border) !important;
-    border-radius: 8px !important;
-    cursor: pointer !important;
-    transition: all 0.2s ease !important;
-    opacity: 0.7 !important;
-    user-select: none !important;
-}
-#sidebar-gear-toggle:hover {
-    opacity: 1 !important;
-    color: var(--anthropic-primary) !important;
-    border-color: var(--anthropic-primary) !important;
-    transform: rotate(30deg) !important;
-}
-/* Hide gear when sidebar is open */
-body:has([data-testid="stSidebar"][aria-expanded="true"]) #sidebar-gear-toggle {
-    display: none !important;
 }
 </style>
 """
@@ -1397,16 +796,14 @@ def init_session_state():
 
 init_session_state()
 
-# Inject Anthropic theme
+# Inject CSS variables + upload/paste CSS
 st.markdown(ANTHROPIC_CSS, unsafe_allow_html=True)
 st.markdown(FILE_UPLOAD_CSS, unsafe_allow_html=True)
 st.markdown(PASTE_HIDDEN_INPUT_CSS, unsafe_allow_html=True)
-st.markdown(build_dynamic_font_css(110.0), unsafe_allow_html=True)
-_embed_html(ANTHROPIC_SELECTBOX_SCRIPT, height=0, width=0)
-_embed_html(build_header_agent_badge_script(), height=0, width=0)
 _embed_html(build_paste_listener_script(), height=0, width=0)
 
-st.session_state.agent_name = 'Generic Agent'
+st.title("🖥️ Cowork")
+
 with st.chat_message("assistant"):
     st.markdown(f'<div class="msg-timestamp">{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</div>', unsafe_allow_html=True)
     st.write("欢迎使用GenericAgent~")
@@ -1414,21 +811,66 @@ with st.chat_message("assistant"):
 
 @st.fragment
 def render_sidebar():
-    llm_options, current_idx = agent.list_llms(), agent.llm_no
-    st.session_state.selected_llm_idx = current_idx
+    st.session_state.setdefault('autonomous_enabled', False)
+    llm_options = agent.list_llms()
+    current_idx = agent.llm_no
     llm_labels = {idx: f"{idx}: {(name or '').strip()}" for idx, name, _ in llm_options}
-    st.caption(f"当前使用的LLM为：{current_idx}: {agent.get_llm_name()}", help="可在下方选择链路")
+    st.session_state.selected_llm_idx = current_idx
+    st.caption(f"LLM Core: {llm_labels.get(current_idx, str(current_idx))}")
     st.markdown(f'<div data-testid="sidebar-llm-max-label" style="display:none">{html.escape(max(llm_labels.values(), key=len, default=""))}</div>', unsafe_allow_html=True)
-    selected_idx = st.selectbox("选择链路：", [idx for idx, _, _ in llm_options], index=next((i for i, (idx, _, _) in enumerate(llm_options) if idx == current_idx), 0), format_func=llm_labels.get, key="sidebar_llm_select")
+    selected_idx = st.selectbox("LLM", [idx for idx, _, _ in llm_options],
+        index=next((i for i, (idx, _, _) in enumerate(llm_options) if idx == current_idx), 0),
+        format_func=llm_labels.get, label_visibility="collapsed", key="sidebar_llm_select")
     if selected_idx != current_idx:
         agent.next_llm(selected_idx)
         st.session_state.selected_llm_idx = selected_idx
         st.toast(f"已切换到备用链路：{llm_labels[selected_idx]}")
         st.rerun()
-    st.divider()
-    if st.button("重新注入System Prompt"):
+    if st.button(T('force_stop')):
+        agent.abort(); st.toast("Stop signal sent"); st.rerun()
+    if st.button(T('reinject_tools')):
         agent.llmclient.last_tools = ''
-        st.toast("下次将重新注入System Prompt")
+        try:
+            hist_path = os.path.join(script_dir, '..', 'assets', 'tool_usable_history.json')
+            with open(hist_path, 'r', encoding='utf-8') as f_: tool_hist = json.load(f_)
+            agent.llmclient.backend.history.extend(tool_hist)
+            st.toast("Tools injected")
+        except Exception as e: st.toast(f"Injected tools failed: {e}")
+    if st.button(T('desktop_pet')):
+        kwargs = {'creationflags': 0x08} if sys.platform == 'win32' else {}
+        pet_script = os.path.join(script_dir, 'desktop_pet_v2.pyw')
+        if not os.path.exists(pet_script): pet_script = os.path.join(script_dir, 'desktop_pet.pyw')
+        subprocess.Popen([sys.executable, pet_script], **kwargs)
+        def _pet_req(q):
+            def _do():
+                try: urlopen(f'http://127.0.0.1:41983/?{q}', timeout=2)
+                except Exception: pass
+            threading.Thread(target=_do, daemon=True).start()
+        agent._pet_req = _pet_req
+        if not hasattr(agent, '_turn_end_hooks'): agent._turn_end_hooks = {}
+        def _pet_hook(ctx):
+            parts = [f"Turn {ctx.get('turn','?')}"]
+            if ctx.get('summary'): parts.append(ctx['summary'])
+            if ctx.get('exit_reason'): parts.append('DONE')
+            _pet_req(f'msg={quote(chr(10).join(parts))}')
+            if ctx.get('exit_reason'): _pet_req('state=idle')
+        agent._turn_end_hooks['pet'] = _pet_hook
+        st.toast("Desktop pet started")
+    if LANG == 'zh':
+        st.divider()
+        if st.button("开始空闲自主行动"):
+            st.session_state.last_reply_time = int(time.time()) - 1800
+            st.toast("已将上次回复时间设为1800秒前"); st.rerun()
+        if st.session_state.autonomous_enabled:
+            if st.button("⏸️ 禁止自主行动"):
+                st.session_state.autonomous_enabled = False
+                st.toast("⏸️ 已禁止自主行动"); st.rerun()
+            st.caption("🟢 自主行动运行中，会在你离开它30分钟后自动进行")
+        else:
+            if st.button("▶️ 允许自主行动", type="primary"):
+                st.session_state.autonomous_enabled = True
+                st.toast("✅ 已允许自主行动"); st.rerun()
+            st.caption("🔴 自主行动已停止")
 
 with st.sidebar: render_sidebar()
 

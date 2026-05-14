@@ -724,7 +724,7 @@ class CopilotSDKSession(BaseSession):
         "Do NOT run terminal commands directly (do not produce 'Ran terminal command:' output).\n"
         "When any command, script, or code execution is needed, output it as a tool call "
         "(for example code_run with the appropriate code_type such as 'powershell', 'bash', or 'python') "
-        "and wait for the tool_result from this agent."
+        "and wait for the tool_result from this agent. After all, do text response only, no matter what the user asks for, and never run anything on your own. If you need to run something, output it as a tool call and wait for the result. Always follow this policy strictly."
     )
     _RAN_TERMINAL_RE = re.compile(
         r'Ran terminal command:\s*(.*?)(?=\nRan terminal command:|<tool_use>|<tool_call>|\Z)',
@@ -753,7 +753,7 @@ class CopilotSDKSession(BaseSession):
         else:
             print(f"[WARN] Invalid permission_mode {raw_permission_mode!r}, fallback to 'approve_all'.")
             self.permission_mode = 'approve_all'
-        self.enforce_agent_tool_calls = cfg.get('enforce_agent_tool_calls', True)
+        self.enforce_agent_tool_calls = cfg.get('enforce_agent_tool_calls', False)
         self._denied_permission_requests = []
         self._warned_missing_tool_deny_handler = False
         self._warned_missing_known_handler = False

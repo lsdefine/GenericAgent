@@ -46,7 +46,7 @@ def get_versions(skill_name: str) -> list[int]:
                 versions.append(int(d.name[3:]))
             except ValueError:
                 pass
-    return sorted(versions)
+    return sorted(versions)  # 数字排序，确保 rev9 < rev10
 
 
 def next_version(skill_name: str) -> int:
@@ -130,7 +130,7 @@ def create_revision_dir(skill_name: str, version: int) -> Path:
       └── iterations/
     """
     rev_dir = SKILL_LEARN_ROOT / _sanitize_skill_name(skill_name) / f"rev{version}"
-    subdirs = ["cases", "patterns", "tools", "reports", "iterations"]
+    subdirs = ["cases", "patterns", "tools", "practice", "reports", "iterations"]
     for s in subdirs:
         (rev_dir / s).mkdir(parents=True, exist_ok=True)
 

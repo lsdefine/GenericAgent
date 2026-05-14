@@ -211,5 +211,23 @@ def main():
     sys.exit(0 if result["passed"] else 1)
 
 
+
+
+# ── 统一接口 ──
+def run(env: dict = None) -> dict:
+    """统一入口: run(env) 接收 env_detector 的输出，返回测试结果"""
+    if env is None:
+        try:
+            from env_detector import detect_all
+            env = detect_all()
+        except ImportError:
+            import sys
+            sys.path.insert(0, r"""D:\open_claw_agent\GenericAgent\tools\skill_learn_from_cases""")
+            from env_detector import detect_all
+            env = detect_all()
+    return main()
+
+
 if __name__ == "__main__":
-    main()
+    result = run()
+    print(json.dumps(result, ensure_ascii=False))

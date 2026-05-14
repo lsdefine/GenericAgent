@@ -287,28 +287,46 @@ def check_pattern_coverage():
 
 # ── 实操测试 ──
 def run_practical_test():
-    """实操测试: LLM生成应用场景 / fallback到规则"""
-    practical_file = os.path.join(os.path.dirname(__file__), "practical_test.py")
-    if os.path.exists(practical_file):
+    """实操测试: 扫描 practice/ 目录运行所有 hook，聚合评分"""
+    practice_dir = os.path.join(os.path.dirname(__file__), "..", "practice")
+    hook_files = []
+    if os.path.isdir(practice_dir):
+        for f in sorted(os.listdir(practice_dir)):
+            if f.endswith(".py") and f != "__init__.py":
+                hook_files.append(os.path.join(practice_dir, f))
+
+    if hook_files:
         border = "-" * 50
         print(f"\n{border}")
-        print(f"  实操测试")
+        print(f"  实践环节 ({len(hook_files)} 个 hook)")
         print(f"{border}")
         import subprocess
-        try:
-            r = subprocess.run([sys.executable, practical_file],
-                              capture_output=True, text=True, timeout=30)
-            print(r.stdout[:500])
-            if r.returncode == 0:
-                return 100, r.stdout.strip()[-100:]
-            else:
-                print(f"  [FAIL] {r.stderr[:200]}")
-                return 50, "部分通过"
-        except Exception as e:
-            print(f"  [ERR] {e}")
-            return 0, str(e)
+        total_score = 0
+        notes = []
+        for hook_file in hook_files:
+            hook_name = os.path.basename(hook_file)
+            try:
+                r = subprocess.run([sys.executable, hook_file],
+                                  capture_output=True, text=True, timeout=30)
+                if r.returncode == 0:
+                    import json
+                    result = json.loads(r.stdout)
+                    score = result.get("score", 0)
+                    note = result.get("note", "")
+                    print(f"  [{hook_name}] {score}/100 - {note}")
+                    total_score += score
+                    notes.append(f"{hook_name}:{score}")
+                else:
+                    print(f"  [{hook_name}] [FAIL] {r.stderr[:100]}")
+                    notes.append(f"{hook_name}:fail")
+            except Exception as e:
+                print(f"  [{hook_name}] [ERR] {e}")
+                notes.append(f"{hook_name}:err")
 
-    # ── LLM 增强实操测试 ──
+        avg_score = int(total_score / len(hook_files)) if hook_files else 0
+        return avg_score, "; ".join(notes)
+
+    # ── LLM 增强实操测试（无 practice hook 时） ──
     llm = _get_llm()
     if llm and PATTERNS:
         return _llm_practical_test(llm)

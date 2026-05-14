@@ -180,8 +180,19 @@ def main():
 
     if args.dry_run:
         print(f"[DRY RUN] 将学习技能: {skill_name}")
+        print(f"          目录名: {en_name}")
         print(f"          流程: Phase 0→1→2→3→4→5")
         print(f"          将创建: skills_learning/{en_name}/revN/")
+        # 环境探测
+        try:
+            from tools.skill_learn_from_cases.env_detector import detect_all
+            env = detect_all()
+            available = [k for k, v in env.items() if v.get("available")]
+            print(f"          环境: {', '.join(available) if available else '无可用服务'}")
+            print(f"          LLM: {'启用('+__import__('os').environ.get('LLM_MODEL','?')+')' if __import__('os').environ.get('SKILL_LLM_ENABLE')=='1' else '未启用'}")
+        except Exception as e:
+            print(f"          环境探测失败: {e}")
+        print(f"          提示: 运行 python -m tools.skill_learn_from_cases {skill_name} --force 可强制刷新案例")
         return
 
     if args.force:

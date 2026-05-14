@@ -291,23 +291,51 @@ def _phase2_search(ctx: dict):
 
     all_cases = []
 
-    # 渠道 A: Skill Hub
+    # 渠道 A: Skill Hub（仅保留与技能名关键词重叠的结果）
     search_fn = _import_skill_search()
     if search_fn:
         try:
+            # 提取技能名的有区分度关键词（过滤通用词如 program/language/learn）
+            _skill_name = ctx["skill_name"].lower().replace("_", " ")
+            _skill_tokens = set(_skill_name.split())
+            _generic_tokens = {"program", "programming", "language", "languages", "learn", "learning",
+                               "tutorial", "guide", "basic", "advanced", "using", "with", "and", "for",
+                               "development", "developer", "coding", "code", "script", "scripting"}
+            _sig_tokens = _skill_tokens - _generic_tokens
+            # 如果技能名有中文，将整个技能名作为关键词
+            _has_cjk = any('\u4e00' <= c <= '\u9fff' for c in _skill_name)
+            if _has_cjk:
+                _sig_tokens.add(_skill_name.strip())
+            
             results = search_fn(ctx["skill_name"].replace("_", " "), top_k=10)
             skill_cases = []
             for r in results:
                 s = r.skill
-                skill_cases.append({
-                    "source": "skill_hub",
-                    "key": s.key,
-                    "description": (s.description[:300] if s.description else ""),
-                    "tags": s.tags[:5] if s.tags else [],
-                    "score": r.final_score
-                })
+                _key_lower = (s.key + " " + (s.description or "") + " " + " ".join(s.tags or [])).lower()
+                # 过滤 agentskill_skills/ 开头的内部技能定义（不是真实案例）
+                if s.key.startswith("agentskill_skills/"):
+                    continue
+                # 计算关键词重叠：至少有一个有区分度的词出现在结果中
+                _overlap = sum(1 for t in _sig_tokens if t in _key_lower)
+                _relevance = "low"
+                if _overlap >= 2 or (_sig_tokens and any(t in s.key.lower() for t in _sig_tokens)):
+                    _relevance = "high"
+                elif _overlap >= 1:
+                    _relevance = "medium"
+                
+                # 只保留 medium 以上
+                if _relevance != "low":
+                    skill_cases.append({
+                        "source": "skill_hub",
+                        "type": "skill_def",
+                        "key": s.key,
+                        "description": (s.description[:300] if s.description else ""),
+                        "tags": s.tags[:5] if s.tags else [],
+                        "score": r.final_score,
+                        "relevance": _relevance
+                    })
             all_cases.extend(skill_cases)
-            print(f"  Skill Hub: {len(skill_cases)} 条")
+            print(f"  Skill Hub: {len(skill_cases)} 条 (过滤掉 {len(results)-len(skill_cases)} 条不相关)")
         except Exception as e:
             print(f"  Skill Hub: [FAIL] {e}")
 
@@ -358,15 +386,19 @@ def _phase2_search(ctx: dict):
                         ])
             web_cases = []
             seen_urls = set()
+            seen_titles = set()
             for q in queries:
                 results = search_engine(q, size=5)
                 for r in results:
                     url = r.get("url", "")
-                    if url and url not in seen_urls:
+                    title = r.get("title", "").strip()
+                    if url and url not in seen_urls and title not in seen_titles:
                         seen_urls.add(url)
+                        seen_titles.add(title or url)
                         web_cases.append({
                             "source": "web",
-                            "title": r.get("title", ""),
+                            "type": "web_article",
+                            "title": title,
                             "url": url,
                             "snippet": r.get("snippet", "")[:300]
                         })
@@ -378,17 +410,20 @@ def _phase2_search(ctx: dict):
                 try:
                     wiki_fn = _web_search_wikipedia
                     wiki_queries = [f"{en_kw}", name] if en_kws else [name]
-                    wiki_seen = set()
+                    wiki_seen_urls = set()
+                    wiki_seen_titles = set()
                     wiki_cases = []
                     for wq in wiki_queries:
                         wiki_results = wiki_fn(wq, size=5)
                         for wr in wiki_results:
-                            title = wr.get("title", "")
+                            title = wr.get("title", "").strip()
                             url = wr.get("url", "")
-                            if url and url not in wiki_seen:
-                                wiki_seen.add(url)
+                            if url and url not in wiki_seen_urls and title not in wiki_seen_titles:
+                                wiki_seen_urls.add(url)
+                                wiki_seen_titles.add(title or url)
                                 wiki_cases.append({
                                     "source": "wikipedia",
+                                    "type": "wiki_entry",
                                     "title": title,
                                     "url": url,
                                     "snippet": wr.get("snippet", "")[:300]
@@ -663,30 +698,23 @@ def _extract_patterns_from_cases(cases: list[dict], skill_name: str) -> list[dic
         pass
     skill_keywords = skill_name.lower().replace("_", " ").replace("-", " ")
     matched_domains = set()
-    # 构建案例标题文本（仅标题，不含摘要/描述——减少误匹配）
+    # 构建案例标题文本（仅标题——用于辅助检查）
     case_titles_text = " ".join([
         (c.get("title") or c.get("key") or "").lower()
         for c in cases
     ])
     for domain, info in skill_domain_patterns.items():
-        # 技能名匹配（高置信度）
+        # 技能名匹配（精确匹配 domain 名）
         if domain in skill_keywords:
             matched_domains.add(domain)
             continue
-        # 关键词在案例标题中出现 + 技能名中包含领域上下文（兼顾新旧技能）
+        # 关键词匹配：仅在技能名包含领域关键词时才触发（防止api/git等通用词误匹配）
         for kw in info["keywords"]:
-            if (kw in case_titles_text or kw in skill_keywords):
-                # 额外检查：技能名或其分解词与领域相关
-                for name_part in skill_keywords.split():
-                    if len(name_part) > 2 and (name_part in domain or domain in name_part):
-                        matched_domains.add(domain)
-                        break
-                else:
-                    # 技能名无直接关联时，只在强关键词匹配时才加（关键词出现在多个案例标题中）
-                    if kw in skill_keywords:
-                        matched_domains.add(domain)
-                    elif case_titles_text.count(kw) >= 2:  # 多个案例标题都含此关键词
-                        matched_domains.add(domain)
+            if kw in skill_keywords:
+                # 技能名含领域关键词，且案例标题也提及 → 确认匹配
+                if kw in case_titles_text or any(part in case_titles_text for part in skill_keywords.split() if len(part) > 2):
+                    matched_domains.add(domain)
+                    break
                 break
 
     for domain in matched_domains:
@@ -1050,37 +1078,59 @@ def _phase4_build_tool(ctx: dict):
 
     ctx["tool_file"] = tool_file
 
-    # ── 技能专属实操测试：检测是否有匹配的 practical hook ──
+    # ── 实践环节：检测所有匹配的 practical hook，复制到 practice/ ──
     skill_lower = ctx["skill_name"].lower()
     hooks_dir = Path(__file__).parent / "practical_hooks"
-    hook_file = None
 
-    # 关键词匹配规则（按特异性从高到低）
-    for keyword, hook_name in [
+    # 关键词匹配规则
+    hook_rules = [
         ("docker", "docker_compose.py"),
         ("compose", "docker_compose.py"),
         ("container", "docker_compose.py"),
-        ("sql", "sql.py"),          # SQL/数据库技能 → SQLite 查询验证
-        ("database", "sql.py"),
+        ("neo4j", "neo4j_hook.py"),
+        ("cypher", "neo4j_hook.py"),
+        ("graph_database", "neo4j_hook.py"),
+        ("图数据库", "neo4j_hook.py"),
+        ("sql", "sql.py"),
         ("mysql", "sql.py"),
         ("postgres", "sql.py"),
-        ("git", "git.py"),              # Git 技能 → Git 仓库操作验证
-        ("async", "python_async.py"),   # Python async 技能 → 异步代码执行
+        ("git", "git.py"),
+        ("async", "python_async.py"),   # Python async 技能
         ("asyncio", "python_async.py"),
-    ]:
-        if keyword in skill_lower:
+        ("图像", "document_check.py"),   # 图像/文档鉴权技能
+        ("凭证", "document_check.py"),
+        ("证件", "document_check.py"),
+        ("鉴定", "document_check.py"),
+        ("ocr", "document_check.py"),
+        ("image", "document_check.py"),
+    ]
+
+    import shutil
+    matched_hooks = []
+    seen_hooks = set()
+    # hook互斥规则：如果特定hook已匹配，则排除其互斥hook
+    hook_exclusions = {
+        "neo4j_hook.py": ["sql.py", "docker_compose.py"],
+        "docker_compose.py": ["sql.py"],
+    }
+    for keyword, hook_name in hook_rules:
+        if keyword in skill_lower and hook_name not in seen_hooks:
+            # 互斥检查：如果已匹配的hook排斥当前hook则跳过
+            if any(hook_name in excl_list for excl_hook, excl_list in hook_exclusions.items() if excl_hook in seen_hooks):
+                continue
             hook_file = hooks_dir / hook_name
             if hook_file.exists():
-                break
+                seen_hooks.add(hook_name)
+                practice_target = ctx["rev_dir"] / "practice" / hook_name
+                shutil.copy2(str(hook_file), str(practice_target))
+                matched_hooks.append(hook_name)
 
-    if hook_file and hook_file.exists():
-        practical_target = ctx["rev_dir"] / "tools" / "practical_test.py"
-        import shutil
-        shutil.copy2(str(hook_file), str(practical_target))
-        print(f"  [OK] 实操测试已添加: practical_test.py ({hook_file.name})")
-        ctx["has_practical"] = True
+    ctx["practice_hooks"] = matched_hooks
+    ctx["has_practical"] = len(matched_hooks) > 0
+    if matched_hooks:
+        print(f"  [OK] 实践环节: {', '.join(matched_hooks)}")
     else:
-        ctx["has_practical"] = False
+        print("  [OK] 无匹配实践")
 
 
 
@@ -1103,8 +1153,8 @@ def _phase5_validate(ctx: dict):
     try:
         # 安全：从父进程复制环境变量，过滤掉敏感密钥
         subprocess_env = os.environ.copy()
-        # 过滤掉所有已知 API 密钥（避免泄露给子进程）
-        _sensitive_suffixes = ("_API_KEY", "_API_SECRET", "_SECRET", "_TOKEN", "_PASSWORD", "_KEY")
+        # 过滤敏感密钥（仅限 API 密钥和 Token，保留数据库密码供 practical hook 使用）
+        _sensitive_suffixes = ("_API_KEY", "_API_SECRET", "_ACCESS_KEY", "_SECRET_KEY", "_AUTH_TOKEN")
         for key in list(subprocess_env.keys()):
             if any(key.upper().endswith(suf) for suf in _sensitive_suffixes):
                 del subprocess_env[key]
@@ -1172,6 +1222,22 @@ def learn_skill(skill_name: str):
 
     try:
         ctx = _phase0_bootstrap(skill_name)
+        
+        # ── 环境探测 (Phase 0.5) ──
+        try:
+            from tools.skill_learn_from_cases.env_detector import detect_all
+            ctx["env"] = detect_all()
+            # 如果有可用环境，给用户提示
+            available = [k for k,v in ctx["env"].items() if v.get("available")]
+            need_auth = [k for k,v in ctx["env"].items() if v.get("url") and not v.get("auth")]
+            if available:
+                print(f"  [环境] 可用: {', '.join(available)}")
+            if need_auth:
+                print(f"  [环境] ⚠ 需密码: {', '.join(need_auth)}（设置 {x}_password 环境变量）")
+        except Exception as e:
+            print(f"  [环境] [!] 探测失败: {e}")
+            ctx["env"] = {}
+        
         _phase1_define(ctx)
         _phase2_search(ctx)
         _phase3_analyze(ctx)

@@ -59,15 +59,18 @@ def convert_name(skill_name: str) -> str:
             seen.add(w)
             result.append(w)
     
-    # 2. 中文映射（按关键词长度降序，优先匹配长词）
+    # 2. 中文映射（按关键词长度降序，优先匹配长词，匹配后消耗文本）
+    remaining = skill_name
     sorted_mapping = sorted(mapping.items(), key=lambda x: -len(x[0]))
     for zh, en in sorted_mapping:
-        if zh in skill_name:
+        if zh in remaining:
             for word in en.split("_"):
                 word = word.strip()
                 if word and word not in seen:
                     seen.add(word)
                     result.append(word)
+            # 消耗匹配的中文文本（防止"数据"重复匹配"数据库"）
+            remaining = remaining.replace(zh, " " * len(zh), 1)
     
     return "_".join(result) if result else skill_name.strip().lower().replace(" ", "_")
 

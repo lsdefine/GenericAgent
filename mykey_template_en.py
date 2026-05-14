@@ -74,3 +74,9 @@ native_oai_config = {
 # ── 5. Chat platform integrations (optional) ─────────────────────────────────
 # tg_bot_token = '...'
 # tg_allowed_users = [123456789]
+
+
+# ── 6. TinyFish web research integration (optional) ─────────────────────────
+#  Enables the tinyfish_search and tinyfish_fetch tools.
+#  You may also set this as the TINYFISH_API_KEY environment variable.
+# tinyfish_api_key = 'tf-<your-tinyfish-key>'

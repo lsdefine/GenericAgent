@@ -244,6 +244,8 @@ The entire core loop is just **~100 lines of code** (`agent_loop.py`).
 
 > Additionally, 2 **memory management tools** (`update_working_checkpoint`, `start_long_term_update`) allow the agent to persist context and accumulate experience across sessions.
 
+Optional web research providers can add specialized tools without changing the core browser-control path. For example, setting `TINYFISH_API_KEY` (or `tinyfish_api_key` in `mykey.py`) enables `tinyfish_search` for ranked web search and `tinyfish_fetch` for browser-rendered content extraction.
+
 4️⃣ **Capability Extension Mechanism**
 > _Capable of dynamically creating new tools._
 

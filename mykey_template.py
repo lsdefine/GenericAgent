@@ -417,6 +417,13 @@ native_oai_config = {
 # dingtalk_client_secret = 'your_app_secret'
 # dingtalk_allowed_users = ['your_staff_id']        # 留空或 ['*'] 表示允许所有钉钉用户
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  TinyFish 网页研究集成（可选；启用 tinyfish_search / tinyfish_fetch 工具）
+# ══════════════════════════════════════════════════════════════════════════════
+#  也可以通过环境变量 TINYFISH_API_KEY 设置。
+# tinyfish_api_key = 'tf-<your-tinyfish-key>'
+
 # 可选：Langfuse 追踪。不设此项则不 import langfuse，零影响
 # langfuse_config = {
 #     'public_key': 'pk-lf-...',

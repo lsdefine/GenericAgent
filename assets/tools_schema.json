@@ -53,6 +53,26 @@
       "switch_tab_id": {"type": "string", "description": "[Optional] Tab ID to switch to before executing"}}}
   }},
   {"type": "function", "function": {
+    "name": "tinyfish_search",
+    "description": "Optional TinyFish integration. Ranked web search without using the local browser. Requires TINYFISH_API_KEY or tinyfish_api_key/tinyfish_config in mykey.py",
+    "parameters": {"type": "object", "properties": {
+      "query": {"type": "string", "description": "Search query. Supports normal search operators such as site: and -site:"},
+      "location": {"type": "string", "description": "Country code for geo-targeted results, e.g. US, GB, FR, DE", "default": "US"},
+      "language": {"type": "string", "description": "Language code for results, e.g. en, fr, de, ja", "default": "en"},
+      "page": {"type": "integer", "description": "Page number starting from 0, max 10", "default": 0},
+      "max_results": {"type": "integer", "description": "Maximum results to return to the model", "default": 10}}}
+  }},
+  {"type": "function", "function": {
+    "name": "tinyfish_fetch",
+    "description": "Optional TinyFish integration. Render URLs in a real browser and extract clean page content, links, and image links. Use after search results for web research. Requires TINYFISH_API_KEY or tinyfish_api_key/tinyfish_config in mykey.py",
+    "parameters": {"type": "object", "properties": {
+      "urls": {"type": "array", "items": {"type": "string"}, "description": "HTTP/HTTPS URLs to extract. Maximum 10"},
+      "format": {"type": "string", "enum": ["markdown", "html", "json"], "description": "Output format for extracted content", "default": "markdown"},
+      "links": {"type": "boolean", "description": "Include all outbound links", "default": false},
+      "image_links": {"type": "boolean", "description": "Include all image URLs", "default": false},
+      "max_chars": {"type": "integer", "description": "Approximate maximum extracted text characters returned across all pages", "default": 20000}}}
+  }},
+  {"type": "function", "function": {
     "name": "update_working_checkpoint",
     "description": "Short-term working notepad, auto-injected each turn to prevent info loss in long tasks. Call during early/mid stages, not at end. When: (1) after reading SOP, store user needs & key constraints (skip for simple 1-2 step tasks); (2) before subtask switch or context flush; (3) after repeated failures, re-read SOP and must store new findings; (4) on new task, update content, clear old progress but keep valid constraints.\n\nDon't call: simple tasks (1-2 steps), task completed (use long-term memory tool)",
     "parameters": {"type": "object", "properties": {

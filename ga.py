@@ -2,6 +2,7 @@ import sys, os, re, json, time, threading, importlib
 from datetime import datetime
 from pathlib import Path
 import tempfile, traceback, subprocess, itertools, collections, difflib
+import requests
 if sys.stdout is None: sys.stdout = open(os.devnull, "w")
 if sys.stderr is None: sys.stderr = open(os.devnull, "w")
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -171,6 +172,68 @@ def web_execute_js(script, switch_tab_id=None, no_monitor=False):
         result = simphtml.execute_js_rich(script, driver, no_monitor=no_monitor)
         return result
     except Exception as e: return {"status": "error", "msg": format_error(e)}
+
+def _get_tinyfish_api_key():
+    key = os.environ.get("TINYFISH_API_KEY", "").strip()
+    if key: return key
+    try:
+        from llmcore import reload_mykeys
+        mykeys = reload_mykeys()[0]
+    except Exception:
+        mykeys = {}
+    key = str(mykeys.get("tinyfish_api_key", "") or mykeys.get("tinyfish_apikey", "") or "").strip()
+    if key: return key
+    cfg = mykeys.get("tinyfish_config") or {}
+    if isinstance(cfg, dict): return str(cfg.get("apikey") or cfg.get("api_key") or "").strip()
+    return ""
+
+def _tinyfish_headers():
+    api_key = _get_tinyfish_api_key()
+    if not api_key:
+        return None, {
+            "status": "error",
+            "msg": "TinyFish API key missing. Set TINYFISH_API_KEY or tinyfish_api_key/tinyfish_config in mykey.py.",
+        }
+    return {"X-API-Key": api_key, "Content-Type": "application/json"}, None
+
+def tinyfish_search(query, location="US", language="en", page=0, max_results=10):
+    headers, err = _tinyfish_headers()
+    if err: return err
+    try:
+        params = {"query": query, "page": int(page or 0)}
+        if location: params["location"] = location
+        if language: params["language"] = language
+        resp = requests.get("https://api.search.tinyfish.ai", headers=headers, params=params, timeout=30)
+        if resp.status_code >= 400:
+            return {"status": "error", "http_status": resp.status_code, "msg": smart_format(resp.text, max_str_len=1000)}
+        data = resp.json()
+        max_results = max(1, min(int(max_results or 10), 20))
+        data["results"] = data.get("results", [])[:max_results]
+        return {"status": "success", **data}
+    except Exception as e:
+        return {"status": "error", "msg": format_error(e)}
+
+def tinyfish_fetch(urls, format="markdown", links=False, image_links=False, max_chars=20000):
+    headers, err = _tinyfish_headers()
+    if err: return err
+    if isinstance(urls, str): urls = [urls]
+    urls = [str(u).strip() for u in (urls or []) if str(u).strip()]
+    if not urls: return {"status": "error", "msg": "urls must contain at least one URL."}
+    if len(urls) > 10: return {"status": "error", "msg": "TinyFish fetch accepts at most 10 URLs per request."}
+    if format not in {"markdown", "html", "json"}: format = "markdown"
+    try:
+        payload = {"urls": urls, "format": format, "links": bool(links), "image_links": bool(image_links)}
+        resp = requests.post("https://api.fetch.tinyfish.ai", headers=headers, json=payload, timeout=150)
+        if resp.status_code >= 400:
+            return {"status": "error", "http_status": resp.status_code, "msg": smart_format(resp.text, max_str_len=1000)}
+        data = resp.json()
+        per_page = max(1000, int(max_chars or 20000) // max(len(data.get("results", [])), 1))
+        for item in data.get("results", []):
+            if isinstance(item.get("text"), str):
+                item["text"] = smart_format(item["text"], max_str_len=per_page, omit_str="\n\n[omitted long content]\n\n")
+        return {"status": "success", **data}
+    except Exception as e:
+        return {"status": "error", "msg": format_error(e)}
 
 def expand_file_refs(text, base_dir=None):
     """展开文本中的 {{file:路径:起始行:结束行}} 引用为实际文件内容。
@@ -354,6 +417,38 @@ class GenericAgentHandler(BaseHandler):
         result = json.dumps(result, ensure_ascii=False, default=json_default)
         maxlen = 8000 // args.get('_tool_num', 1)
         return StepOutcome(smart_format(result, max_str_len=maxlen), next_prompt=next_prompt)
+
+    def do_tinyfish_search(self, args, response):
+        '''Use TinyFish Search API for ranked web search without controlling the local browser.'''
+        query = args.get("query", "")
+        if not query: return StepOutcome({"status": "error", "msg": "query is required"}, next_prompt="\n")
+        yield f"[Action] TinyFish search: {query[:80]}\n"
+        result = tinyfish_search(
+            query=query,
+            location=args.get("location", "US"),
+            language=args.get("language", "en"),
+            page=args.get("page", 0),
+            max_results=args.get("max_results", 10),
+        )
+        yield f"[Status] {result.get('status')}\n"
+        next_prompt = self._get_anchor_prompt(skip=args.get('_index', 0) > 0)
+        return StepOutcome(result, next_prompt=next_prompt)
+
+    def do_tinyfish_fetch(self, args, response):
+        '''Use TinyFish Fetch API to render and extract clean content from web pages.'''
+        urls = args.get("urls") or args.get("url")
+        yield "[Action] TinyFish fetch content\n"
+        max_chars = 30000 // args.get('_tool_num', 1)
+        result = tinyfish_fetch(
+            urls=urls,
+            format=args.get("format", "markdown"),
+            links=args.get("links", False),
+            image_links=args.get("image_links", False),
+            max_chars=args.get("max_chars", max_chars),
+        )
+        yield f"[Status] {result.get('status')}\n"
+        next_prompt = self._get_anchor_prompt(skip=args.get('_index', 0) > 0)
+        return StepOutcome(result, next_prompt=next_prompt)
     
     def do_file_patch(self, args, response):
         path = self._get_abs_path(args.get("path", ""))

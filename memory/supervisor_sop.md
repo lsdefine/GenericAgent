@@ -13,7 +13,7 @@
 1. **无SOP时**：根据任务性质和进度，预估未来会遇到的关键风险点
 2. **启动subagent**（cwd=代码根）：
    ```
-   python agentmain.py --task {name} --bg --verbose
+   python agentmain.py --task {name} --verbose
    ```
    input.txt：`用{SOP名}完成{用户任务}`（只给目标，不复述步骤）
 

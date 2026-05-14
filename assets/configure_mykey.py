@@ -9,10 +9,10 @@ GenericAgent — 交互式初始化向导 (configure.py)
 
 import os
 import sys
+import re
 import shutil
 import json
 import urllib.request
-import time
 from datetime import datetime
 
 # ── ANSI 颜色 ──────────────────────────────────────────────────────────────
@@ -28,37 +28,11 @@ MYKPY_PATH = os.path.join(PROJECT_ROOT, 'mykey.py')
 # ── 模型厂商定义 ───────────────────────────────────────────────────────────
 
 LLM_PROVIDERS = [
-    {
-        'id': 'deepseek',
-        'name': 'DeepSeek V4 Flash (推荐首选)',
-        'desc': '国产开源模型，速度快、性价比高，原生 OAI 协议',
-        'type': 'native_oai',
-        'template': {
-            'name': 'deepseek-flash', 'apikey': 'sk-<your-deepseek-key>',
-            'apibase': 'https://api.deepseek.com', 'model': 'deepseek-v4-flash',
-            'api_mode': 'chat_completions', 'reasoning_effort': 'high',
-        },
-        'key_hint': '在 https://platform.deepseek.com/api_keys 获取',
-        'model_choices': ['deepseek-v4-flash', 'deepseek-v3-premium'],
-    },
-    {
-        'id': 'openai',
-        'name': 'OpenAI GPT-5 / o 系列',
-        'desc': 'OpenAI 官方，支持 GPT-5、o 系列推理模型',
-        'type': 'native_oai',
-        'template': {
-            'name': 'gpt-native', 'apikey': 'sk-<your-openai-key>',
-            'apibase': 'https://api.openai.com/v1', 'model': 'gpt-5.4',
-            'api_mode': 'chat_completions', 'reasoning_effort': 'high',
-            'max_retries': 3, 'connect_timeout': 10, 'read_timeout': 120,
-        },
-        'key_hint': '在 https://platform.openai.com/api-keys 获取',
-        'model_choices': ['gpt-5.4', 'o4-mini-high', 'o4-mini'],
-    },
+    # ═══════════════════════════ 直连 API（按旗舰能力降序）═══════════════════════════
     {
         'id': 'anthropic',
         'name': 'Anthropic Claude 官方直连',
-        'desc': 'Claude 官方 API，sk-ant- 开头，原生 tool 协议',
+        'desc': 'Claude Opus #1 最强模型，原生 tool 协议，sk-ant- 开头',
         'type': 'native_claude',
         'template': {
             'name': 'anthropic-direct', 'apikey': 'sk-ant-<your-anthropic-key>',
@@ -69,9 +43,233 @@ LLM_PROVIDERS = [
         'model_choices': ['claude-opus-4-7', 'claude-sonnet-4-6'],
     },
     {
+        'id': 'openai',
+        'name': 'OpenAI GPT-5.5 / o 系列',
+        'desc': 'GPT-5.5 旗舰，与 Claude Opus 同级',
+        'type': 'native_oai',
+        'template': {
+            'name': 'gpt-native', 'apikey': 'sk-<your-openai-key>',
+            'apibase': 'https://api.openai.com/v1', 'model': 'gpt-5.5',
+            'api_mode': 'chat_completions', 'reasoning_effort': 'high',
+            'max_retries': 3, 'connect_timeout': 10, 'read_timeout': 120,
+        },
+        'key_hint': '在 https://platform.openai.com/api-keys 获取',
+        'model_choices': ['gpt-5.5', 'gpt-5.4'],
+    },
+    {
+        'id': 'deepseek',
+        'name': 'DeepSeek (v4-Pro / Flash)',
+        'desc': '最强开源模型，v4-Pro 旗舰 1M 上下文',
+        'type': 'native_oai',
+        'template': {
+            'name': 'deepseek', 'apikey': 'sk-<your-deepseek-key>',
+            'apibase': 'https://api.deepseek.com', 'model': 'deepseek-v4-flash',
+            'api_mode': 'chat_completions', 'reasoning_effort': 'high',
+        },
+        'key_hint': '在 https://platform.deepseek.com/api_keys 获取',
+        'model_choices': ['deepseek-v4-pro', 'deepseek-v4-flash'],
+    },
+    {
+        'id': 'kimi',
+        'name': 'Kimi (k2.6 / k2.5) 双协议',
+        'desc': '月之暗面，国内顶尖，支持 Anthropic 和 OAI 双协议',
+        'type': 'native_claude',
+        'template': {
+            'name': 'kimi', 'apikey': 'sk-kimi-<your-key>',
+            'apibase': 'https://api.kimi.com/coding',
+            'model': 'kimi-for-coding', 'fake_cc_system_prompt': True,
+            'thinking_type': 'adaptive',
+        },
+        'key_hint': '在 https://kimi.com/code 或 https://platform.moonshot.cn/ 获取',
+        'model_choices': ['kimi-k2.6', 'kimi-k2.5'],
+        'extra_fields': [
+            {
+                'key': '_protocol', 'label': '选择 API 协议',
+                'type': 'choice',
+                'options': [
+                    {'id': 'native_claude', 'name': 'Anthropic 兼容 (推荐)', 'desc': 'kimi-for-coding 端点，CC 兼容', 'apibase': 'https://api.kimi.com/coding', 'fake_cc_system_prompt': True, 'model': 'kimi-for-coding'},
+                    {'id': 'native_oai', 'name': 'OpenAI 协议', 'desc': 'Moonshot OAI 端点，kimi-k2 系列', 'apibase': 'https://api.moonshot.cn/v1', 'model': 'kimi-k2.6'},
+                ],
+            },
+        ],
+    },
+    {
+        'id': 'qwen',
+        'name': '阿里通义千问 (Qwen3.5 / 百炼)',
+        'desc': '阿里云百炼，Qwen3 系列百万级上下文',
+        'type': 'native_oai',
+        'template': {
+            'name': 'qwen', 'apikey': 'sk-<your-dashscope-key>',
+            'apibase': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+            'model': 'qwen3.5-plus',
+            'api_mode': 'chat_completions',
+        },
+        'key_hint': '在 https://bailian.console.aliyun.com/ 获取 API Key',
+        'model_choices': ['qwen3.5-plus', 'qwen3-coder-plus'],
+        'extra_fields': [
+            {
+                'key': '_endpoint', 'label': '选择端点',
+                'type': 'choice',
+                'options': [
+                    {'id': 'standard', 'name': '标准按量付费', 'desc': 'dashscope.aliyuncs.com，兼容模式', 'apibase': 'https://dashscope.aliyuncs.com/compatible-mode/v1'},
+                    {'id': 'coding_plan', 'name': '百炼 Coding Plan (订阅)', 'desc': 'coding-intl.dashscope.aliyuncs.com，100万上下文', 'apibase': 'https://coding-intl.dashscope.aliyuncs.com/v1', 'context_win': 1000000},
+                ],
+            },
+        ],
+    },
+    {
+        'id': 'zhipu',
+        'name': '智谱 GLM-5.1 (Coding Plan)',
+        'desc': '智谱 GLM，支持 Coding Plan CN (Anthropic) 和 Global (OAI) 双端点',
+        'type': 'native_claude',
+        'template': {
+            'name': 'zhipu-glm', 'apikey': 'sk-<your-zhipu-key>',
+            'apibase': 'https://open.bigmodel.cn/api/anthropic',
+            'model': 'GLM-5.1-Cloud', 'fake_cc_system_prompt': False,
+            'thinking_type': 'adaptive', 'max_retries': 3,
+            'connect_timeout': 10, 'read_timeout': 180,
+        },
+        'key_hint': 'CN 在 https://open.bigmodel.cn/ 获取；Global 在 https://z.ai/ 获取',
+        'model_choices': ['GLM-5.1-Cloud', 'glm-4.7'],
+        'extra_fields': [
+            {
+                'key': '_plan', 'label': '选择 Coding Plan',
+                'type': 'choice',
+                'options': [
+                    {'id': 'native_claude', 'name': 'Coding Plan CN (Anthropic)', 'desc': 'open.bigmodel.cn，推荐国内用户', 'apibase': 'https://open.bigmodel.cn/api/anthropic', 'fake_cc_system_prompt': False},
+                    {'id': 'native_oai', 'name': 'Coding Plan Global (OAI)', 'desc': 'api.z.ai，OpenAI 协议，全球可用', 'apibase': 'https://api.z.ai/api/paas/v4'},
+                ],
+            },
+        ],
+    },
+    {
+        'id': 'minimax',
+        'name': 'MiniMax M2.7 (双协议)',
+        'desc': 'MiniMax M2.7，支持 Anthropic 和 OpenAI 双协议',
+        'type': 'native_claude',
+        'template': {
+            'name': 'minimax', 'apikey': 'eyJh...<your-minimax-key>',
+            'apibase': 'https://api.minimaxi.com/anthropic',
+            'model': 'MiniMax-M2.7', 'max_retries': 3,
+        },
+        'key_hint': '在 https://platform.minimaxi.com/user-center/basic-information 获取',
+        'model_choices': ['MiniMax-M2.7', 'MiniMax-M2.5'],
+        'extra_fields': [
+            {
+                'key': '_protocol', 'label': '选择 API 协议',
+                'type': 'choice',
+                'options': [
+                    {'id': 'native_claude', 'name': 'Anthropic 协议 (推荐)', 'desc': '无 <think> 标签，原生 Claude 兼容', 'apibase': 'https://api.minimaxi.com/anthropic'},
+                    {'id': 'native_oai', 'name': 'OpenAI 协议', 'desc': '走 /v1/chat/completions', 'apibase': 'https://api.minimaxi.com/v1', 'context_win': 50000},
+                ],
+            },
+        ],
+    },
+    {
+        'id': 'stepfun',
+        'name': '阶跃星辰 Step-3.5 (推理强)',
+        'desc': '阶跃星辰 Step 系列，支持标准和 Step Plan 双端点',
+        'type': 'native_oai',
+        'template': {
+            'name': 'stepfun', 'apikey': 'sk-<your-stepfun-key>',
+            'apibase': 'https://api.stepfun.com/v1',
+            'model': 'step-3.5-flash',
+            'api_mode': 'chat_completions',
+            'context_win': 262144,
+        },
+        'key_hint': '在 https://platform.stepfun.com/ 获取 API Key',
+        'model_choices': ['step-3.5-flash', 'step-3.5-flash-2603'],
+        'extra_fields': [
+            {
+                'key': '_endpoint', 'label': '选择端点',
+                'type': 'choice',
+                'options': [
+                    {'id': 'standard', 'name': '标准端点', 'desc': 'api.stepfun.com/v1，按量付费', 'apibase': 'https://api.stepfun.com/v1', 'context_win': 262144},
+                    {'id': 'step_plan', 'name': 'Step Plan (订阅)', 'desc': 'api.stepfun.com/step_plan/v1，订阅制', 'apibase': 'https://api.stepfun.com/step_plan/v1', 'context_win': 262144},
+                ],
+            },
+        ],
+    },
+    {
+        'id': 'qianfan',
+        'name': '百度千帆 (ERNIE 5.0 / 第三方)',
+        'desc': '百度智能云千帆，文心一言 ERNIE 5.0 + DeepSeek 等',
+        'type': 'native_oai',
+        'template': {
+            'name': 'baidu-qianfan', 'apikey': '<your-qianfan-key>',
+            'apibase': 'https://qianfan.baidubce.com/v2',
+            'model': 'ernie-5.0-thinking-preview',
+            'api_mode': 'chat_completions',
+        },
+        'key_hint': '在 https://console.bce.baidu.com/qianfan/ 创建应用获取 API Key',
+        'model_choices': ['ernie-5.0-thinking-preview', 'deepseek-v3.2'],
+        'extra_fields': [
+            {'key': 'apibase', 'label': 'API 地址 (apibase)', 'default': 'https://qianfan.baidubce.com/v2'},
+        ],
+    },
+    {
+        'id': 'volcengine',
+        'name': '火山引擎 (豆包 / Ark)',
+        'desc': '字节跳动火山引擎，支持标准 Ark 和 Ark Coding Plan',
+        'type': 'native_oai',
+        'template': {
+            'name': 'volc-ark', 'apikey': '<your-ark-api-key>',
+            'apibase': 'https://ark.cn-beijing.volces.com/api/v3',
+            'model': 'doubao-seed-code-preview-251028',
+            'api_mode': 'chat_completions',
+        },
+        'key_hint': '在 https://console.volcengine.com/ark/ 创建推理接入点后获取 API Key',
+        'model_choices': ['doubao-seed-code-preview-251028', 'doubao-seed-1-8-251228'],
+        'extra_fields': [
+            {
+                'key': '_endpoint', 'label': '选择端点',
+                'type': 'choice',
+                'options': [
+                    {'id': 'standard', 'name': '标准 Ark', 'desc': 'ark.cn-beijing.volces.com/api/v3，按量付费', 'apibase': 'https://ark.cn-beijing.volces.com/api/v3'},
+                    {'id': 'coding_plan', 'name': 'Ark Coding Plan (订阅)', 'desc': 'ark.cn-beijing.volces.com/api/coding/v3', 'apibase': 'https://ark.cn-beijing.volces.com/api/coding/v3'},
+                ],
+            },
+        ],
+    },
+    {
+        'id': 'xiaomi',
+        'name': '小米 MiMo (MiMo 2.5 Pro / TokenPlan)',
+        'desc': '小米 MiMo 系列，超大上下文窗口，支持 TokenPlan 预付费',
+        'type': 'native_oai',
+        'template': {
+            'name': 'xiaomi-mimo', 'apikey': 'sk-<your-xiaomi-key>',
+            'apibase': 'https://api.xiaomimimo.com/v1',
+            'model': 'mimo-v2.5-pro',
+            'api_mode': 'chat_completions',
+        },
+        'key_hint': '在 https://x.xiaomi.com/ 获取 API Key',
+        'model_choices': ['mimo-v2.5-pro', 'mimo-v2-flash'],
+        'extra_fields': [
+            {'key': 'apibase', 'label': 'API 地址 (apibase)', 'default': 'https://api.xiaomimimo.com/v1'},
+        ],
+    },
+    {
+        'id': 'tencent_tokenhub',
+        'name': '腾讯混元 TokenHub (Hy3 / TokenPlan)',
+        'desc': '腾讯云 TokenHub，混元 Hy3 系列，TokenPlan 预付费',
+        'type': 'native_oai',
+        'template': {
+            'name': 'tencent-tokenhub', 'apikey': 'sk-<your-tokenhub-key>',
+            'apibase': 'https://tokenhub.tencentmaas.com/v1',
+            'model': 'hy3-preview',
+            'api_mode': 'chat_completions',
+        },
+        'key_hint': '在 https://console.cloud.tencent.com/tokenhub 获取 API Key',
+        'model_choices': ['hy3-preview'],
+        'extra_fields': [
+            {'key': 'apibase', 'label': 'API 地址 (apibase)', 'default': 'https://tokenhub.tencentmaas.com/v1'},
+        ],
+    },
+    # ═══════════════════════════ 代理 / 中继（支持 Claude/GPT 等顶级模型）══════════
+    {
         'id': 'cc_relay',
         'name': 'CC Switch 透传 (社区常用)',
-        'desc': '社区 Claude Code 透传渠道，需要 fake_cc_system_prompt=True',
+        'desc': '社区 Claude Code 透传渠道，可接入 Claude Opus',
         'type': 'native_claude',
         'template': {
             'name': 'cc-relay', 'apikey': 'sk-user-<your-relay-key>',
@@ -87,76 +285,9 @@ LLM_PROVIDERS = [
         ],
     },
     {
-        'id': 'zhipu',
-        'name': '智谱 GLM (Anthropic 兼容)',
-        'desc': '智谱 GLM-5.1，走 Anthropic 兼容协议',
-        'type': 'native_claude',
-        'template': {
-            'name': 'zhipu-glm', 'apikey': 'sk-<your-zhipu-key>',
-            'apibase': 'https://open.bigmodel.cn/api/anthropic',
-            'model': 'GLM-5.1-Cloud', 'fake_cc_system_prompt': False,
-            'thinking_type': 'adaptive', 'max_retries': 3,
-            'connect_timeout': 10, 'read_timeout': 180,
-        },
-        'key_hint': '在 https://open.bigmodel.cn/usercenter/apikeys 获取',
-        'model_choices': ['GLM-5.1-Cloud', 'GLM-5.1-Edge'],
-    },
-    {
-        'id': 'minimax',
-        'name': 'MiniMax (推荐 Anthropic 路径)',
-        'desc': 'MiniMax M2.7，Anthropic 路径无 <think> 标签',
-        'type': 'native_claude',
-        'template': {
-            'name': 'minimax-anthropic', 'apikey': 'eyJh...<your-minimax-key>',
-            'apibase': 'https://api.minimaxi.com/anthropic',
-            'model': 'MiniMax-M2.7', 'max_retries': 3,
-        },
-        'key_hint': '在 https://platform.minimaxi.com/user-center/basic-information 获取',
-        'model_choices': ['MiniMax-M2.7', 'MiniMax-M2.5'],
-    },
-    {
-        'id': 'minimax_oai',
-        'name': 'MiniMax (OpenAI 兼容路径)',
-        'desc': 'MiniMax M2.7，走 /v1/chat/completions',
-        'type': 'native_oai',
-        'template': {
-            'name': 'minimax-oai', 'apikey': 'eyJh...<your-minimax-key>',
-            'apibase': 'https://api.minimaxi.com/v1', 'model': 'MiniMax-M2.7',
-            'context_win': 50000,
-        },
-        'key_hint': '在 https://platform.minimaxi.com/user-center/basic-information 获取',
-        'model_choices': ['MiniMax-M2.7', 'MiniMax-M2.5'],
-    },
-    {
-        'id': 'kimi',
-        'name': 'Kimi for Coding (Anthropic 兼容)',
-        'desc': 'Kimi 官方 CC 兼容端点，kimi-for-coding 模型',
-        'type': 'native_claude',
-        'template': {
-            'name': 'kimi-coding', 'apikey': 'sk-kimi-<your-key>',
-            'apibase': 'https://api.kimi.com/coding',
-            'model': 'kimi-for-coding', 'fake_cc_system_prompt': True,
-            'thinking_type': 'adaptive',
-        },
-        'key_hint': '在 https://kimi.com/code 获取 API Key',
-        'model_choices': ['kimi-for-coding', 'kimi-thinking-plus'],
-    },
-    {
-        'id': 'moonshot_oai',
-        'name': 'Kimi / Moonshot (OAI 兼容)',
-        'desc': 'Moonshot OAI 端点，kimi-k2 系列，温度强制 1.0',
-        'type': 'native_oai',
-        'template': {
-            'name': 'kimi-k2', 'apikey': 'sk-<your-moonshot-key>',
-            'apibase': 'https://api.moonshot.cn/v1', 'model': 'kimi-k2-turbo-preview',
-        },
-        'key_hint': '在 https://platform.moonshot.cn/ 获取',
-        'model_choices': ['kimi-k2-turbo-preview', 'kimi-k2'],
-    },
-    {
         'id': 'openrouter',
         'name': 'OpenRouter (多模型中继)',
-        'desc': '一个 Key 用所有模型，支持 Claude/GPT/Gemini 等',
+        'desc': '一个 Key 通吃 Claude/GPT/DeepSeek/Qwen 等',
         'type': 'native_oai',
         'template': {
             'name': 'openrouter', 'apikey': 'sk-or-<your-openrouter-key>',
@@ -165,15 +296,15 @@ LLM_PROVIDERS = [
             'max_retries': 3, 'connect_timeout': 10, 'read_timeout': 120,
         },
         'key_hint': '在 https://openrouter.ai/keys 获取',
-        'model_choices': ['anthropic/claude-opus-4-7', 'openai/gpt-5.4'],
+        'model_choices': ['anthropic/claude-opus-4-7', 'openai/gpt-5.5'],
     },
     {
         'id': 'crs',
-        'name': 'CRS 反代 Claude Max',
-        'desc': 'CRS 协议的反代 Claude，需要 fake_cc_system_prompt=True',
+        'name': 'CRS 反代 (Claude Max 多通道)',
+        'desc': 'CRS 协议的反代服务，支持 Claude Max / Gemini Ultra 通道',
         'type': 'native_claude',
         'template': {
-            'name': 'crs-claude-max', 'apikey': 'cr_<your-crs-key>',
+            'name': 'crs', 'apikey': 'cr_<your-crs-key>',
             'apibase': 'https://<your-crs-host>/api',
             'model': 'claude-opus-4-7[1m]', 'fake_cc_system_prompt': True,
             'thinking_type': 'adaptive', 'max_tokens': 32768,
@@ -182,24 +313,31 @@ LLM_PROVIDERS = [
         'key_hint': '从你的 CRS 服务商获取 key 和 host',
         'model_choices': ['claude-opus-4-7[1m]', 'claude-sonnet-4-6'],
         'extra_fields': [
-            {'key': 'apibase', 'label': 'API 地址 (apibase)', 'default': 'https://your-crs-host/api'},
+            {
+                'key': '_channel', 'label': '选择 CRS 通道',
+                'type': 'choice',
+                'options': [
+                    {'id': 'claude_max', 'name': 'Claude Max (默认)', 'desc': '标准 CRS Claude 通道', 'apibase': 'https://<your-crs-host>/api'},
+                    {'id': 'gemini_ultra', 'name': 'Gemini Ultra (Antigravity)', 'desc': 'CRS 包装的 Google Antigravity，不支持 SSE 流式', 'apibase': 'https://<your-crs-gemini-host>/antigravity/api', 'model': 'claude-opus-4-7-thinking', 'stream': False},
+                ],
+            },
         ],
     },
     {
-        'id': 'crs_gemini',
-        'name': 'CRS Gemini Ultra (Antigravity 通道)',
-        'desc': 'CRS 包装的 Google Antigravity，不支持 SSE 流式，必须 stream=False',
-        'type': 'native_claude',
+        'id': 'gmi',
+        'name': 'GMI Serving (通用模型中继)',
+        'desc': 'GMI 通用模型推理服务，支持多种开源/闭源（手动输入模型名）',
+        'type': 'native_oai',
         'template': {
-            'name': 'crs-gemini-ultra', 'apikey': 'cr_<your-crs-gemini-key>',
-            'apibase': 'https://<your-crs-gemini-host>/antigravity/api',
-            'model': 'claude-opus-4-7-thinking', 'stream': False,
-            'max_tokens': 32768, 'max_retries': 3, 'read_timeout': 180,
+            'name': 'gmi', 'apikey': '<your-gmi-key>',
+            'apibase': 'https://api.gmi-serving.com/v1',
+            'model': 'gmi-default',
+            'api_mode': 'chat_completions',
         },
-        'key_hint': '从你的 CRS 服务商获取 Gemini Ultra key 和 host',
-        'model_choices': ['claude-opus-4-7-thinking', 'claude-opus-4-7[1m]', 'claude-opus-4-7'],
+        'key_hint': '从 GMI 服务商获取 API Key，探测失败时手动输入模型名',
+        'model_choices': [],  # 中继服务，模型由服务商提供，探测失败时手动输入
         'extra_fields': [
-            {'key': 'apibase', 'label': 'API 地址 (apibase)', 'default': 'https://your-crs-gemini-host/antigravity/api'},
+            {'key': 'apibase', 'label': 'API 地址 (apibase)', 'default': 'https://api.gmi-serving.com/v1'},
         ],
     },
 ]
@@ -282,24 +420,16 @@ PLATFORMS = [
             {'key': 'dc_allowed_users', 'label': '允许的用户 ID（逗号分隔, 留空=所有人）', 'default': '[]', 'is_list': True},
         ],
     },
+    {
+        'id': 'wechat',
+        'name': '微信 (iLink 协议)',
+        'desc': '通过微信个人号与 Agent 对话，扫码自动登录',
+        'file': 'frontends/wechatapp.py',
+        'deps': ['requests', 'qrcode', 'pycryptodome'],
+        'env_vars': [],
+    },
 ]
 
-
-def _read_char():
-    """跨平台读取单个字符（Windows 用 getwch 避免 CRLF 拆字节问题）。"""
-    if os.name == 'nt':
-        import msvcrt
-        return msvcrt.getwch()
-    else:
-        import tty
-        import termios
-        fd = sys.stdin.fileno()
-        old = termios.tcgetattr(fd)
-        try:
-            tty.setraw(fd)
-            return sys.stdin.read(1)
-        finally:
-            termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
 def _masked(v, reveal, tail):
     """生成脱敏字符串：前 reveal 位明文 + * + 后 tail 位明文"""
@@ -310,7 +440,7 @@ def _masked(v, reveal, tail):
     return v
 
 def masked_input(prompt, reveal=6, tail=4):
-    """密文输入：每输入一个字符实时显示脱敏版本，支持逐字输入和粘贴。
+    """密文输入，支持粘贴：批读取 + 延迟重绘，避免快速键入时丢字符。
 
     prompt 必须为单行（不含 \\n）。
     """
@@ -320,23 +450,71 @@ def masked_input(prompt, reveal=6, tail=4):
 
     def _repaint():
         m = _masked(''.join(chars), reveal, tail)
-        # \r → 行首；写 prompt+m；多余空格覆盖前次更长渲染的残留字符
         sys.stdout.write(f'\r{prompt}{m}     \r{prompt}{m}')
         sys.stdout.flush()
 
-    while True:
-        c = _read_char()
+    def _process(c):
+        """处理单个字符，返回 True 表示应退出。"""
         if c in ('\r', '\n'):
-            break
+            return True
         if c in ('\x03', '\x04'):
             raise KeyboardInterrupt
         if c in ('\x08', '\x7f'):
             if chars:
                 chars.pop()
-                _repaint()
         elif c.isprintable() or c == ' ':
             chars.append(c)
+        return False
+
+    if os.name == 'nt':
+        import msvcrt
+        while True:
+            c = msvcrt.getwch()
+            if _process(c):
+                break
+            if c in ('\x08', '\x7f'):
+                _repaint()          # 退格立即重绘
+                continue
+            if not (c.isprintable() or c == ' '):
+                continue
+            # 批量读取：粘贴时一次取完
+            while msvcrt.kbhit():
+                c2 = msvcrt.getwch()
+                if _process(c2):
+                    value = ''.join(chars)
+                    _repaint()
+                    sys.stdout.write('\n')
+                    sys.stdout.flush()
+                    return value
             _repaint()
+    else:
+        import tty, termios, select
+        fd = sys.stdin.fileno()
+        old = termios.tcgetattr(fd)
+        try:
+            tty.setraw(fd)
+            while True:
+                c = sys.stdin.read(1)
+                if _process(c):
+                    break
+                if c in ('\x08', '\x7f'):
+                    _repaint()      # 退格立即重绘
+                    continue
+                if not (c.isprintable() or c == ' '):
+                    continue
+                # 批量读取：只要 stdin 有数据就继续读，不重绘
+                while select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], []):
+                    c2 = sys.stdin.read(1)
+                    if _process(c2):
+                        value = ''.join(chars)
+                        _repaint()
+                        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+                        sys.stdout.write('\n')
+                        sys.stdout.flush()
+                        return value
+                _repaint()
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
     value = ''.join(chars)
     _repaint()
@@ -361,7 +539,7 @@ def banner():
     print('\033[2J\033[H', end='')  # ANSI 清屏，跨平台
     print(f"{C['cyan']}{C['bold']}")
     print("  ╔═══════════════════════════════════════════════════════════╗")
-    print("  ║        GenericAgent — 交互式初始化向导 v1.1              ║")
+    print("  ║        GenericAgent — 交互式初始化向导 v1.2              ║")
     print("  ║   一键配置 LLM 模型 + 消息平台，自动生成 mykey.py        ║")
     print("  ╚═══════════════════════════════════════════════════════════╝")
     print(f"{C['reset']}")
@@ -373,9 +551,9 @@ def _check_python():
     vi = sys.version_info
     if vi < (3, 10):
         return False, f"Python {vi.major}.{vi.minor} 不满足最低要求 (≥ 3.10)"
-    if vi >= (3, 14):
-        return True, f"⚠ Python {vi.major}.{vi.minor} 可能与 pywebview 等依赖不兼容，推荐 3.11/3.12"
-    return True, f"✓ Python {vi.major}.{vi.minor}.{vi.micro}"
+    if vi[:2] == (3, 12):
+        return True, ''
+    return True, f"⚠ 当前 Python {vi.major}.{vi.minor}，推荐使用 Python 3.12"
 
 def ask_choice(prompt, choices, allow_multi=False, default=None):
     """交互式选择，返回 selected_id 或 [selected_ids]"""
@@ -416,12 +594,10 @@ def ask_choice(prompt, choices, allow_multi=False, default=None):
 
 def ask_input(prompt, default=None, secret=False, hint=None):
     """交互式输入。secret=True 时使用脱敏输入。"""
-    # 提示信息先打印（不放进 prompt，保证 prompt 单行）
     if hint:
         cprint(f"  {hint}", 'dim')
     if default is not None:
         cprint(f"  [默认: {default}]", 'dim')
-    # 单行 prompt，\r 能正确回行首
     prompt_line = f"  {C['yellow']}►{C['reset']} {prompt}: "
     while True:
         if secret:
@@ -460,15 +636,15 @@ def probe_models(provider, apikey, apibase=None):
     base = (apibase or provider['template'].get('apibase', '')).rstrip('/')
 
     if ptype == 'native_claude':
-        # Anthropic 协议: 尝试 /v1/models (多数中继兼容此路径)
         url = f"{base}/v1/models"
-        headers = {'x-api-key': apikey, 'anthropic-version': '2023-06-01'}
+        headers = {'x-api-key': apikey, 'anthropic-version': '2023-06-01', 'User-Agent': 'GenericAgent/1.0'}
     else:
         url = f"{base}/models"
-        headers = {'Authorization': f'Bearer {apikey}'}
+        headers = {'Authorization': f'Bearer {apikey}', 'User-Agent': 'GenericAgent/1.0'}
 
-    print(f"\n  {C['dim']}🔍 正在探测可用模型 ({url})...{C['reset']}", end='', flush=True)
-    time.sleep(0.3)
+    print(f"\n  {C['dim']}🔍 正在探测可用模型 ({base}/models)...{C['reset']}", end='', flush=True)
+    if ptype == 'native_claude':
+        print(f" {C['dim']}(Anthropic 协议，探测可能失败){C['reset']}", end='', flush=True)
 
     opener = urllib.request.build_opener()
     ph = _get_proxy_handler()
@@ -476,21 +652,25 @@ def probe_models(provider, apikey, apibase=None):
         opener = urllib.request.build_opener(ph)
         print(f" {C['dim']}(via proxy){C['reset']}", end='', flush=True)
 
-    try:
-        req = urllib.request.Request(url, headers=headers, method='GET')
-        with opener.open(req, timeout=8) as resp:
-            data = json.loads(resp.read().decode())
-            # 兼容两种响应格式: {data: [{id: ...}]} 与 {object: 'list', data: [...]}
-            models = data.get('data', [])
-            ids = sorted(set(m['id'] for m in models if isinstance(m, dict) and m.get('id')))
-            if ids:
-                print(f" {C['green']}✓ 发现 {len(ids)} 个模型{C['reset']}")
-                return ids
-            print(f" {C['yellow']}⚠ 返回为空{C['reset']}")
+    for attempt in range(2):
+        try:
+            req = urllib.request.Request(url, headers=headers, method='GET')
+            with opener.open(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode())
+                models = data.get('data', [])
+                ids = sorted(set(m['id'] for m in models if isinstance(m, dict) and m.get('id')))
+                if ids:
+                    print(f" {C['green']}✓ 发现 {len(ids)} 个模型{C['reset']}")
+                    return ids
+                print(f" {C['yellow']}⚠ 返回为空{C['reset']}")
+                return None
+        except Exception as e:
+            if attempt == 0 and 'timeout' in type(e).__name__.lower():
+                print(f" {C['yellow']}⏱ 超时，重试...{C['reset']}", end='', flush=True)
+                continue
+            print(f" {C['yellow']}⚠ 探测失败: {type(e).__name__}（将使用预设列表）{C['reset']}")
             return None
-    except Exception as e:
-        print(f" {C['yellow']}⚠ 探测失败: {type(e).__name__}（将使用预设列表）{C['reset']}")
-        return None
+    return None
 
 def _normalize_model_choices(choices):
     """统一 model_choices 格式为 [{'id': str, 'name': str}]"""
@@ -519,7 +699,7 @@ def _configure_advanced(provider, cfg):
         tbt = ask_input("thinking_budget_tokens", default='', hint='low≈4096, medium≈10240, high≈32768')
         if tbt:
             cfg['thinking_budget_tokens'] = int(tbt)
-    if provider['type'] == 'native_claude':
+    if cfg.get('type', provider['type']) == 'native_claude':
         ua = ask_input("User-Agent 版本号", default='', hint='某些中转按 UA 白名单校验，pin 老版本用')
         if ua:
             cfg['user_agent'] = ua
@@ -557,27 +737,37 @@ def configure_llm(provider):
                 field['label'],
                 default=field.get('default', True)
             )
+        elif field.get('type') == 'choice':
+            picked = ask_choice(field['label'], field['options'])
+            chosen = next(o for o in field['options'] if o['id'] == picked)
+            for opt_key, opt_val in chosen.items():
+                if opt_key not in ('id', 'name', 'desc'):
+                    cfg[opt_key] = opt_val
 
     # 模型选择
+    manual_choice = {'id': '__manual__', 'name': '✏️ 手动输入模型名', 'desc': '自定义模型 ID，不依赖探测结果'}
     model_list = probe_models(provider, cfg['apikey'], cfg.get('apibase'))
     if model_list:
-        refresh_choice = {'id': '__refresh__', 'name': '🔄 重新探测模型列表'}
-        choices = [refresh_choice] + [{'id': m, 'name': m} for m in model_list]
+        refresh_choice = {'id': '__refresh__', 'name': '🔄 重新探测'}
+        choices = [refresh_choice, manual_choice] + [{'id': m, 'name': m} for m in model_list]
         while True:
-            picked = ask_choice("API 探测到以下可用模型，请选择:", choices)
+            picked = ask_choice("API 探测到以下可用模型（或手动输入）:", choices)
             if picked == '__refresh__':
                 print(f"  {C['dim']}再次探测...{C['reset']}")
                 model_list = probe_models(provider, cfg['apikey'], cfg.get('apibase'))
                 if not model_list:
-                    print(f"  {C['yellow']}⚠ 再次探测失败，回退到预设列表{C['reset']}")
-                    picked = _fallback_model(provider)
+                    print(f"  {C['yellow']}⚠ 再次探测失败{C['reset']}")
+                    picked = _fallback_model(provider, manual_choice)
                     break
-                choices = [refresh_choice] + [{'id': m, 'name': m} for m in model_list]
+                choices = [refresh_choice, manual_choice] + [{'id': m, 'name': m} for m in model_list]
+            elif picked == '__manual__':
+                picked = ask_input("请输入模型名", default=cfg.get('model', ''))
+                break
             else:
                 break
         cfg['model'] = picked
     else:
-        cfg['model'] = _fallback_model(provider)
+        cfg['model'] = _fallback_model(provider, manual_choice)
 
     # 别名
     default_name = cfg.get('name', provider['id'])
@@ -591,12 +781,17 @@ def configure_llm(provider):
 
     return cfg
 
-def _fallback_model(provider):
-    """使用预设模型列表让用户选择"""
+def _fallback_model(provider, manual_choice=None):
+    """使用预设模型列表让用户选择，始终提供手动输入选项"""
+    manual_choice = manual_choice or {'id': '__manual__', 'name': '✏️ 手动输入模型名', 'desc': '自定义模型 ID'}
     normalized = _normalize_model_choices(provider.get('model_choices', []))
     if normalized:
-        return ask_choice("选择模型:", normalized)
-    return ask_input("请输入模型名称", default=provider['template'].get('model', ''))
+        choices = [manual_choice] + normalized
+        picked = ask_choice("选择模型（或手动输入）:", choices)
+        if picked == '__manual__':
+            return ask_input("请输入模型名", default=provider['template'].get('model', ''))
+        return picked
+    return ask_input("请输入模型名", default=provider['template'].get('model', ''))
 
 def configure_llms():
     """配置 LLM 模型"""
@@ -660,16 +855,13 @@ def configure_platforms():
 
         env_vals = {}
 
-        # 飞书扫码创建
         if pid == 'feishu' and ask_yesno("使用一键扫码创建应用？（推荐）", default=True):
             env_vals = _feishu_scan(platform)
 
-        # 补充扫码未获取的字段（或扫码失败时全手动填写）
         for var in platform['env_vars']:
             if var['key'] not in env_vals:
                 env_vals.update(_manual_platform_var(var))
 
-        # 企业微信专属：欢迎消息
         if pid == 'wecom' and ask_yesno("设置欢迎消息？", default=False):
             env_vals['wecom_welcome_message'] = ask_input("欢迎消息内容", default='你好，我在线上。')
 
@@ -688,10 +880,10 @@ def _manual_platform_var(var):
 
 def _feishu_scan(platform):
     """飞书一键扫码创建应用，返回 env_vals 或空 dict"""
+    from io import StringIO
     try:
         import lark_oapi as lark
         import qrcode, threading
-        from io import StringIO
     except ImportError:
         print(f"\n  {C['yellow']}⚠ lark-oapi 未安装，降级为手动配置{C['reset']}")
         return {}
@@ -794,7 +986,6 @@ def generate_mykey(llm_cfgs, platform_configs):
     lines.append("")
 
     # 各模型配置
-    # 同类型多实例时加上数字后缀
     type_counts = {}
     for cfg in llm_cfgs:
         cfg_type = cfg.get('type', 'native_oai')
@@ -807,7 +998,6 @@ def generate_mykey(llm_cfgs, platform_configs):
         idx = type_indices.get(cfg_type, 0)
         type_indices[cfg_type] = idx + 1
 
-        # 同类型只有一个时不加后缀；多个时加数字后缀
         if type_counts[cfg_type] > 1:
             var_name = f"{var_prefix}_{idx}"
         else:
@@ -873,6 +1063,57 @@ def _write_platform_value(lines, key, val):
         lines.append(f"{key} = {repr(val)}")
 
 
+def _parse_existing_mykey():
+    """解析已有 mykey.py，返回 (model_names, platform_infos)
+
+    llm_cfgs: [{'name': str, 'type': str, ...}]  — 模型配置字典列表
+    platform_infos: [{'id': str, 'vars': [{'key': str, 'val': ...}]}]  — 平台信息
+    解析失败时返回 ([], [])
+    """
+    if not os.path.exists(MYKPY_PATH):
+        return [], []
+
+    with open(MYKPY_PATH, 'r', encoding='utf-8') as f:
+        content = f.read()
+
+    # 解析模型名
+    model_names = []
+    m = re.search(r"'llm_nos':\s*\[([^\]]*)\]", content)
+    if m:
+        model_names = re.findall(r"'([^']+)'", m.group(1))
+
+    # 解析平台变量 → 平台 ID
+    platform_id_map = {
+        'tg_bot_token': 'telegram', 'qq_app_id': 'qq',
+        'fs_app_id': 'feishu', 'wecom_bot_id': 'wecom',
+        'dingtalk_client_id': 'dingtalk', 'dc_bot_token': 'discord',
+    }
+    platform_infos = []
+    for var_key, pid in platform_id_map.items():
+        m_var = re.search(rf"^{var_key}\s*=\s*'([^']*)'", content, re.MULTILINE)
+        if m_var:
+            platform_infos.append({'id': pid, 'vars': [{'key': var_key, 'val': m_var.group(1)}]})
+
+    return model_names, platform_infos
+
+
+def _backup_with_name(model_names, platform_ids):
+    """按 mykey+模型名+机器人名 格式备份旧 mykey.py"""
+    parts = ['mykey']
+    for m in model_names[:3]:
+        parts.append(m.replace('/', '-').replace('\\', '-'))
+    for pid in platform_ids:
+        pid_clean = pid.replace('_', '')
+        if pid_clean not in parts:
+            parts.append(pid_clean)
+    safe_name = '_'.join(parts)
+    if len(safe_name) > 100:
+        safe_name = safe_name[:100]
+    backup_path = os.path.join(PROJECT_ROOT, f'{safe_name}.py')
+    shutil.copy2(MYKPY_PATH, backup_path)
+    return backup_path
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 #  Main
 # ═══════════════════════════════════════════════════════════════════════════
@@ -885,46 +1126,90 @@ def main():
     if not ok:
         print(f"  {C['red']}✗ {msg}{C['reset']}")
         sys.exit(1)
-    color = 'yellow' if '⚠' in msg else 'green'
-    print(f"  {C[color]}{msg}{C['reset']}\n")
+    if msg:
+        color = 'yellow' if '⚠' in msg else 'green'
+        print(f"  {C[color]}{msg}{C['reset']}\n")
 
-    # 检测已有配置
-    if os.path.exists(MYKPY_PATH):
-        print(f"  {C['yellow']}⚠ 检测到已有 mykey.py{C['reset']}")
-        if not ask_yesno("是否重新配置？", default=False):
-            print(f"\n  {C['dim']}  退出。如需重新配置请删除 mykey.py 后重试。{C['reset']}\n")
-            sys.exit(0)
-
-    # ── 顶层菜单 ──
-    scope = ask_choice(
-        "你想配置什么？",
-        [
-            {'id': 'llm', 'name': 'LLM 模型', 'desc': '选择厂商、填写 API Key、探测模型列表'},
-            {'id': 'platform', 'name': '消息平台 (Telegram/QQ/飞书等)', 'desc': '配置聊天机器人接入'},
-            {'id': 'both', 'name': '两项都配置 (推荐)', 'desc': 'LLM + 平台，完整初始化'},
-        ],
-        default='both',
-    )
-
+    # ── 决策流程 ──
     llm_cfgs = []
     platform_configs = []
     platform_deps = set()
+    is_modify = False
+    is_new = False
 
-    # ── 执行 ──
+    if os.path.exists(MYKPY_PATH):
+        model_names, platform_infos = _parse_existing_mykey()
+        cur_models = ', '.join(model_names) if model_names else '(未知)'
+        cur_platforms = ', '.join(p['id'] for p in platform_infos) if platform_infos else '(无)'
+        print(f"  {C['dim']}  当前: 模型=[{cur_models}], 平台=[{cur_platforms}]{C['reset']}")
 
-    if scope in ('llm', 'both'):
-        llm_cfgs = _do_llm()
-        if scope == 'llm':
-            if ask_yesno("是否继续配置消息平台？", default=True):
+        mode = ask_choice(
+            "检测到已有 mykey.py，请选择操作",
+            [
+                {'id': 'modify', 'name': '修改现有配置', 'desc': '保留未改部分，只重新配置选定项'},
+                {'id': 'new', 'name': '新建配置（备份旧文件）', 'desc': '备份为 mykey+模型+平台.py，然后全新配置'},
+            ],
+            default=None,
+        )
+
+        if mode == 'new':
+            backup_path = _backup_with_name(model_names, [p['id'] for p in platform_infos])
+            print(f"  {C['green']}✓ 旧配置已备份至:{C['reset']} {C['dim']}{backup}{C['reset']}")
+            is_new = True
+        else:
+            is_modify = True
+            scope = ask_choice(
+                "你要修改什么？",
+                [
+                    {'id': 'both', 'name': '两项都重新配置', 'desc': 'LLM + 平台全部更新'},
+                    {'id': 'llm', 'name': '重新配置 LLM 模型', 'desc': f'当前: {cur_models}'},
+                    {'id': 'platform', 'name': '重新配置消息平台', 'desc': f'当前: {cur_platforms}'},
+                ],
+            )
+            if scope in ('llm', 'both'):
+                llm_cfgs = _do_llm()
+            if scope in ('platform', 'both'):
                 platform_configs, platform_deps = configure_platforms()
+            if scope == 'llm' and platform_infos:
+                for pi in platform_infos:
+                    p = next((x for x in PLATFORMS if x['id'] == pi['id']), None)
+                    if p:
+                        config_dict = {v['key']: v['val'] for v in pi['vars']}
+                        platform_configs.append({'platform': p, 'config': config_dict})
+            elif scope == 'platform' and model_names:
+                print(f"\n  {C['yellow']}⚠ 只修改平台时若未提供 LLM 配置将无法使用。{C['reset']}")
+                cprint(f"    建议两项都重新配置。", 'dim')
 
-    if scope == 'both':
-        platform_configs, platform_deps = configure_platforms()
+    if not is_modify:
+        if is_new:
+            hint = "已备份旧配置，请完成全新设置"
+        else:
+            hint = "首次配置，建议同时设置模型和消息平台"
+        print(f"  {C['dim']}  {hint}。{C['reset']}")
 
-    if scope == 'platform':
-        platform_configs, platform_deps = configure_platforms()
-        if ask_yesno("是否继续配置 LLM 模型？", default=True):
+        scope = ask_choice(
+            "你想配置什么？",
+            [
+                {'id': 'both', 'name': '两项都配置 (推荐)', 'desc': 'LLM 模型 + 消息平台，完整初始化'},
+                {'id': 'llm', 'name': '仅 LLM 模型', 'desc': '只配置模型，稍后再配平台'},
+                {'id': 'platform', 'name': '仅消息平台', 'desc': '只配平台，稍后再配模型'},
+            ],
+            default='both',
+        )
+
+        if scope in ('llm', 'both'):
             llm_cfgs = _do_llm()
+            if scope == 'llm':
+                if ask_yesno("是否继续配置消息平台？", default=True):
+                    platform_configs, platform_deps = configure_platforms()
+
+        if scope == 'both':
+            platform_configs, platform_deps = configure_platforms()
+
+        if scope == 'platform':
+            platform_configs, platform_deps = configure_platforms()
+            if ask_yesno("是否继续配置 LLM 模型？", default=True):
+                llm_cfgs = _do_llm()
 
     # ── 生成 mykey.py ──
     if not llm_cfgs and not platform_configs:

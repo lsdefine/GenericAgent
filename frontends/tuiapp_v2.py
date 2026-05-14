@@ -33,6 +33,7 @@ try:
     from textual.binding import Binding
     from textual.containers import Horizontal, Vertical, VerticalScroll
     from textual.message import Message
+    from textual.screen import ModalScreen
     from textual.widgets import OptionList, Static, TextArea
     from textual.widgets.option_list import Option
 except ModuleNotFoundError as exc:
@@ -197,15 +198,15 @@ class ChoiceList(OptionList):
     """OptionList 子类，记住所属 ChatMessage，便于选中后回填。"""
     BINDINGS = [*OptionList.BINDINGS,
                 Binding("right", "select", "Select", show=False),
-                Binding("left", "leave", "Leave", show=False)]
+                Binding("escape", "cancel", "Cancel", show=False)]
 
     def __init__(self, msg: "ChatMessage", **kwargs):
         super().__init__(**kwargs)
         self.msg = msg
 
-    def action_leave(self) -> None:
+    def action_cancel(self) -> None:
         try:
-            self.app.query_one("#input", InputArea).focus()
+            self.app._cancel_choice(self.msg)
         except Exception:
             pass
 
@@ -272,12 +273,10 @@ class InputArea(TextArea):
 
     BINDINGS = [
         Binding("ctrl+j",      "newline", "Newline", show=False),
-        Binding("alt+enter",   "newline", "Newline", show=False),
         Binding("ctrl+enter",  "newline", "Newline", show=False),
         Binding("shift+enter", "newline", "Newline", show=False),
         # Ctrl+V 优先尝试系统图片剪贴板；无图片时再走 Textual 文本剪贴板。
         Binding("ctrl+v",      "paste", "Paste", show=False),
-        Binding("ctrl+c",      "copy_or_clear", "CopyOrClear", show=False),
         # Ctrl+U: Unix 终端约定的 "kill line"，此处复用为整框清空（无选区时）。
         # 跨平台一致：Windows ConPTY / macOS Terminal / Linux 各家终端均原生支持 Ctrl+U 键码。
         Binding("ctrl+u",      "clear_input", "ClearInput", show=False),
@@ -286,20 +285,9 @@ class InputArea(TextArea):
     def action_noop(self) -> None:
         pass
 
-    def action_copy_or_clear(self) -> None:
-        # Textual/terminal copy remains active when there is an actual selection.
-        if self.selection.start != self.selection.end:
-            self.action_copy(); return
-        self.reset()
-        try:
-            self.app._resize_input(self)
-        except Exception:
-            pass
-
     def action_clear_input(self) -> None:
         """Ctrl+U: 一键清空整个输入框（无视选区/光标位置），跨平台终端通用。
 
-        与 action_copy_or_clear 的区别：本动作无条件清空，不抢复制行为；
         相当于 readline 的 unix-line-discard，所有主流终端原生透传该键码。
         """
         self.reset()
@@ -396,7 +384,7 @@ class InputArea(TextArea):
             pass
 
     def _history_up(self) -> bool:
-        """Move to older entry. Returns True if handled."""
+        """回到更旧的一条历史；到最旧时只吞掉按键。"""
         if not self._input_history:
             return False
         if self._history_index == -1:
@@ -406,7 +394,7 @@ class InputArea(TextArea):
         elif self._history_index > 0:
             self._history_index -= 1
         else:
-            return True  # already at oldest, absorb key
+            return True  # 已在最旧项，直接吞键
         self._suppress_palette_next_change()
         self.text = self._input_history[self._history_index]
         return True
@@ -419,7 +407,7 @@ class InputArea(TextArea):
             self._history_index += 1
             new_text = self._input_history[self._history_index]
         else:
-            # back to draft
+            # 回到草稿
             self._history_index = -1
             new_text = self._history_stash
         self._suppress_palette_next_change()
@@ -468,7 +456,7 @@ class InputArea(TextArea):
             fn = routes.get(event.key)
             if fn:
                 fn(); event.stop(); event.prevent_default(); return
-        # 2) 内嵌 ChoiceList 路由 (ccstatusline 风格)：↑↓ 移动 / → 或 Enter 确认 / ← 或 Esc 取消。
+        # 2) 内嵌 ChoiceList 路由 (ccstatusline 风格)：↑↓ 移动 / → 或 Enter 确认 / Esc 取消。
         #    不依赖焦点转移：只要存在未选定的 ChoiceList，方向键就被借走。
         choice = getattr(self.app, "_active_choice", lambda: None)()
         if choice is not None:
@@ -478,17 +466,16 @@ class InputArea(TextArea):
                 choice.action_cursor_down(); event.stop(); event.prevent_default(); return
             if event.key in ("enter", "right") and choice.highlighted is not None:
                 choice.action_select(); event.stop(); event.prevent_default(); return
-            if event.key in ("left", "escape"):
+            if event.key == "escape":
                 self.app._cancel_choice(choice.msg); event.stop(); event.prevent_default(); return
-        # 3) 输入历史浏览 (shell-style ↑/↓)
-        #    仅在单行输入（cursor row==0）且无 palette/choice 时生效
-        if event.key == "up" and self.cursor_location[0] == 0:
+        # 3) 输入历史：只在首行首列 / 尾行尾列时接管 ↑/↓。既保留原有光标移动，又允许在行内任意位置浏览历史（不强制先跳到行首/行尾）。
+        if event.key == "up" and self.cursor_location == (0, 0):
             if self._history_up():
                 event.stop(); event.prevent_default(); return
         if event.key == "down":
-            row, _ = self.cursor_location
-            total_lines = len(self.text.split("\n"))
-            if row >= total_lines - 1:
+            row, col = self.cursor_location
+            lines = self.text.split("\n")
+            if row == len(lines) - 1 and col == len(lines[-1]):
                 if self._history_down():
                     event.stop(); event.prevent_default(); return
         if event.key == "enter":  # 换行键已被 BINDINGS 拦走
@@ -502,7 +489,8 @@ class InputArea(TextArea):
 
 
 # ---------- 顶部栏 ----------
-def render_topbar(session_name: str, status: str, model: str, tasks_running: int) -> Table:
+def render_topbar(session_name: str, status: str, model: str, tasks_running: int,
+                  fold_mode: bool = True) -> Table:
     t = Table.grid(expand=True)
     t.add_column(ratio=1, justify="left")
     t.add_column(ratio=1, justify="center")
@@ -517,6 +505,9 @@ def render_topbar(session_name: str, status: str, model: str, tasks_running: int
     dot_color = C_GREEN if status == "running" else C_DIM
     left.append("● ", style=dot_color)
     left.append(status, style=C_MUTED)
+    if fold_mode:
+        left.append("    ")
+        left.append("▾ fold", style=C_DIM)
 
     mid = Text()
     mid.append("model: ", style=C_MUTED)
@@ -532,23 +523,22 @@ def render_topbar(session_name: str, status: str, model: str, tasks_running: int
     return t
 
 
-def render_bottombar() -> Table:
+def render_bottombar(quit_armed: bool = False) -> Table:
     t = Table.grid(expand=True)
-    t.add_column(ratio=2, justify="left")
-    t.add_column(ratio=1, justify="right")
+    t.add_column(justify="left")
     left = Text()
-    pairs = [("Enter", "发送"), ("↑/↓", "选择"),
-             ("Ctrl+N", "新会话"), ("Ctrl+B", "侧栏"),
-             ("Ctrl+F", "折叠"), ("Ctrl+S", "停止")]
-    for i, (k, d) in enumerate(pairs):
-        if i: left.append("    ")
-        left.append(k, style=C_FG)
-        left.append(" ")
-        left.append(d, style=C_MUTED)
-    right = Text()
-    right.append("/", style=C_GREEN)
-    right.append(" 命令面板", style=C_MUTED)
-    t.add_row(left, right)
+    if quit_armed:
+        left.append("再按 Ctrl+C 退出", style=f"bold {C_GREEN}")
+    else:
+        pairs = [("Enter", "发送"), ("Ctrl+N", "新会话"),
+                 ("Ctrl+B", "侧栏"), ("Ctrl+C", "停止/退出"),
+                 ("/", "命令面板"), ("Ctrl+/", "快捷键帮助")]
+        for i, (k, d) in enumerate(pairs):
+            if i: left.append("    ")
+            left.append(k, style=C_GREEN if k in ("/", "Ctrl+/") else C_FG)
+            left.append(" ")
+            left.append(d, style=C_MUTED)
+    t.add_row(left)
     return t
 
 
@@ -620,6 +610,37 @@ def render_sidebar(sessions: dict[int, AgentSession], current_id: Optional[int])
 
 
 # ---------- App ----------
+
+
+class HelpScreen(ModalScreen):
+    """快捷键帮助 modal — push 上来覆盖主屏幕，Esc / Ctrl+/ 关闭，不影响下层输入框位置。"""
+    CSS = """
+    HelpScreen { align: center middle; }
+    HelpScreen > Static {
+        width: auto;
+        max-width: 80;
+        height: auto;
+        max-height: 80%;
+        background: #21262d;
+        border: solid #30363d;
+        padding: 1 2;
+        color: #c9d1d9;
+    }
+    """
+    BINDINGS = [
+        Binding("escape", "dismiss", "Close", show=False),
+        Binding("ctrl+slash", "dismiss", "Close", show=False),
+        Binding("ctrl+/", "dismiss", "Close", show=False),
+        Binding("ctrl+underscore", "dismiss", "Close", show=False),
+    ]
+
+    def __init__(self, content) -> None:
+        super().__init__()
+        self._content = content
+
+    def compose(self) -> ComposeResult:
+        yield Static(self._content)
+
 
 class GenericAgentTUI(App[None]):
 
@@ -717,14 +738,17 @@ class GenericAgentTUI(App[None]):
     """
 
     BINDINGS = [
+        Binding("ctrl+c",     "handle_ctrl_c", "Stop/Quit", show=False, priority=True),
         Binding("ctrl+n",     "new_session",   "New",   show=False),
         Binding("ctrl+b",     "toggle_sidebar","Sidebar", show=False),
-        Binding("ctrl+s",     "stop_current",  "Stop",  show=False),
-        Binding("ctrl+f",     "toggle_fold",   "Fold",  show=False),
-        Binding("ctrl+q",     "quit",          "Quit",  show=False),
-        Binding("ctrl+left",  "prev_session",  "Prev",  show=False, priority=True),
-        Binding("ctrl+right", "next_session",  "Next",  show=False, priority=True),
-        Binding("escape",     "close_palette", "Close", show=False),
+        Binding("ctrl+o",     "toggle_fold",   "Fold",  show=False),
+        Binding("ctrl+up",    "prev_session",  "Prev",  show=False, priority=True),
+        Binding("ctrl+down",  "next_session",  "Next",  show=False, priority=True),
+        # Ctrl+/ — 终端常报为 ctrl+slash 或 legacy ctrl+_（=ASCII 0x1F），都绑上以兜底
+        Binding("ctrl+slash", "show_help", "Help", show=False),
+        Binding("ctrl+/",     "show_help", "Help", show=False),
+        Binding("ctrl+underscore", "show_help", "Help", show=False),
+        Binding("escape",     "escape",        "Close", show=False),
         Binding("tab",        "complete_command", "Complete", show=False, priority=True),
     ]
 
@@ -735,8 +759,11 @@ class GenericAgentTUI(App[None]):
         self.current_id: Optional[int] = None
         self._ids = count(1)
         self._suppress_palette_open = False   # 选中 option 后抑制下一次 on_input_changed 重开 palette
-        self.fold_mode: bool = True           # 折叠已完成的 turn，Ctrl+F 切
-        self._last_width: int = -1            # 轮询时检测变化用（Windows 窗口吸附/全屏不发 resize 时的兜底）
+        self.fold_mode: bool = True           # 折叠已完成的 turn，Ctrl+O 切
+        self._last_size: tuple[int, int] = (-1, -1)  # 同尺寸去重 + tick 兜底（Windows 窗口吸附不发 resize）
+        self._resize_timer = None             # 拖拽 resize 80ms 防抖，避免每帧全量重挂载
+        self._quit_armed: bool = False        # Ctrl+C 双击退出：第一次按设 True，2s 内再按则真正退出
+        self._quit_timer = None               # 配合 _quit_armed 的兜底清除定时器
 
     def compose(self) -> ComposeResult:
         yield Static("", id="topbar")
@@ -763,13 +790,20 @@ class GenericAgentTUI(App[None]):
         self.set_interval(0.5, self._tick)
         self._patch_auto_scroll_for_selection()
         self._apply_responsive_layout()
+        # Disable alternate scroll mode (?1007). Textual 开 ?1006 SGR mouse 但没关 ?1007；
+        # macOS Terminal.app / iTerm2 默认 profile 的 ?1007 是 ON，滚轮会同时发 mouse 事件
+        # 和 ↑/↓ 按键 → InputArea 历史导航被误触发。退出 alt screen 自动失效，不需要恢复。
+        try:
+            sys.stdout.write("\x1b[?1007l"); sys.stdout.flush()
+        except Exception:
+            pass
 
     def _tick(self) -> None:
         """0.5s 轮询：刷顶栏时间 + 兜底检测尺寸变化（Windows 窗口吸附/全屏不发 resize）。"""
         self._refresh_topbar()
-        w = self.size.width
-        if w != self._last_width:
-            self._last_width = w
+        size = (self.size.width, self.size.height)
+        if size != self._last_size:
+            self._last_size = size
             self._apply_responsive_layout()
 
     def _patch_auto_scroll_for_selection(self) -> None:
@@ -869,8 +903,61 @@ class GenericAgentTUI(App[None]):
         self.current_id = ids[(i + 1) % len(ids)]
         self._refresh_all()
 
-    def action_stop_current(self) -> None:
-        self._cmd_stop([])
+    def action_handle_ctrl_c(self) -> None:
+        """Ctrl+C 跨场景统一入口：跑任务时中断；否则首次清空输入框 + 武装退出，
+        2s 内再按退出。与 CC 双击退出协议对齐，输入框非空时不会一键退出。"""
+        # 0) 有选区 → 保持终端/TUI 复制语义，不触发 stop / clear / quit。
+        try:
+            selected_text = self.screen.get_selected_text()
+        except Exception:
+            selected_text = None
+        if selected_text:
+            try: self.copy_to_clipboard(selected_text)
+            except Exception: pass
+            self._disarm_quit()
+            return
+        # 1) 任务在跑 → 中断（不武装退出，避免误关）
+        try: sess = self.current
+        except Exception: sess = None
+        if sess is not None and sess.status == "running":
+            self._cmd_stop([])
+            self._disarm_quit()
+            return
+        # 2) 已武装 → 真正退出
+        if self._quit_armed:
+            self.exit()
+            return
+        # 3) 首次按：输入框有内容则清空，无论空满都武装并提示
+        try:
+            inp = self.query_one("#input", InputArea)
+        except Exception:
+            inp = None
+        if inp is not None and inp.text:
+            inp.reset()
+            try: self._resize_input(inp)
+            except Exception: pass
+        self._quit_armed = True
+        self._refresh_bottombar()
+        if self._quit_timer is not None:
+            try: self._quit_timer.stop()
+            except Exception: pass
+        self._quit_timer = self.set_timer(2.0, self._disarm_quit)
+
+    def _disarm_quit(self) -> None:
+        if not self._quit_armed and self._quit_timer is None:
+            return
+        self._quit_armed = False
+        if self._quit_timer is not None:
+            try: self._quit_timer.stop()
+            except Exception: pass
+            self._quit_timer = None
+        try: self._refresh_bottombar()
+        except Exception: pass
+
+    def on_key(self, event: events.Key) -> None:
+        """非 Ctrl+C 的任何键都解除退出武装状态，避免错按后僵在 armed。"""
+        if self._quit_armed and event.key != "ctrl+c":
+            self._disarm_quit()
 
     def action_toggle_sidebar(self) -> None:
         self.query_one("#sidebar", Static).toggle_class("-hidden")
@@ -884,11 +971,60 @@ class GenericAgentTUI(App[None]):
                     m._cached_body = None
                     m._cache_key = ()
         self._remount_current_session()
+        self._refresh_topbar()
         self.notify(f"Fold: {'on' if self.fold_mode else 'off'}", timeout=1)
 
-    def action_close_palette(self) -> None:
-        self._hide_palette()
-        self.query_one("#input", InputArea).focus()
+    def action_escape(self) -> None:
+        """Esc 统一入口：choice → palette → 兜底解除 quit 武装。
+        HelpScreen 自己绑了 Esc 拦截，到这里时它已经被 pop 掉。"""
+        # 1) 还有未选定的 choice → 取消
+        choice = self._active_choice()
+        if choice is not None:
+            self._cancel_choice(choice.msg)
+            return
+        # 2) 命令面板可见 → 关闭
+        try:
+            palette = self.query_one("#palette", OptionList)
+        except Exception:
+            palette = None
+        if palette is not None and palette.has_class("-visible"):
+            self._hide_palette()
+            self.query_one("#input", InputArea).focus()
+            return
+        # 3) armed → 解除（on_key 兜底通常已处理；这里仅显式情形）
+        self._disarm_quit()
+
+    def action_show_help(self) -> None:
+        # 已经在 HelpScreen 上 → 关掉；否则 push 一个新的（ModalScreen 不影响下层布局，输入框不动）
+        if isinstance(self.screen, HelpScreen):
+            self.pop_screen()
+        else:
+            self.push_screen(HelpScreen(self._render_help()))
+
+    def _render_help(self) -> Text:
+        rows = [
+            ("Enter",                   "发送"),
+            ("Ctrl+J / Ctrl+Enter",     "换行（Shift+Enter 同义）"),
+            ("Ctrl+C",                  "停止任务 / 空闲时连按两次退出"),
+            ("Ctrl+N",                  "新建会话"),
+            ("Ctrl+B",                  "切换侧栏"),
+            ("Ctrl+↑ / Ctrl+↓",         "切换会话"),
+            ("Ctrl+O",                  "折叠 / 展开已完成的轮次"),
+            ("Ctrl+U",                  "清空输入框"),
+            ("Ctrl+V",                  "粘贴（图片优先）"),
+            ("↑ / ↓",                   "输入框：浏览发送历史 / 面板内：移动"),
+            ("/",                       "唤起命令面板"),
+            ("Tab",                     "命令面板可见时补全"),
+            ("Esc",                     "取消选择 / 关闭面板 / 关闭帮助"),
+            ("Ctrl+/",                  "显示 / 隐藏本帮助"),
+        ]
+        t = Text()
+        t.append("快捷键帮助\n\n", style=f"bold {C_GREEN}")
+        for k, d in rows:
+            t.append(f"  {k:<22}", style=C_FG)
+            t.append(f"{d}\n", style=C_MUTED)
+        t.append("\n按 Esc 或 Ctrl+/ 关闭", style=C_DIM)
+        return t
 
     def action_complete_command(self) -> None:
         """Tab：命令面板可见时补全到当前高亮命令；否则什么都不做。"""
@@ -929,9 +1065,21 @@ class GenericAgentTUI(App[None]):
 
     # ---------------- input + palette ----------------
     def on_resize(self, event) -> None:
-        self._apply_responsive_layout()
+        # 终端常对一次拖拽连发多个 resize；同尺寸短路避免重复重挂载。
+        size = (self.size.width, self.size.height)
+        if size == self._last_size:
+            return
+        self._last_size = size
+        # 输入框高度自适应即时跑（对延迟敏感）；布局重挂载走 80ms 防抖。
         try: self._resize_input(self.query_one("#input", InputArea))
         except Exception: pass
+        if self._resize_timer is not None:
+            self._resize_timer.stop()
+        self._resize_timer = self.set_timer(0.08, self._flush_resize)
+
+    def _flush_resize(self) -> None:
+        self._resize_timer = None
+        self._apply_responsive_layout()
 
     def _apply_responsive_layout(self) -> None:
         """按终端宽度调侧栏宽 + 主区横向 padding。<70 列隐藏侧栏，宽屏按比例放大。"""
@@ -941,7 +1089,7 @@ class GenericAgentTUI(App[None]):
         except Exception:
             return
         w = self.size.width
-        self._last_width = w
+        self._last_size = (w, self.size.height)
         # 自动隐藏走 -narrow 类，跟用户手动 Ctrl+B 切的 -hidden 互不干扰
         if w < 70:
             sidebar.add_class("-narrow")
@@ -949,7 +1097,8 @@ class GenericAgentTUI(App[None]):
             sidebar.remove_class("-narrow")
             sidebar.styles.width = max(30, min(50, w // 5))
         main.styles.padding = (1, 2) if w < 90 else (1, 6)
-        self._remount_current_session()  # 宽度变了 → markdown 要按新宽重渲
+        # padding 改完 layout 是异步重算；推迟到下一帧再读 #messages.content_region 取新宽
+        self.call_after_refresh(self._remount_current_session)
 
     def _remount_current_session(self) -> None:
         if self.current_id is None or not self.is_mounted:
@@ -1069,25 +1218,19 @@ class GenericAgentTUI(App[None]):
         return None
 
     def _cancel_choice(self, msg: ChatMessage) -> None:
-        """← / Esc 取消选择：塌缩成"已取消"行，与 _collapse_choice 对称。"""
-        msg.selected_label = "（已取消）"
-        msg.content = "（已取消）"
-        container = self.query_one("#messages", VerticalScroll)
-        body = Text()
-        body.append("✗ ", style=C_DIM)
-        body.append("已取消", style=C_MUTED)
-        new_widget = SelectableStatic(body, classes="msg")
-        anchor = msg._hint_widget or msg._body_widget
-        if anchor is not None:
-            container.mount(new_widget, after=anchor)
-        else:
-            container.mount(new_widget)
-        if msg._hint_widget is not None:
-            msg._hint_widget.remove()
-            msg._hint_widget = None
-        if msg._body_widget is not None:
-            msg._body_widget.remove()
-        msg._body_widget = new_widget
+        """Esc 取消选择：直接移除整个 choice 消息（role / hint / body 三个 widget），
+        不留"已取消"痕迹。session.messages 同步删掉，下次 _refresh 不会重新挂载。"""
+        for w in (msg._role_widget, msg._hint_widget, msg._body_widget):
+            if w is not None:
+                try: w.remove()
+                except Exception: pass
+        msg._role_widget = None
+        msg._hint_widget = None
+        msg._body_widget = None
+        try:
+            self.current.messages.remove(msg)
+        except (ValueError, RuntimeError):
+            pass
         try:
             self.query_one("#input", InputArea).focus()
         except Exception:
@@ -1277,7 +1420,7 @@ class GenericAgentTUI(App[None]):
             choices.append((f"{mark}[{i}] {name}", i))
         msg = ChatMessage(
             role="system",
-            content="选择模型 (↑/↓ 移动，→/Enter 确认，← 返回输入框)",
+            content="选择模型 (↑/↓ 移动，→/Enter 确认，Esc 取消)",
             kind="choice",
             choices=choices,
             on_select=lambda v: self._do_switch_llm(v),
@@ -1354,7 +1497,7 @@ class GenericAgentTUI(App[None]):
             ]
             msg = ChatMessage(
                 role="system",
-                content="选择导出方式 (↑/↓ 移动，→/Enter 确认，← 返回输入框)",
+                content="选择导出方式 (↑/↓ 移动，→/Enter 确认，Esc 取消)",
                 kind="choice",
                 choices=choices,
                 on_select=lambda v: self._do_export(v),
@@ -1515,7 +1658,15 @@ class GenericAgentTUI(App[None]):
         try: model = s.agent.get_llm_name(model=True)
         except Exception: model = "?"
         tasks_running = sum(1 for x in self.sessions.values() if x.status == "running")
-        self.query_one("#topbar", Static).update(render_topbar(s.name, s.status, model, tasks_running))
+        self.query_one("#topbar", Static).update(
+            render_topbar(s.name, s.status, model, tasks_running, fold_mode=self.fold_mode))
+
+    def _refresh_bottombar(self):
+        if not self.is_mounted: return
+        try:
+            self.query_one("#bottombar", Static).update(render_bottombar(quit_armed=self._quit_armed))
+        except Exception:
+            pass
 
     def _refresh_sidebar(self):
         if not self.is_mounted: return
@@ -1616,7 +1767,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[list[str]] = None) -> int:
     build_arg_parser().parse_args(argv)
-    GenericAgentTUI().run(mouse=sys.platform != "darwin")
+    GenericAgentTUI().run()
     return 0
 
 

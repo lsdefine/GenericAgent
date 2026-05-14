@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Conductor Streamlit</title>
+  <style>
+    :root {
+      --bg: #f5f7fb;
+      --panel: rgba(255,255,255,0.78);
+      --panel-2: rgba(255,255,255,0.92);
+      --border: rgba(31,42,68,0.10);
+      --text: #172033;
+      --muted: #7a8497;
+      --soft: #43506a;
+      --accent: #3b82f6;
+      --accent-2: #8b5cf6;
+      --green: #10b981;
+      --amber: #f59e0b;
+      --red: #ef4444;
+      --gray: #9ca3af;
+      --shadow: 0 18px 55px rgba(30, 45, 80, .11);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      height: 100vh;
+      overflow: hidden;
+      font-family: Inter, "SF Pro Display", "Segoe UI", "Microsoft YaHei", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(900px 600px at 12% 8%, rgba(59, 130, 246, .14), transparent 54%),
+        radial-gradient(800px 650px at 86% 18%, rgba(139, 92, 246, .12), transparent 58%),
+        radial-gradient(650px 520px at 61% 94%, rgba(16, 185, 129, .10), transparent 60%),
+        linear-gradient(180deg, #fbfcff, var(--bg));
+    }
+
+    .app {
+      height: 100vh;
+      padding: 20px;
+      display: grid;
+      grid-template-columns: minmax(360px, 45%) 1fr;
+      gap: 18px;
+    }
+
+    .pane {
+      min-height: 0;
+      border: 1px solid var(--border);
+      background: linear-gradient(180deg, rgba(255,255,255,.86), rgba(255,255,255,.66));
+      backdrop-filter: blur(18px);
+      border-radius: 26px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .left, .chat { display: flex; flex-direction: column; }
+
+    .head {
+      padding: 20px 20px 14px;
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      border-bottom: 1px solid rgba(31,42,68,.075);
+      background: rgba(255,255,255,.34);
+    }
+    .title {
+      font-size: 18px;
+      letter-spacing: .2px;
+      font-weight: 700;
+    }
+    .hint {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .cards {
+      padding: 16px;
+      overflow: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .cards::-webkit-scrollbar, .messages::-webkit-scrollbar { width: 8px; }
+    .cards::-webkit-scrollbar-thumb, .messages::-webkit-scrollbar-thumb {
+      background: rgba(31,42,68,.16);
+      border-radius: 10px;
+    }
+
+    .card {
+      position: relative;
+      padding: 15px 15px 14px 17px;
+      border-radius: 20px;
+      background: rgba(255,255,255,.76);
+      border: 1px solid rgba(31,42,68,.10);
+      box-shadow: 0 8px 24px rgba(30,45,80,.055);
+      transition: transform .18s ease, background .18s ease, border-color .18s ease, box-shadow .18s ease;
+    }
+    .card:hover {
+      transform: translateY(-1px);
+      background: rgba(255,255,255,.95);
+      border-color: rgba(59,130,246,.24);
+      box-shadow: 0 12px 30px rgba(30,45,80,.08);
+    }
+    .card::before {
+      content: "";
+      position: absolute;
+      left: 0; top: 16px; bottom: 16px;
+      width: 4px;
+      border-radius: 99px;
+      background: var(--state);
+      box-shadow: 0 0 0 4px color-mix(in srgb, var(--state), transparent 84%);
+    }
+    .card.running { --state: var(--green); }
+    .card.waiting { --state: var(--amber); }
+    .card.stopped { --state: var(--gray); }
+    .card.failed { --state: var(--red); }
+
+    .status-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    .dot-text {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--state);
+      box-shadow: 0 0 0 4px color-mix(in srgb, var(--state), transparent 86%);
+    }
+    .label {
+      font-size: 10px;
+      text-transform: uppercase;
+      color: var(--muted);
+      letter-spacing: .10em;
+    }
+    .prompt {
+      color: #24314d;
+      font-size: 13px;
+      line-height: 1.45;
+      margin-bottom: 12px;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .reply {
+      color: var(--soft);
+      font-size: 13px;
+      line-height: 1.4;
+      background: rgba(245,247,251,.78);
+      border: 1px solid rgba(31,42,68,.07);
+      border-radius: 14px;
+      padding: 11px 12px;
+      max-height: 140px;
+      overflow-y: auto;
+      word-wrap: break-word;
+    }
+    .reply p, .reply ul, .reply ol, .reply pre, .reply blockquote {
+      margin: 0 0 .25em 0;
+    }
+    .reply p:last-child, .reply ul:last-child, .reply ol:last-child {
+      margin-bottom: 0;
+    }
+    .reply li { margin: 0; line-height: 1.35; }
+    .reply code {
+      font-size: 12px;
+      background: rgba(0,0,0,.05);
+      padding: 1px 4px;
+      border-radius: 4px;
+    }
+    .reply pre { white-space: pre-wrap; margin: .2em 0; }
+    .reply pre code { background: rgba(0,0,0,.04); display: block; padding: 6px 8px; border-radius: 5px; }
+    .reply::-webkit-scrollbar { width: 5px; }
+    .reply::-webkit-scrollbar-thumb {
+      background: rgba(31,42,68,.14);
+      border-radius: 10px;
+    }
+
+    .messages {
+      flex: 1;
+      overflow: auto;
+      padding: 22px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .msg {
+      max-width: 78%;
+      padding: 13px 15px;
+      border-radius: 18px;
+      line-height: 1.45;
+      font-size: 14px;
+      word-wrap: break-word;
+      box-shadow: 0 8px 22px rgba(30,45,80,.055);
+    }
+    .msg p, .msg ul, .msg ol, .msg pre, .msg blockquote {
+      margin: 0 0 .3em 0;
+    }
+    .msg p:last-child, .msg ul:last-child, .msg ol:last-child {
+      margin-bottom: 0;
+    }
+    .msg li { margin: 0; line-height: 1.4; }
+    .msg code {
+      font-size: 12px;
+      background: rgba(0,0,0,.05);
+      padding: 1px 4px;
+      border-radius: 4px;
+    }
+    .msg pre { white-space: pre-wrap; margin: .3em 0; }
+    .msg pre code { background: rgba(0,0,0,.04); display: block; padding: 6px 8px; border-radius: 6px; }
+    .msg.me {
+      align-self: flex-end;
+      color: white;
+      background: linear-gradient(135deg, #3b82f6, #7c3aed);
+      border: 1px solid rgba(59,130,246,.20);
+      border-bottom-right-radius: 7px;
+    }
+    .msg.me.unread {
+      box-shadow: 0 0 0 2px #f59e0b, 0 8px 22px rgba(30,45,80,.055);
+    }
+    .msg.me.unread::after {
+      content: '未读';
+      display: block;
+      margin-top: 6px;
+      font-size: 11px;
+      opacity: .85;
+      color: #fbbf24;
+    }
+    .msg.ai {
+      align-self: flex-start;
+      background: rgba(255,255,255,.88);
+      border: 1px solid rgba(31,42,68,.10);
+      border-bottom-left-radius: 7px;
+    }
+    .msg.system {
+      align-self: center;
+      max-width: 88%;
+      color: var(--muted);
+      font-size: 12px;
+      padding: 7px 11px;
+      border-radius: 99px;
+      background: rgba(255,255,255,.70);
+      border: 1px solid rgba(31,42,68,.08);
+      box-shadow: none;
+    }
+
+    .composer {
+      padding: 16px;
+      border-top: 1px solid rgba(31,42,68,.075);
+      display: flex;
+      gap: 12px;
+      align-items: end;
+      background: rgba(255,255,255,.40);
+    }
+    textarea {
+      flex: 1;
+      height: 52px;
+      max-height: 140px;
+      resize: none;
+      outline: none;
+      color: var(--text);
+      background: rgba(255,255,255,.92);
+      border: 1px solid rgba(31,42,68,.12);
+      border-radius: 18px;
+      padding: 14px 15px;
+      font: inherit;
+      line-height: 1.35;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.8);
+    }
+    textarea:focus {
+      border-color: rgba(59,130,246,.44);
+      box-shadow: 0 0 0 4px rgba(59,130,246,.10);
+    }
+    textarea::placeholder { color: #98a1b2; }
+    button {
+      height: 52px;
+      min-width: 92px;
+      border: 0;
+      border-radius: 18px;
+      color: white;
+      font-weight: 750;
+      cursor: pointer;
+      background: linear-gradient(135deg, #3b82f6, #10b981);
+      box-shadow: 0 10px 26px rgba(59,130,246,.22);
+    }
+
+    @media (max-width: 900px) {
+      .app { grid-template-columns: 1fr; grid-template-rows: 42% 1fr; padding: 12px; }
+      .msg { max-width: 92%; }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <section class="pane left">
+      <div class="head">
+        <div class="title">Conductor</div>
+        <div class="hint">subagents · live</div>
+      </div>
+      <div class="cards" id="cards">
+        <div class="empty">暂无 subagent。你可以在右侧告诉 Conductor 要做什么。</div>
+      </div>
+    </section>
+
+    <section class="pane chat">
+      <div class="head">
+        <div class="title">Conversation</div>
+        <div class="hint" id="wsStatus">connecting...</div>
+      </div>
+      <div class="messages" id="messages">
+        <div class="msg system">Conductor 正在启动，等待 WebSocket 连接。</div>
+      </div>
+      <div class="composer">
+        <textarea id="input" placeholder="告诉 Conductor 你想做什么……"></textarea>
+        <button id="send">发送</button>
+      </div>
+    </section>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script>
+    const cardsEl = document.getElementById('cards');
+    const messagesEl = document.getElementById('messages');
+    const inputEl = document.getElementById('input');
+    const sendBtn = document.getElementById('send');
+    const wsStatus = document.getElementById('wsStatus');
+    let ws;
+
+    function esc(s) {
+      return String(s || '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+    }
+
+    function renderMd(s) {
+      try { return marked.parse(s || ''); } catch(e) { return esc(s); }
+    }
+
+    function renderCards(items) {
+      if (!items || !items.length) {
+        cardsEl.innerHTML = '<div class="empty">暂无 subagent。你可以在右侧告诉 Conductor 要做什么。</div>';
+        return;
+      }
+      cardsEl.innerHTML = items.map(it => {
+        const status = it.status || 'stopped';
+        return `
+          <article class="card ${esc(status)}">
+            <div class="status-row"><span class="dot-text"><span class="dot"></span>${esc(status)}</span></div>
+            <div class="prompt">${esc(it.prompt)}</div>
+            <div class="reply">${renderMd(it.reply || '等待输出……')}</div>
+          </article>
+        `;
+      }).join('');
+    }
+
+    function addMsg(item) {
+      const role = item.role || 'system';
+      const cls = role === 'user' ? 'me' : (role === 'conductor' ? 'ai' : 'system');
+      const div = document.createElement('div');
+      div.className = `msg ${cls}` + (role === 'user' && !item.read ? ' unread' : '');
+      if (item.id) div.dataset.id = item.id;
+      div.innerHTML = renderMd(item.msg || '');
+      messagesEl.appendChild(div);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    function markAllRead() {
+      messagesEl.querySelectorAll('.msg.me.unread').forEach(el => el.classList.remove('unread'));
+    }
+
+    function connect() {
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+      ws = new WebSocket(`${proto}://${location.host}/ws`);
+      ws.onopen = () => wsStatus.textContent = 'connected';
+      ws.onclose = () => {
+        wsStatus.textContent = 'disconnected · retrying';
+        setTimeout(connect, 1200);
+      };
+      ws.onerror = () => wsStatus.textContent = 'error';
+      ws.onmessage = ev => {
+        const data = JSON.parse(ev.data);
+        if (data.type === 'hello') {
+          renderCards(data.subagents || []);
+          messagesEl.innerHTML = '';
+          (data.chat || []).forEach(addMsg);
+          if (!(data.chat || []).length) addMsg({role:'system', msg:'Conductor 已启动，正在监听用户消息和 subagent 输出。'});
+        } else if (data.type === 'subagents') {
+          renderCards(data.items || []);
+        } else if (data.type === 'chat') {
+          addMsg(data.item);
+        } else if (data.type === 'chat_read') {
+          markAllRead();
+        }
+      };
+    }
+
+    function send() {
+      const msg = inputEl.value.trim();
+      if (!msg || !ws || ws.readyState !== WebSocket.OPEN) return;
+      ws.send(JSON.stringify({msg}));
+      inputEl.value = '';
+      inputEl.focus();
+    }
+
+    sendBtn.addEventListener('click', send);
+    inputEl.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        send();
+      }
+    });
+    connect();
+  </script>
+</body>
+</html>

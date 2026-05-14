@@ -88,18 +88,19 @@ def safeprint(*argv):
 print = safeprint
 
 def trim_messages_history(history, context_win):
+    cap = context_win * 3
+    target = int(cap * 0.6)
+    def cost(): return sum(len(json.dumps(m, ensure_ascii=False)) for m in history)
     compress_history_tags(history)
-    cost = sum(len(json.dumps(m, ensure_ascii=False)) for m in history) 
-    print(f'[Debug] Current context: {cost} chars, {len(history)} messages.')
-    if cost > context_win * 3: 
-        compress_history_tags(history, keep_recent=4, force=True)   # trim breaks cache, so compress more btw
-        target = context_win * 3 * 0.6
-        while len(history) > 5 and cost > target:
-            history.pop(0)
-            while history and history[0].get('role') != 'user': history.pop(0)
-            if history and history[0].get('role') == 'user': history[0] = _sanitize_leading_user_msg(history[0])
-            cost = sum(len(json.dumps(m, ensure_ascii=False)) for m in history)
-        print(f'[Debug] Trimmed context, current: {cost} chars, {len(history)} messages.')
+    print(f'[Debug] Current context: {cost()} chars, {len(history)} messages.')
+    if cost() <= cap: return
+    compress_history_tags(history, keep_recent=4, force=True)
+    if cost() <= target: return
+    while len(history) > 9 and cost() > target:
+        history.pop(0)
+        while history and history[0].get('role') != 'user': history.pop(0)
+        if history and history[0].get('role') == 'user': history[0] = _sanitize_leading_user_msg(history[0])
+    print(f'[Debug] Trimmed context, current: {cost()} chars, {len(history)} messages.')
 
 def auto_make_url(base, path):
     b, p = base.rstrip('/'), path.strip('/')
@@ -372,7 +373,9 @@ def _stream_with_retry(sess, url, headers, payload, parse_fn):
                 gen = parse_fn(r)
                 try:
                     while True: streamed = True; yield next(gen)
-                except StopIteration as e: return e.value or []
+                except StopIteration as e:
+                    if not e.value and not streamed: raise requests.ConnectionError("empty response")
+                    return e.value or []
         except (requests.Timeout, requests.ConnectionError) as e:
             err = f"!!!Error: {type(e).__name__}"
             if attempt < sess.max_retries:
@@ -510,7 +513,7 @@ class BaseSession:
         self.api_key = cfg['apikey']
         self.api_base = cfg['apibase'].rstrip('/')
         self.model = cfg.get('model', '')
-        self.context_win = cfg.get('context_win', 28000)
+        self.context_win = cfg.get('context_win', 30000)
         self.history = []
         self.lock = threading.Lock()
         self.system = ""

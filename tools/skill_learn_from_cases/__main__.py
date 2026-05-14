@@ -1,5 +1,5 @@
 """
-__main__.py — skill_learn_from_cases CLI 入口
+__main__.py   skill_learn_from_cases CLI 入口
 
 用法:
     python -m tools.skill_learn_from_cases "docker_compose_production"
@@ -22,19 +22,49 @@ from tools.skill_learn_from_cases.name_converter import convert_name
 
 def main():
     parser = argparse.ArgumentParser(
-        description="skill_learn_from_cases — 案例驱动技能学习工具",
+        description="skill_learn_from_cases   案例驱动技能学习工具",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-示例:
-  python -m tools.skill_learn_from_cases "docker_compose_production"
+Design Specification   CLI 接口设计文档
+==========================================
+
+-- 概述
+  通过真实案例学习技能并验证能力习得 
+  支持LLM增强 DeepSeek/Ollama 和纯规则降级双路径 
+
+>> 使用指南
+  python -m tools.skill_learn_from_cases <技能名称> [选项]
+
+  技能名称示例
+  docker_compose_production     Docker Compose 生产部署
+  cypher_programming_language   Cypher 图数据库查询语言
+  小微贷款图像凭证鉴定            中文名称自动转换
+
+-> 常用工作流
+  1. 预览学习效果:
+     python -m tools.skill_learn_from_cases wiki_search --dry-run
+
+  2. 完整学习:
+     python -m tools.skill_learn_from_cases docker_compose_production
+
+  3. 强制刷新:
+     python -m tools.skill_learn_from_cases python_async --force
+
+>> LLM 增强 可选 
+  set SKILL_LLM_ENABLE=1
+  set LLM_API_BASE=https://api.deepseek.com/v1
+  set LLM_API_KEY=sk-xxx
+  set LLM_MODEL=deepseek-chat
+
+>> 查看已学技能
   python -m tools.skill_learn_from_cases --list
-  python -m tools.skill_learn_from_cases --help
-        """
+  python -m tools.skill_learn_from_cases --show wiki_search
+"""
     )
     parser.add_argument(
         "skill_name",
         nargs="?",
-        help="要学习的技能名称，如 docker_compose_production"
+        help="要学习的技能名称 如 docker_compose_production"
     )
     parser.add_argument(
         "--list", "-l",
@@ -44,12 +74,12 @@ def main():
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="仅展示将要执行的操作，不实际运行"
+        help="仅展示将要执行的操作 不实际运行"
     )
     parser.add_argument(
         "--show", "-s",
         type=str,
-        help="查看指定技能的最新学习详情（支持中文名）"
+        help="查看指定技能的最新学习详情 支持中文名 "
     )
     parser.add_argument(
         "--version", "-V",
@@ -64,7 +94,7 @@ def main():
     parser.add_argument(
         "--force", "-f",
         action="store_true",
-        help="强制刷新搜索案例（跳过继承）"
+        help="强制刷新搜索案例 跳过继承 "
     )
 
     args = parser.parse_args()
@@ -99,15 +129,15 @@ def main():
                                 except: pass
                 lines_out.append((s, stats))
             
-            # 动态计算列宽（支持中文）
+            # 动态计算列宽 支持中文 
             name_width = max(len(s.encode('utf-8')) for s, _ in lines_out)
-            # 显示用宽度（中文占2字符宽度的近似）
+            # 显示用宽度 中文占2字符宽度的近似 
             display_width = max(20, len(max((s for s,_ in lines_out), key=len)) + 2)
             
             print("已学习的技能:")
             header = f"  {'技能名':<{display_width}}  版本  评分   模式数  原始名"
             print(header)
-            print(f"  {'─'*display_width}  ─────────────────────────────────")
+            print(f"  {' '*display_width}                                   ")
             for s, stats in lines_out:
                 dname = ""
                 rev_dir = GA_ROOT / "skills_learning" / s
@@ -148,7 +178,7 @@ def main():
                 print(f"  {k}: {v}")
         report_file = show_dir / latest / "reports" / "learning_report.md"
         if report_file.exists():
-            print(f"\n  📄 学习报告: skills_learning/{show_name}/{latest}/reports/learning_report.md")
+            print(f"\n    学习报告: skills_learning/{show_name}/{latest}/reports/learning_report.md")
         return
 
     if args.version:
@@ -181,7 +211,7 @@ def main():
     if args.dry_run:
         print(f"[DRY RUN] 将学习技能: {skill_name}")
         print(f"          目录名: {en_name}")
-        print(f"          流程: Phase 0→1→2→3→4→5")
+        print(f"          流程: Phase 0 1 2 3 4 5")
         print(f"          将创建: skills_learning/{en_name}/revN/")
         # 环境探测
         try:
@@ -201,7 +231,7 @@ def main():
 
     learn_skill(en_name)
 
-    # 自动清理旧版本（保留最近3个）
+    # 自动清理旧版本 保留最近3个 
     skill_dir = GA_ROOT / "skills_learning" / en_name
     if skill_dir.exists():
         import shutil
@@ -212,11 +242,11 @@ def main():
         while len(revs) > 3:
             old = skill_dir / revs.pop(0)
             shutil.rmtree(old)
-            print(f"  自动清理: {old.name}（保留最近3版）")
+            print(f"  自动清理: {old.name} 保留最近3版 ")
 
     # 保存原始显示名到 meta.json
     if en_name != skill_name:
-        # meta.json 在 rev{ver}/ 下，找到最新版本
+        # meta.json 在 rev{ver}/ 下 找到最新版本
         skill_dir = GA_ROOT / "skills_learning" / en_name
         if skill_dir.exists():
             revs = sorted([d.name for d in skill_dir.iterdir() if d.name.startswith("rev")],

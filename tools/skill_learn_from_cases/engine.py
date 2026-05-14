@@ -364,7 +364,6 @@ def _phase2_search(ctx: dict):
                         f"{name} 最佳实践",
                         f"{name} 实战 经验",
                         f"{name} 技术方案 案例",
-                        f"{name.split('图像')[0] if '图像' in name else name} 图像识别 凭证验证",
                     ]
                     if en_kw and len(en_kw) > 3:
                         queries.extend([
@@ -372,13 +371,21 @@ def _phase2_search(ctx: dict):
                             f"{en_kw} guide examples",
                         ])
                 else:
-                    queries = [
+                    _base_en = [
                         f"{name.replace('_',' ')} tutorial",
                         f"{name.replace('_',' ')} how to use",
                         f"{name.replace('_',' ')} guide examples",
                         f"{name.replace('_',' ')} getting started",
                         f"learn {name.replace('_',' ')} beginner",
                     ]
+                    queries = list(_base_en)
+                    # wiki_search 同义词扩展提升召回率
+                    _syns = {"tutorial":"guide best-practices".split(),"guide":"handbook reference".split(),"examples":"demo sample".split(),"beginner":"intro quickstart".split()}
+                    for q in _base_en[:2]:
+                        for kw, syns in _syns.items():
+                            if kw in q:
+                                for s in syns[:2]:
+                                    queries.append(q.replace(kw, s))
                     if en_kw:
                         queries.extend([
                             f"{en_kw} best practices",

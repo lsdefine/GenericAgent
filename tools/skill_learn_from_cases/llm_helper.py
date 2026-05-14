@@ -24,6 +24,7 @@ import sys
 import hashlib
 import time
 from pathlib import Path
+from tools.skill_learn_from_cases.logging_setup import logger
 
 # ── 环境变量获取（仅读一次） ──
 _ENABLED = os.environ.get("SKILL_LLM_ENABLE", "0") == "1"
@@ -100,12 +101,12 @@ def llm_available() -> bool:
         with urllib.request.urlopen(req, timeout=5) as resp:
             _availability = resp.status == 200
             if _availability:
-                print(f"  [LLM] OK: {_API_BASE}")
+                logger.info("LLM available: %s", _API_BASE)
             else:
-                print(f"  [LLM] FAIL: 端点返回状态码 {resp.status}")
+                logger.error("LLM endpoint returned %s", resp.status)
             return _availability
     except Exception as e:
-        print(f"  [LLM] FAIL: 连接 {_API_BASE} 失败 — {e}")
+        logger.error("LLM connection failed: %s — %s", _API_BASE, e)
         _availability = False
         return False
 
@@ -166,7 +167,7 @@ def call_llm(
     except urllib.error.HTTPError as e:
         print(f"  [LLM] HTTP {e.code}: {e.read().decode('utf-8', errors='replace')[:200]}")
     except Exception as e:
-        print(f"  [LLM] 调用失败: {e}")
+        logger.error("LLM call failed: %s", e)
 
     return ""
 
@@ -204,8 +205,8 @@ def call_llm_json(
     try:
         return json.loads(text)
     except json.JSONDecodeError as e:
-        print(f"  [LLM] JSON 解析失败: {e}")
-        print(f"  [LLM] 原始响应前 200 字符: {text[:200]}")
+        logger.warning("LLM JSON parse failed: %s", e)
+        logger.debug("LLM raw response: %s", text[:200])
         return None
 
 

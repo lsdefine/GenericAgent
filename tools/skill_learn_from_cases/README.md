@@ -1,17 +1,17 @@
-# skill_learn_from_cases — 案例驱动技能学习 CLI 工具
+# skill_learn_from_cases   案例驱动技能学习 CLI 工具
 
-通过真实案例学习一项技能，并用案例验证能力习得。  
-零外部依赖（除搜索引擎 API key），**可选大模型增强**（DeepSeek/Ollama/OpenAI兼容）。
+通过真实案例学习一项技能，并用案例验证能力习得  
+零外部依赖 除搜索引擎 API key   可选大模型增强
 
 ---
 
 ## 快速开始
 
 ```bash
-# 最简用法（纯规则模式）
+# 最简用法 纯规则模式
 python -m tools.skill_learn_from_cases docker_compose_production
 
-# 查看可用环境和预览
+# 查看预览 展示环境/领域/hooks
 python -m tools.skill_learn_from_cases wiki_search --dry-run
 
 # 启用 LLM 增强
@@ -21,182 +21,102 @@ set LLM_API_KEY=sk-xxx
 set LLM_MODEL=deepseek-chat
 python -m tools.skill_learn_from_cases cypher_programming_language
 
-# 支持中文技能名
-python -m tools.skill_learn_from_cases "小微贷款图像凭证鉴定"
+# 支持中英文混合技能名
+python -m tools.skill_learn_from_cases 人机交互ui设计原型handoff
 ```
 
----
+## 6 阶段工作流
 
-## 工作流程
-
-### 6 阶段流
-
-```
-Phase 0: 启动 + 版本管理
-Phase 0.5: 环境探测（新增）
-   自动扫描: Neo4j/Docker/SQLite/Git/PaddleOCR
-   缺密码? → ask_user() 交互式询问
-Phase 1: 技能定义
-   Skill Hub 查前置知识 + Web/Wikipedia 摘要
-   LLM 增强 → 结构化定义（前置知识/核心概念/常见陷阱）
-Phase 2: 案例搜索
-   Skill Hub: 关键词重叠过滤 → 排除 agentskill_skills/ 假案例
-   Web 搜索: LLM 生成多样化搜索词（6 个）
-   Wikipedia: 标题去重 + 无关结果过滤
-   所有 case 带 type/relevance 字段
-Phase 3: 模式提炼
-   规则路径: 领域匹配(skill_domain_patterns.json) + 通用模式
-   LLM 路径: 零预设领域，从案例智能提取模式
-   继承过滤: 不相关模式自动过滤（最多保留最近3版）
-Phase 4: 构建验证工具
-   生成 assess.py → 选择题 + 模式覆盖率检查
-   复制 practical hooks → practice/ 目录
-   hook 互斥规则: neo4j 匹配时排除 sql.py
-Phase 5: 运行验证
-   知识测试: LLM 批量评估 / 规则评分
-   实操测试: 自动扫描 practice/ 运行所有 hook
-   最终评分: 加权综合（知识35% + 模式35% + 实操30%）
+```text
+Phase 0:    启动  目录创建 + 环境探测
+Phase 0.5:  探测  自动扫描 Neo4j/Docker/SQLite/Git/PaddleOCR 缺密码时交互询问
+Phase 1:    定义  LLM 结构化定义 Wikipedia 摘要
+Phase 2:    搜索  多个渠道并行搜索 + 同义词扩展 + 多步案例过滤
+Phase 3:    模式  LLM 智能提取 + 技能分解  规则匹配 16 个领域
+Phase 4:    构建  生成评估工具 + 实操测试 practice/ 目录
+Phase 5:    验证  知识测试 + 实操测试 + 模式覆盖率
+     \_____________________/
+        迭代反馈环 继承+改进
 ```
 
-### 迭代反馈环
+## 元学习闭环
 
-每次学习创建 `revN/` 版本目录，下次迭代继承上一版模式：
+本工具最独特的特性是能够**学习技能后反哺自身**:
 
-```
-skills_learning/{skill_name}/
-  ├── rev1/         第一次学习（案例+模式+工具+报告）
-  ├── rev2/         第二次学习（继承 rev1 模式并改进）
-  ├── rev3/         第三次学习（继承 rev1+rev2）
-  └── ...           保留最近3版，旧版自动清理
+```text
+学习技能  提取知识模式  应用到 CLI 工具自身  验证效果  继续迭代
 ```
 
----
+已成功完成 5 轮元学习闭环:
 
-## LLM 增强
+| 轮次 | 学习技能 | 评分 | 应用到 CLI 工具 |
+|:----:|---------|:----:|----------------|
+| 1 | structured_logging | 95/100 | 新建 logging_setup.py, llm_helper.py print logger |
+| 2 | cli_ux_design | 86/100 | --help 重写为结构化文档 |
+| 3 | test_strategy | 94/100 | 15 个测试覆盖 4 个模块 + CI 配置 |
+| 4 | wiki_search | 97/100 | 搜索词同义词扩展 多步案例过滤 |
+| 5 | error_handling | 84/100 | 异常分类 错误上下文日志 |
 
-| 阶段 | 规则路径 | LLM 增强路径 |
-|------|----------|-------------|
-| P1 定义 | Wikipedia 摘要拼接 | 结构化定义（前置知识+概念+陷阱） |
-| P2 搜索 | 模板化搜索词 x3 | 多样化搜索词 x6 |
-| P3 模式 | 领域关键词匹配 | 零预设领域，智能模式提取+技能分解 |
-| P5 评估 | 规则评分（基于模式质量） | 批量评估 8 题 + 真实场景实操题 |
+## 核心特性
 
-```bash
-set SKILL_LLM_ENABLE=1           # 启用 LLM
-set LLM_API_BASE=http://localhost:11434/v1  # Ollama 默认
-set LLM_API_KEY=sk-xxx           # DeepSeek/OpenAI
-set LLM_MODEL=deepseek-chat      # 模型名
-set LLM_TIMEOUT=120              # 超时秒数
-set LLM_CACHE_ENABLE=1           # 缓存（默认开启）
+### 1. LLM 增强 可选降级
+
+| 阶段 | LLM 路径 | 规则降级路径 |
+|------|---------|-------------|
+| 定义 | 结构化定义 前置知识 概念 陷阱 | Wikipedia 摘要 |
+| 搜索 | 6 个多样化搜索词 | 模板化搜索词 含同义词扩展 |
+| 模式 | 智能模式提取 + 技能分解 | 16 个领域关键词匹配 |
+| 验证 | 批量评估 + 实操题 | 模式覆盖质量评分 |
+
+### 2. 环境探测 + 实操测试
+
+自动探测本机可用服务 缺密码时 ask_user 交互询问:
+
+| 服务 | 探测方式 | 用途 |
+|------|---------|------|
+| Neo4j | 端口 7687 + env | Cypher 实操测试 |
+| Docker | WSL Docker socket | Compose 实操测试 |
+| SQLite | CLI sqlite3 | SQL 实操测试 |
+| Git | git --version | Git 实操测试 |
+| PaddleOCR | 端口 8090 + API | 文档鉴权实操测试 |
+
+结果存入 practice/ 目录:
+
+```text
+rev5/
+  practice/
+    neo4j_hook.py      真实 Neo4j 连接 100/100
+    docker_compose.py  docker compose config 校验
+    sql.py             SQLite 查询验证
+    git.py             Git 操作验证
+    python_async.py    异步代码执行
+    react_hook.py      Node.js 浏览器检测
+    ui_design_hook.py  Chrome Edge 设计工具检测
+    document_check.py  PaddleOCR-VL 图像识别 85/100
 ```
 
----
+### 3. 案例质量过滤
 
-## 环境探测
+3 层过滤链确保案例质量:
 
-工具自动探测本机可用服务，缺密码时交互式询问：
-
-```bash
-[探测] 可用: neo4j, docker, sqlite, git, paddle_ocr
+```text
+原始搜索结果   Skill Hub 关键词重叠过滤
+                     Wikipedia 标题去重 + 无关内容过滤
+                          agentskill_skills 前缀排除
+                              最终高质量案例集
 ```
 
-| 服务 | 端口 | 用途 | 密码变量 |
-|------|------|------|----------|
-| Neo4j | 7687 (Bolt) | Cypher 查询验证 | `neo4j_password` |
-| Docker | WSL socket | Compose 校验 | 无需密码 |
-| SQLite | CLI | SQL 查询验证 | 无需密码 |
-| Git | CLI | Git 操作验证 | 无需密码 |
-| PaddleOCR | 8090 (llama-server) | OCR 图像识别 | 无需密码（localhost） |
+效果: cypher 技能相关案例从 27% 提升到 83%
 
----
-
-## 实操测试体系
-
-### practice/ 目录
-
-每个 `revN/` 包含一个 `practice/` 子目录，存放实操测试脚本：
-
-```
-revN/
-  ├── practice/
-  │   ├── neo4j_hook.py     ← 真实 Neo4j 连接，执行 Cypher 查询
-  │   ├── docker_compose.py ← 真实 docker compose config 校验
-  │   ├── sql.py           ← SQLite 查询验证
-  │   ├── git.py           ← Git 操作验证
-  │   └── document_check.py ← PaddleOCR-VL 图像识别 + 本地库检测
-  ├── tools/
-  │   └── assess.py
-  └── patterns/
-```
-
-### 统一接口
-
-每个 hook 遵循标准协议：
-
-```python
-def run(env: dict = None) -> dict:
-    """env 来自 env_detector.detect_all()"
-    返回 {"score": 0-100, "passed": bool, "note": str}
-}
-
-if __name__ == "__main__":
-    print(json.dumps(run()))
-```
-
-### hook 匹配规则
-
-```
-neo4j/cypher/graph_database/图数据库 → neo4j_hook.py
-docker/compose/container            → docker_compose.py
-sql/mysql/postgres/sqlite            → sql.py
-git                                  → git.py
-async/asyncio                        → python_async.py
-图像/凭证/证件/鉴定/ocr/image        → document_check.py
-```
-
-### hook 互斥
-
-当更特定的 hook 已匹配时，排除通用 hook：
-- `neo4j_hook.py` 已匹配 → 排除 `sql.py`, `docker_compose.py`
-- `docker_compose.py` 已匹配 → 排除 `sql.py`
-
----
-
-## 案例质量过滤
-
-### 多层过滤链
-
-```
-Skill Hub 搜索结果
-  ↓ 关键词重叠过滤（排除不通用的 skill 定义）
-  ↓ agentskill_skills/ 前缀过滤（排除内部技能元数据）
-  ↓
-Web 搜索结果（LLM 生成多样化搜索词）
-  + Wikipedia（标题去重 + 无关内容过滤）
-  ↓
-最终案例列表（带 type/relevance 字段）
-```
-
-### 效果对比（cypher_programming_language）
-
-```
-改前: 15案例 → 10条无关skill定义 + 5条wiki
-改后: 30案例 → 0条无关skill定义 + 30条真实web文章 ✅
-```
-
----
-
-## 安全设计
+### 4. 安全设计
 
 | 风险 | 防护措施 |
 |------|----------|
-| 路径遍历 | `_sanitize_skill_name()` 清洗目录名 |
-| API Key 泄漏 | 子进程过滤 `_API_KEY`/`_SECRET` 等敏感后缀 |
-| 代码注入 | eval/exec 限制 `__builtins__`，无 `open`/`__import__` |
-| 模板注入 | `json.dumps()` 自动转义，无 eval/exec |
-| Shell 注入 | 使用列表参数调用 subprocess.run |
-
----
+| 路径遍历 | sanitize_skill_name 清洗目录名 |
+| API Key 泄漏 | 子进程过滤 API_KEY SECRET 等敏感后缀 |
+| 代码注入 | eval exec 限制 builtins 无 open import |
+| 模板注入 | json.dumps 自动转义 |
+| Shell 注入 | 列表参数调用 subprocess.run |
 
 ## CLI 参数
 
@@ -204,51 +124,105 @@ Web 搜索结果（LLM 生成多样化搜索词）
 python -m tools.skill_learn_from_cases [skill_name] [选项]
 
 选项:
-  --dry-run       预览：显示环境/领域/hooks 而不实际执行
+  --dry-run       预览 显示环境/领域/hooks
   --list          列出所有已学习的技能
   --show SKILL    显示某技能的最新学习报告
   --version       显示工具版本
-  --force         强制刷新搜索案例（不继承上一版）
+  --force         强制刷新搜索案例 不继承上一版
   --delete SKILL  删除指定技能的所有学习记录
 ```
 
-### --dry-run 示例
+## 工作流示例
 
 ```bash
-$ python -m tools.skill_learn_from_cases wiki_search --dry-run
-[DRY RUN] 将学习技能: wiki_search
-          目录名: wiki_search
-          流程: Phase 0→1→2→3→4→5
-          环境: neo4j, docker, sqlite, git, paddle_ocr
-          LLM: 启用(deepseek-chat)
+1. 初次学习:
+   python -m tools.skill_learn_from_cases docker_compose_production
+
+2. 查看已有学习:
+   python -m tools.skill_learn_from_cases --list
+   python -m tools.skill_learn_from_cases --show wiki_search
+
+3. 强制刷新 重新搜索案例:
+   python -m tools.skill_learn_from_cases python_async --force
+
+4. LLM 增强学习:
+   set SKILL_LLM_ENABLE=1
+   set LLM_API_KEY=sk-xxx
+   python -m tools.skill_learn_from_cases image_voucher_verification
 ```
 
----
+## 环境变量
 
-## 领域扩展
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| SKILL_LLM_ENABLE | 0 | 启用 LLM 增强 |
+| LLM_API_BASE | http://localhost:11434/v1 | LLM API 端点 |
+| LLM_API_KEY |  | API 密钥 |
+| LLM_MODEL | qwen2.5:7b | 模型名 |
+| LLM_TIMEOUT | 120 | HTTP 超时秒数 |
+| LLM_CACHE_ENABLE | 1 | 启用 LLM 响应缓存 |
+| LLM_CACHE_TTL | 86400 | 缓存有效期秒数 |
+| neo4j_password |  | Neo4j 数据库密码 |
+| SKILL_FORCE_REFRESH | 0 | 强制刷新案例 |
 
-`skill_domain_patterns.json` 控制领域匹配，当前支持 16 个领域：
+## 测试
 
+```bash
+pip install pytest
+python -m pytest tests/ -v
 ```
-async, performance, fastapi, web_scraping, kubernetes,
-database, frontend_react, git, testing, networking,
-finance, image_processing, document_verification,
-remote_sensing, graph_database, search
+
+## 目录结构
+
+```text
+tools/skill_learn_from_cases/
+  engine.py            6 阶段流编排
+  assess_template.py   评估工具模板
+  env_detector.py      环境自动探测
+  llm_helper.py        统一 LLM 接口 + 缓存
+  logging_setup.py     结构化日志
+  dir_manager.py       版本目录管理 + 路径清洗
+  name_converter.py    中英文技能名转换 含 71 个映射
+  skill_domain_patterns.json  16 个领域库
+  practical_hooks/     9 个实操测试 hook
+tests/
+  tools/skill_learn_from_cases/
+    test_name_converter.py
+    test_env_detector.py
+    test_dir_manager.py
+.github/workflows/
+  ci.yml
 ```
 
-新增领域：在 JSON 中添加 `domain_name → {keywords, principles[]}` 即可。
+## 扩展指南
 
----
+### 新增领域
 
-## 版本演进
+编辑 skill_domain_patterns.json 添加新条目:
 
-| 版本 | 改进 |
-|------|------|
-| v1 | 基础 5 阶段流 + 规则模式提取 |
-| v2 | LLM 增强（Phase 1/2/3/5）+ 批量评估 |
-| v3 | 安全审计修复（路径/密钥/eval）|
-| v4 | 案例质量过滤（Skill Hub 关键词 + agentskill 排除）|
-| v5 | 环境探测 + practice/目录 + 统一 hook 接口 |
-| v6 | search 领域扩展 + 无关 domain 匹配收紧 |
-| v7 | hook 互斥规则 + PaddleOCR-VL 集成 |
-| v8 | --dry-run 增强 + ask_user 交互式询问 |
+```json
+{
+  "new_domain": {
+    "keywords": ["keyword1", "keyword2"],
+    "domain_label": "新领域",
+    "principles": [
+      {"principle": "最佳实践描述", "id": "P_xxx", "confidence": 90}
+    ]
+  }
+}
+```
+
+### 新增实操 hook
+
+在 practical_hooks/ 下创建文件实现 run env -> dict 接口,
+然后在 engine.py 的 hook_rules 列表中添加关键词匹配。
+
+## 依赖
+
+Python 3.10+
+pip: neo4j  用于 Neo4j 实操测试
+可选: pytesseract/PIL/paddleocr  用于 OCR 实操测试
+
+## License
+
+MIT

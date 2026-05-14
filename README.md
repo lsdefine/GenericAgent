@@ -372,6 +372,7 @@ python launch.pyw
 ```bash
 git clone https://github.com/lsdefine/GenericAgent.git
 cd GenericAgent
+uv venv
 uv pip install -e ".[ui]"        # 核心 + GUI 依赖
 cp mykey_template.py mykey.py
 python launch.pyw

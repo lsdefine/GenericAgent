@@ -9,16 +9,13 @@ except: pass
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import streamlit as st
-from streamlit.components.v1 import html as _cv1_html
-
-def _embed_html(html_str, height=1, width=None, scrolling=False):
-    """始终用 components.v1.html 嵌入 HTML 字符串（st.iframe 接受 URL，不能用于此处）"""
-    h = max(int(height), 1) if height is not None else 1
-    w = int(width) if (width is not None and int(width) > 0) else None
-    return _cv1_html(html_str, width=w, height=h, scrolling=scrolling)
-import time, json, re, threading, queue, base64
+try:
+    from streamlit import iframe as _st_iframe  # 1.56+
+    _embed_html = lambda html, **kw: _st_iframe(html, **{k: max(v, 1) if isinstance(v, int) else v for k, v in kw.items()})
+except (ImportError, AttributeError):
+    from streamlit.components.v1 import html as _embed_html  # ≤1.55
+import time, json, re, threading, queue
 from datetime import datetime
-from io import BytesIO
 from agentmain import GeneraticAgent
 
 st.set_page_config(page_title="Cowork", layout="wide")
@@ -659,182 +656,6 @@ body:has([data-testid="stSidebar"][aria-expanded="true"]) #sidebar-gear-toggle {
 </style>
 """
 
-FILE_UPLOAD_CSS = """
-<style>
-/* 直接隐藏拖放说明区，不动外层 div，避免 overflow 截断按钮 */
-div[data-testid="stFileUploaderDropzoneInstructions"] {
-    display: none !important;
-}
-
-/* section 去掉边框和内边距，仅做弹性容器居中按钮 */
-div[data-testid="stFileUploader"] section {
-    padding: 0 !important;
-    border: none !important;
-    background: transparent !important;
-    display: flex !important;
-    align-items: center !important;
-    justify-content: flex-start !important;
-    min-height: 0 !important;
-}
-
-/* Browse files 按钮直接给定 48×48，不使用绝对定位 */
-div[data-testid="stFileUploader"] section button {
-    width: 48px !important;
-    height: 48px !important;
-    min-width: 48px !important;
-    flex-shrink: 0 !important;
-    padding: 0 !important;
-    margin: 0 !important;
-    border-radius: 12px !important;
-    background: var(--anthropic-bg-secondary) !important;
-    border: 1px solid var(--anthropic-border) !important;
-    color: transparent !important;
-    font-size: 0 !important;
-    position: relative !important;
-    cursor: pointer !important;
-    transition: background 0.2s ease, border-color 0.2s ease !important;
-    box-sizing: border-box !important;
-}
-
-/* + 号绘制在按钮中央 */
-div[data-testid="stFileUploader"] section button::before {
-    content: '+';
-    font-size: 28px;
-    font-weight: 300;
-    line-height: 1;
-    color: var(--anthropic-text-secondary);
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    pointer-events: none;
-}
-
-div[data-testid="stFileUploader"] section button:hover {
-    background: var(--anthropic-primary) !important;
-    border-color: var(--anthropic-primary) !important;
-}
-
-div[data-testid="stFileUploader"] section button:hover::before {
-    color: white;
-}
-
-/* 文件缩略图容器 */
-.file-thumbnails-row {
-    display: flex;
-    gap: 10px;
-    margin-bottom: 12px;
-    flex-wrap: wrap;
-    align-items: flex-start;
-}
-
-/* 单个缩略图卡片 */
-.file-thumb-card {
-    position: relative;
-    width: 80px;
-    height: 80px;
-    border: 1px solid var(--anthropic-border);
-    border-radius: 8px;
-    overflow: hidden;
-    background: var(--anthropic-bg-secondary);
-    cursor: pointer;
-    transition: transform 0.2s;
-}
-
-.file-thumb-card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-}
-
-.file-thumb-card img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-}
-
-.file-thumb-icon {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 100%;
-    height: 100%;
-    font-size: 32px;
-}
-
-.file-thumb-name {
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    padding: 4px;
-    font-size: 9px;
-    background: rgba(0,0,0,0.75);
-    color: white;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-/* 删除按钮样式 */
-.file-remove-btn {
-    position: absolute;
-    top: 4px;
-    right: 4px;
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-    background: rgba(0,0,0,0.7);
-    color: white;
-    font-size: 14px;
-    font-weight: bold;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    z-index: 10;
-    transition: background 0.2s;
-}
-
-.file-remove-btn:hover {
-    background: #ef4444;
-}
-
-/* 输入区域布局 */
-.input-row-container {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-}
-</style>
-"""
-
-PASTE_HIDDEN_INPUT_CSS = """
-<style>
-/* 隐藏粘贴/删除信号输入框及其 Streamlit 包装容器 */
-div[data-testid="stTextInput"]:has(input[placeholder="__paste_image_signal__"]),
-div[data-testid="stTextInput"]:has(input[placeholder="__delete_file_signal__"]) {
-    position: fixed !important;
-    left: -99999px !important;
-    top: -99999px !important;
-    width: 1px !important;
-    height: 1px !important;
-    overflow: hidden !important;
-    opacity: 0 !important;
-    pointer-events: none !important;
-    z-index: -1 !important;
-}
-/* 同时折叠 Streamlit 外层容器，避免占据布局空间 */
-div[data-testid="stElementContainer"]:has(input[placeholder="__paste_image_signal__"]),
-div[data-testid="stElementContainer"]:has(input[placeholder="__delete_file_signal__"]) {
-    height: 0 !important;
-    min-height: 0 !important;
-    overflow: hidden !important;
-    margin: 0 !important;
-    padding: 0 !important;
-}
-</style>
-"""
-
 ANTHROPIC_SELECTBOX_SCRIPT = """
 <div></div>
 <script>
@@ -1029,219 +850,6 @@ def build_dynamic_font_update_script(scale_percent: float) -> str:
 """
 
 
-def save_uploaded_file(file_dict: dict) -> str:
-    """保存上传的文件到 temp/uploaded/ 目录，返回绝对路径"""
-    os.makedirs("temp/uploaded", exist_ok=True)
-
-    # 文件名安全化
-    safe_name = re.sub(r"[^A-Za-z0-9._\-\u4e00-\u9fa5]", "_", file_dict['name'])
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
-    saved_path = os.path.join("temp", "uploaded", f"{timestamp}_{safe_name}")
-
-    try:
-        with open(saved_path, "wb") as f:
-            f.write(file_dict['content'])
-        return os.path.abspath(saved_path)
-    except Exception as e:
-        print(f"[ERROR] Failed to save {file_dict['name']}: {e}")
-        return ""
-
-
-def generate_thumbnail(file_dict: dict, size=(80, 80)) -> str:
-    """
-    生成文件缩略图，返回 base64 data URI
-    - 图片：缩放后的 base64 图片
-    - 其他：返回文件类型图标的 emoji 或 SVG
-    """
-    if file_dict['type'].startswith('image/'):
-        try:
-            from PIL import Image
-
-            img = Image.open(BytesIO(file_dict['content']))
-            img.thumbnail(size, Image.Resampling.LANCZOS)
-
-            buf = BytesIO()
-            img.save(buf, format='PNG')
-            b64 = base64.b64encode(buf.getvalue()).decode()
-            return f"data:image/png;base64,{b64}"
-        except Exception as e:
-            print(f"[ERROR] Thumbnail generation failed: {e}")
-            return "📷"  # 降级为 emoji
-
-    # 非图片文件返回图标
-    ext = os.path.splitext(file_dict['name'])[1].lower()
-    icon_map = {
-        '.pdf': '📄', '.txt': '📝', '.md': '📝', '.doc': '📄', '.docx': '📄',
-        '.xls': '📊', '.xlsx': '📊', '.csv': '📊',
-        '.zip': '📦', '.rar': '📦', '.7z': '📦',
-        '.py': '🐍', '.js': '📜', '.json': '📋', '.xml': '📋',
-        '.mp3': '🎵', '.wav': '🎵', '.mp4': '🎬', '.avi': '🎬',
-    }
-    return icon_map.get(ext, '📎')
-
-
-def build_prompt_with_files(prompt: str, files: list) -> tuple:
-    """
-    构建包含文件附件信息的提示
-    返回: (agent_prompt, display_prompt)
-    """
-    if not files:
-        return prompt, prompt
-
-    attachment_info = ["\n\n[用户上传附件 — 文件已保存到本地磁盘，可用 file_read 工具读取]"]
-
-    for f in files:
-        saved_path = save_uploaded_file(f)
-        if not saved_path:
-            continue
-
-        if f['type'].startswith('image/'):
-            # 图片：提供路径 + base64（为未来 vision API 准备）
-            b64 = base64.b64encode(f['content']).decode()
-            attachment_info.append(
-                f"\n- [图片附件] {f['name']} ({f['size']} bytes)"
-                f"\n  磁盘路径: {saved_path}"
-                f"\n  data:{f['type']};base64,{b64[:100]}...(truncated)"  # 截断避免过长
-            )
-        elif f['name'].endswith(('.txt', '.md', '.py', '.json', '.log', '.csv', '.yaml', '.yml', '.js', '.ts', '.sql')):
-            # 文本文件：内联内容
-            try:
-                text = f['content'].decode('utf-8', errors='replace')
-                max_chars = 6000
-                attachment_info.append(
-                    f"\n--- 文本文件: {f['name']} ({f['size']} bytes) ---"
-                    f"\n磁盘路径: {saved_path}"
-                    f"\n{text[:max_chars]}"
-                    + ("\n[内容已截断，请用 file_read 读取完整内容]" if len(text) > max_chars else "")
-                )
-            except Exception:
-                attachment_info.append(f"\n- 文件: {f['name']} (无法解码为文本)\n  磁盘路径: {saved_path}")
-        else:
-            # 其他文件：仅路径
-            attachment_info.append(f"\n- 文件: {f['name']} ({f['size']} bytes)\n  磁盘路径: {saved_path}")
-
-    agent_prompt = prompt + "\n".join(attachment_info)
-    file_names = ', '.join(f['name'] for f in files)
-    display_prompt = f"{prompt}\n\n📎 附件: {file_names}"
-
-    return agent_prompt, display_prompt
-
-
-def render_file_thumbnails():
-    """渲染已上传文件的缩略图（_embed_html iframe，自带 deleteFile JS，无跨 iframe 依赖）"""
-    files = st.session_state.uploaded_files
-    if not files:
-        return
-
-    cards_html = []
-    for idx, f in enumerate(files):
-        thumb = generate_thumbnail(f)
-        # 转义文件名，防止破坏 HTML 属性
-        safe_name = f['name'].replace('&', '&amp;').replace('"', '&quot;').replace("'", '&#39;').replace('<', '&lt;')
-        name_display = safe_name[:18]
-
-        if thumb.startswith('data:image'):
-            inner = f'<img src="{thumb}" style="width:100%;height:100%;object-fit:cover;display:block;">'
-        else:
-            inner = (
-                f'<div style="width:100%;height:100%;display:flex;'
-                f'align-items:center;justify-content:center;font-size:30px;">'
-                f'{thumb}</div>'
-            )
-
-        card = (
-            f'<div style="position:relative;width:72px;flex-shrink:0;margin-top:6px;">'
-            f'  <div style="width:72px;height:72px;border-radius:8px;overflow:hidden;'
-            f'              border:1px solid #d5cec5;background:#eeece2;">'
-            f'    {inner}'
-            f'  </div>'
-            f'  <div style="font-size:9px;color:#6b7280;text-align:center;margin-top:3px;'
-            f'              white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'
-            f'              max-width:72px;" title="{safe_name}">{name_display}</div>'
-            f'  <div onclick="deleteFile({idx})"'
-            f'       style="position:absolute;top:-6px;right:-6px;width:18px;height:18px;'
-            f'              border-radius:50%;background:#9ca3af;color:white;font-size:13px;'
-            f'              font-weight:bold;display:flex;align-items:center;'
-            f'              justify-content:center;cursor:pointer;line-height:1;'
-            f'              user-select:none;"'
-            f'       onmouseover="this.style.background=\'#ef4444\'"'
-            f'       onmouseout="this.style.background=\'#9ca3af\'">&#215;</div>'
-            f'</div>'
-        )
-        cards_html.append(card)
-
-    # 每行最多 8 张，计算 iframe 高度（6px 顶部留白 + 72px 图 + 3px + ~12px 文件名 + 4px 底部）
-    n_rows = max(1, (len(files) + 7) // 8)
-    iframe_height = n_rows * 100 + 10
-
-    full_html = (
-        '<!DOCTYPE html><html><head><style>'
-        'html,body{margin:0;padding:0;background:transparent;overflow:hidden;}'
-        '</style></head><body>'
-        '<div style="display:flex;gap:10px;flex-wrap:wrap;'
-        'padding:6px 6px 4px 2px;align-items:flex-start;">'
-        + ''.join(cards_html)
-        + '</div>'
-        '<script>'
-        'function deleteFile(idx){'
-        '  try{'
-        '    var hw=window.parent;'
-        '    var hd=hw.document;'
-        '    var inp=hd.querySelector(\'input[placeholder="__delete_file_signal__"]\');'
-        '    if(!inp)return;'
-        '    var s=Object.getOwnPropertyDescriptor(hw.HTMLInputElement.prototype,"value").set;'
-        '    s.call(inp,String(idx));'
-        '    inp.dispatchEvent(new Event("input",{bubbles:true}));'
-        '    setTimeout(function(){'
-        '      inp.dispatchEvent(new Event("blur",{bubbles:false}));'
-        '      inp.dispatchEvent(new Event("focusout",{bubbles:true}));'
-        '    },100);'
-        '  }catch(e){console.error("deleteFile:",e);}'
-        '}'
-        '</script>'
-        '</body></html>'
-    )
-    _embed_html(full_html, height=iframe_height)
-
-
-@st.dialog("文件预览", width="large")
-def preview_file_dialog():
-    """文件预览模态对话框"""
-    idx = st.session_state.preview_file_idx
-    if idx is None or idx >= len(st.session_state.uploaded_files):
-        return
-
-    f = st.session_state.uploaded_files[idx]
-
-    st.subheader(f"📎 {f['name']}")
-    st.caption(f"类型: {f['type']} | 大小: {f['size']:,} bytes")
-
-    if f['type'].startswith('image/'):
-        # 图片预览
-        st.image(f['content'], use_container_width=True)
-    elif f['name'].endswith(('.txt', '.md', '.py', '.json', '.log', '.csv', '.yaml', '.yml', '.js', '.ts', '.sql')):
-        # 文本文件预览
-        try:
-            text = f['content'].decode('utf-8', errors='replace')
-            st.code(text[:5000], language=None)
-            if len(text) > 5000:
-                st.info("内容已截断至前 5000 字符")
-        except Exception as e:
-            st.error(f"无法显示文件内容: {e}")
-    else:
-        # 其他文件显示信息
-        st.info("此文件类型不支持预览")
-        st.json({
-            "文件名": f['name'],
-            "类型": f['type'],
-            "大小": f"{f['size']:,} bytes",
-        })
-
-    if st.button("关闭", use_container_width=True):
-        st.session_state.preview_file_idx = None
-        st.rerun()
-
-
 def build_header_agent_badge_script() -> str:
     return """
 <script>
@@ -1333,56 +941,6 @@ def build_header_agent_badge_script() -> str:
 </script>
 """
 
-
-def build_paste_listener_script() -> str:
-    """注入粘贴监听 JS：捕获剪贴板图片并写入隐藏信号输入框触发 Streamlit rerun。"""
-    return """
-<script>
-(function() {
-    var hostWin = window.parent || window;
-    var hostDoc = hostWin.document || document;
-
-    // 幂等：只安装一次粘贴监听
-    if (hostWin.__pasteImageListenerInstalled__) return;
-    hostWin.__pasteImageListenerInstalled__ = true;
-
-    hostDoc.addEventListener('paste', function(e) {
-        var items = e.clipboardData && e.clipboardData.items;
-        if (!items) return;
-        for (var i = 0; i < items.length; i++) {
-            var item = items[i];
-            if (item.type && item.type.startsWith('image/')) {
-                var blob = item.getAsFile();
-                if (!blob) continue;
-                (function(b) {
-                    var reader = new FileReader();
-                    reader.onload = function(ev) {
-                        var b64 = ev.target.result;
-                        var input = hostDoc.querySelector(
-                            'input[placeholder="__paste_image_signal__"]'
-                        );
-                        if (!input) return;
-                        var setter = Object.getOwnPropertyDescriptor(
-                            hostWin.HTMLInputElement.prototype, 'value'
-                        ).set;
-                        setter.call(input, b64);
-                        input.dispatchEvent(new Event('input', { bubbles: true }));
-                        setTimeout(function() {
-                            input.dispatchEvent(new Event('blur', { bubbles: false }));
-                            input.dispatchEvent(new Event('focusout', { bubbles: true }));
-                        }, 100);
-                    };
-                    reader.readAsDataURL(b);
-                })(blob);
-                break;
-            }
-        }
-    });
-})();
-</script>
-"""
-
-
 agent = init()
 
 def init_session_state():
@@ -1390,21 +948,15 @@ def init_session_state():
         'agent_name': 'GenericAgent', 'streaming': False, 'stopping': False, 'display_queue': None,
         'partial_response': '', 'reply_ts': '', 'current_prompt': '', 'selected_llm_idx': agent.llm_no,
         'autonomous_enabled': False, 'messages': [],
-        'uploaded_files': [],  # [{'name', 'type', 'size', 'content'}, ...]
-        'file_uploader_key': 0,  # 用于重置 file_uploader
-        'preview_file_idx': None,  # 当前预览的文件索引
     }.items(): st.session_state.setdefault(key, value)
 
 init_session_state()
 
 # Inject Anthropic theme
 st.markdown(ANTHROPIC_CSS, unsafe_allow_html=True)
-st.markdown(FILE_UPLOAD_CSS, unsafe_allow_html=True)
-st.markdown(PASTE_HIDDEN_INPUT_CSS, unsafe_allow_html=True)
 st.markdown(build_dynamic_font_css(110.0), unsafe_allow_html=True)
 _embed_html(ANTHROPIC_SELECTBOX_SCRIPT, height=0, width=0)
 _embed_html(build_header_agent_badge_script(), height=0, width=0)
-_embed_html(build_paste_listener_script(), height=0, width=0)
 
 st.session_state.agent_name = 'Generic Agent'
 with st.chat_message("assistant"):
@@ -1463,31 +1015,14 @@ def poll_agent_output(max_items=20):
 def _get_response_segments(text):
     return [p for p in re.split(r'(?=\*\*LLM Running \(Turn \d+\) \.\.\.\*\*)', text) if p.strip()] or [text]
 
-def render_message(role, content, ts='', unsafe_allow_html=True, intermediate=False):
+def render_message(role, content, ts='', unsafe_allow_html=True):
     with st.chat_message(role):
-        if ts:
-            st.markdown(f'<div class="msg-timestamp">{ts}</div>', unsafe_allow_html=True)
-        if intermediate:
-            m = re.match(r'^\*\*LLM Running \(Turn (\d+)\)', content.strip())
-            label = f"Turn {m.group(1)} · 推理过程" if m else "推理过程"
-            with st.expander(label, expanded=False):
-                st.markdown(content, unsafe_allow_html=unsafe_allow_html)
-        else:
-            st.markdown(content, unsafe_allow_html=unsafe_allow_html)
+        if ts: st.markdown(f'<div class="msg-timestamp">{ts}</div>', unsafe_allow_html=True)
+        st.markdown(content, unsafe_allow_html=unsafe_allow_html)
 
 def finish_streaming_message():
     reply_ts = st.session_state.reply_ts
-    segments = _get_response_segments(st.session_state.partial_response)
-    for i, seg in enumerate(segments):
-        is_intermediate = (i < len(segments) - 1) and bool(
-            re.match(r'^\*\*LLM Running \(Turn \d+\)', seg.strip())
-        )
-        st.session_state.messages.append({
-            "role": "assistant",
-            "content": seg,
-            "time": reply_ts,
-            "intermediate": is_intermediate,
-        })
+    st.session_state.messages.extend({"role": "assistant", "content": seg, "time": reply_ts} for seg in _get_response_segments(st.session_state.partial_response))
     st.session_state.last_reply_time = int(time.time())
     st.session_state.partial_response = st.session_state.reply_ts = st.session_state.current_prompt = ''
 
@@ -1500,144 +1035,15 @@ def render_streaming_area():
     reply_ts = st.session_state.reply_ts
     with st.empty().container():
         segments = _get_response_segments(st.session_state.partial_response)
-        for i, seg in enumerate(segments):
-            is_last = (i == len(segments) - 1)
-            is_intermediate = (not is_last) and bool(
-                re.match(r'^\*\*LLM Running \(Turn \d+\)', seg.strip())
-            )
-            render_message(
-                "assistant",
-                seg + ("" if not is_last else "▌"),
-                ts=reply_ts,
-                unsafe_allow_html=False,
-                intermediate=is_intermediate,
-            )
+        for i, seg in enumerate(segments): render_message("assistant", seg + ("" if i < len(segments) - 1 else "▌"), ts=reply_ts, unsafe_allow_html=False)
     if poll_agent_output(): finish_streaming_message()
     else: time.sleep(0.2)
     st.rerun()
 
-for msg in st.session_state.messages:
-    render_message(
-        msg["role"], msg["content"],
-        ts=msg.get("time", ""),
-        unsafe_allow_html=True,
-        intermediate=msg.get("intermediate", False),
-    )
+for msg in st.session_state.messages: render_message(msg["role"], msg["content"], ts=msg.get("time", ""), unsafe_allow_html=True)
 if st.session_state.streaming: render_streaming_area()
-
-# ── 粘贴图片：隐藏信号输入框 + 处理逻辑 ──────────────────────────────────
-_paste_val = st.session_state.get("paste_image_signal", "")
-if _paste_val and _paste_val.startswith("data:image"):
-    try:
-        _header, _b64str = _paste_val.split(",", 1)
-        _mime = _header.split(":")[1].split(";")[0]          # e.g. "image/png"
-        _ext = _mime.split("/")[1]                           # e.g. "png"
-        _content = base64.b64decode(_b64str)
-        if len(_content) <= 10 * 1024 * 1024:
-            _fname = f"pasted_{datetime.now().strftime('%H%M%S%f')[:12]}.{_ext}"
-            st.session_state.uploaded_files.append({
-                'name': _fname,
-                'type': _mime,
-                'size': len(_content),
-                'content': _content,
-            })
-    except Exception:
-        pass
-    st.session_state.paste_image_signal = ""
-    st.rerun()
-
-st.text_input(
-    "paste_signal",
-    value="",
-    key="paste_image_signal",
-    label_visibility="collapsed",
-    placeholder="__paste_image_signal__",
-)
-
-# ── 删除文件信号 ──────────────────────────────────────────────────────────
-_del_val = st.session_state.get("delete_file_signal", "")
-if _del_val and _del_val.isdigit():
-    idx = int(_del_val)
-    if 0 <= idx < len(st.session_state.uploaded_files):
-        st.session_state.uploaded_files.pop(idx)
-    st.session_state.delete_file_signal = ""
-    st.rerun()
-
-st.text_input(
-    "delete_signal",
-    value="",
-    key="delete_file_signal",
-    label_visibility="collapsed",
-    placeholder="__delete_file_signal__",
-)
-
-# 1. 渲染文件缩略图（如果有上传文件）
-render_file_thumbnails()
-
-# 2. 输入区域布局: [文件上传按钮] [聊天输入框]
-col_upload, col_input = st.columns([0.08, 0.92])
-
-with col_upload:
-    # 文件上传按钮（样式化为 + 按钮）
-    uploaded_files = st.file_uploader(
-        "上传文件",
-        accept_multiple_files=True,
-        label_visibility="collapsed",
-        key=f"file_uploader_{st.session_state.file_uploader_key}",
-        help="点击上传图片、文档等文件",
-    )
-
-    # 处理新上传的文件
-    if uploaded_files:
-        for uf in uploaded_files:
-            # 检查是否已存在
-            if any(f['name'] == uf.name for f in st.session_state.uploaded_files):
-                continue
-
-            # 读取文件内容
-            content = uf.read()
-
-            # 文件大小限制: 10MB
-            if len(content) > 10 * 1024 * 1024:
-                st.warning(f"文件 {uf.name} 超过 10MB，已跳过")
-                continue
-
-            # 添加到状态
-            st.session_state.uploaded_files.append({
-                'name': uf.name,
-                'type': uf.type if uf.type else 'application/octet-stream',
-                'size': len(content),
-                'content': content,
-            })
-
-        # 重置 uploader（避免重复处理）
-        st.session_state.file_uploader_key += 1
-        st.rerun()
-
-with col_input:
-    # 聊天输入框
-    prompt = st.chat_input("请输入指令", disabled=st.session_state.streaming)
-
-
-# 4. 处理消息发送
-if prompt:
-    # 构建包含文件的完整提示
-    files = st.session_state.uploaded_files
-    agent_prompt, display_prompt = build_prompt_with_files(prompt, files)
-
-    # 添加用户消息（显示简化版）
-    st.session_state.messages.append({
-        "role": "user",
-        "content": display_prompt,
-        "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    })
-
-    # 发送给 agent（完整版，包含文件内容）
-    start_agent_task(agent_prompt)
-
-    # 清空已上传文件
-    st.session_state.uploaded_files.clear()
-    st.session_state.file_uploader_key += 1
-
+if prompt := st.chat_input("请输入指令", disabled=st.session_state.streaming):
+    st.session_state.messages.append({"role": "user", "content": prompt, "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
+    start_agent_task(prompt)
     st.rerun()
 

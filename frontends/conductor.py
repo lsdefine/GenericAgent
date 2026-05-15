@@ -288,13 +288,14 @@ def _auto_cleanup_loop():
         if to_abort:
             push_cards()
 
-def monitor_conductor_queue(dq: "queue.Queue"):
-    """Conductor output is discarded. Visible reply must go through POST /chat only."""
+def monitor_conductor_queue(dq: "queue.Queue") -> str:
+    """Block until done. Conductor output is not surfaced to users; the returned
+    text is for caller-side error detection only (#342)."""
     while True:
         item = dq.get()
         if "done" in item:
             print(f"Conductor task done")
-            break
+            return item.get("done", "") or ""
 
 def conductor_loop():
     global conductor_agent, conductor_started
@@ -321,7 +322,18 @@ def conductor_loop():
             prompt = conductor_prompt_from_events(events)
             dq = conductor_agent.put_task(prompt, source="conductor")
             # Block here until conductor finishes — serializes execution
-            monitor_conductor_queue(dq)
+            done_text = monitor_conductor_queue(dq)
+            # Fallback: if conductor's last turn ended with an LLM error (yielded as
+            # text by MixinSession instead of raised), surface it directly (#342).
+            # Use tail-window substring check (same style as ga.do_no_tool's
+            # content[-100:]); window covers the error line plus any decoration
+            # (fence + "[Info] Final response to user.") appended by do_no_tool.
+            tail = (done_text or '')[-1000:]
+            if '!!!Error:' in tail:
+                last = chat_messages[-1] if chat_messages else None
+                if not (last and last.get('role') == 'system' and last.get('msg', '').startswith('⚠ LLM')):
+                    err = next((l for l in reversed(tail.splitlines()) if l.startswith('!!!Error:')), '')
+                    add_chat(f"⚠ LLM 暂不可用：{err[:200]}", role="system")
         except Exception as e:
             add_chat(f"Conductor error: {e}", role="system")
 

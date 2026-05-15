@@ -50,13 +50,6 @@ COMMANDS = {
         "desc": "启动基于 PyQt5 的完整桌面聊天界面（气泡代码高亮、文件拖拽、历史搜索）",
         "cmd": ["python", "{FRONTENDS}/qtapp.py"],
     },
-    "web": {
-        "help": "启动Web增强版 (stapp2)  加 --native 使用 webview 桌面壳",
-        "desc": "启动 Streamlit Web 界面，浏览器访问，适合远程/跨设备",
-        "cmd": ["python", "-m", "streamlit", "run", "{FRONTENDS}/stapp2.py",
-                "--server.headless", "true"],
-        "flags": {"--native": {"help": "用 webview 原生窗口启动(stapp基础版)", "cmd": ["python", "{PROJECT_DIR}/launch.pyw"]}},
-    },
     "configure": {
         "help": "运行初始配置向导 (configure_mykey.py)",
         "desc": "首次安装后配置 API Key、模型参数等基础设置",
@@ -66,11 +59,6 @@ COMMANDS = {
         "help": "启动 Hub 管理器 (launcher)",
         "desc": "启动 hub 前端管理面板（系统托盘 + 浏览器界面）",
         "cmd": ["python", "{PROJECT_DIR}/hub.pyw"],
-    },
-    "pet": {
-        "help": "启动桌面宠物",
-        "desc": "启动桌面宠物皮肤系统，桌面上陪伴你的虚拟宠物",
-        "cmd": ["python", "{FRONTENDS}/desktop_pet_v2.pyw"],
     },
     "tui": {
         "help": "启动终端 TUI (tuiapp)",

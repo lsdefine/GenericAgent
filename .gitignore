@@ -94,6 +94,9 @@ memory/L4_raw_sessions/*
 # Memory management
 !memory/memory_cleanup_sop.md
 
+# Code Review Principles
+!memory/code_review_principles.md
+
 # Visual Studio
 .vs/
 restore_commit.txt

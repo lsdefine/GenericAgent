@@ -1,5 +1,10 @@
 import ast, asyncio, glob, json, os, queue as Q, re, socket, sys, time
 
+# 确保能导入上级目录的模块（如 agentmain）
+_parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _parent_dir not in sys.path:
+    sys.path.insert(0, _parent_dir)
+
 HELP_COMMANDS = (
     ("/help", "显示帮助"),
     ("/status", "查看状态"),

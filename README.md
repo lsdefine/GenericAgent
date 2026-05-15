@@ -80,7 +80,17 @@ After a few weeks, your agent instance will have a skill tree no one else in the
 
 > 📖 Detailed installation guide: **[installation.md](installation.md)** · **[installation.zh.md（中文）](installation.zh.md)**
 
-### Method 1: One-line install (recommended)
+### For LLM Agents
+
+Fetch the installation guide and follow it:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/lsdefine/GenericAgent/refs/heads/main/installation.md
+```
+
+### For Humans
+
+#### Method 1: One-line install (recommended)
 
 This installs GenericAgent with an isolated Python environment and Git, then downloads a ready-to-run package.
 
@@ -102,7 +112,7 @@ After installation, launch the desktop app from:
 frontends/GenericAgent.exe
 ```
 
-### Method 2: Python install (for developers)
+#### Method 2: Python install (for developers)
 
 ```bash
 git clone https://github.com/lsdefine/GenericAgent.git
@@ -116,14 +126,6 @@ python launch.pyw
 > GenericAgent is meant to grow its environment through the Agent itself, not by pre-installing every possible package.
 
 Full guide: [GETTING_STARTED.md](GETTING_STARTED.md)
-
-### For LLM Agents
-
-Fetch the installation guide and follow it:
-
-```bash
-curl -s https://raw.githubusercontent.com/code-yeongyu/oh-my-openagent/refs/heads/dev/docs/guide/installation.md
-```
 
 ---
 
@@ -369,7 +371,17 @@ MIT License — see [LICENSE](LICENSE)
 
 > 📖 详细安装指南：**[installation.zh.md（中文）](installation.zh.md)** · **[installation.md (English)](installation.md)**
 
-### 方法一：一键安装（推荐）
+### 给 LLM Agent 看的
+
+获取安装指南并照做：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/lsdefine/GenericAgent/refs/heads/main/installation.zh.md
+```
+
+### 给人类用户看的
+
+#### 方法一：一键安装（推荐）
 
 一键安装会自动准备独立 Python 环境、Git、项目文件和桌面端，不污染系统环境。
 
@@ -391,7 +403,7 @@ curl -fsSL http://fudankw.cn:9000/files/ga_install.sh | bash
 frontends/GenericAgent.exe
 ```
 
-### 方法二：Python 安装（开发者）
+#### 方法二：Python 安装（开发者）
 
 ```bash
 git clone https://github.com/lsdefine/GenericAgent.git
@@ -409,14 +421,6 @@ python launch.pyw
 📖 新手使用指南（图文版）：[飞书文档](https://my.feishu.cn/wiki/CGrDw0T76iNFuskmwxdcWrpinPb)
 
 📘 完整入门教程（Datawhale 出品）：[Hello GenericAgent](https://datawhalechina.github.io/hello-generic-agent/) · [GitHub](https://github.com/datawhalechina/hello-generic-agent)
-
-### 给 LLM Agent 看的
-
-获取安装指南并照做：
-
-```bash
-curl -s https://raw.githubusercontent.com/code-yeongyu/oh-my-openagent/refs/heads/dev/docs/guide/installation.md
-```
 
 ---
 

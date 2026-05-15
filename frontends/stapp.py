@@ -97,6 +97,7 @@ def render_sidebar():
         st.divider()
         if st.button("开始空闲自主行动"):
             st.session_state.last_reply_time = int(time.time()) - 1800
+            st.session_state.autonomous_enabled = True
             st.toast("已将上次回复时间设为1800秒前"); st.rerun()
         if st.session_state.autonomous_enabled:
             if st.button("⏸️ 禁止自主行动"):

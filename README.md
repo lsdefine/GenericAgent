@@ -78,7 +78,7 @@ After a few weeks, your agent instance will have a skill tree no one else in the
 
 > ⚠️ **Python version:** use **Python 3.11 or 3.12**. **Do not** use Python 3.14 — it is incompatible with `pywebview` and a few other GA dependencies.
 
-> 📖 Detailed installation guide: **[installation.md](installation.md)** · **[installation.zh.md（中文）](installation.zh.md)**
+> 📖 Detailed installation guide: **[installation.md](installation.md)** · **[installation_zh.md（中文）](installation_zh.md)**
 
 ### For LLM Agents
 
@@ -369,14 +369,14 @@ MIT License — see [LICENSE](LICENSE)
 
 > ⚠️ **Python 版本：** 推荐使用 **Python 3.11 或 3.12**。**请不要使用 Python 3.14**，与 `pywebview` 及部分依赖不兼容。
 
-> 📖 详细安装指南：**[installation.zh.md（中文）](installation.zh.md)** · **[installation.md (English)](installation.md)**
+> 📖 详细安装指南：**[installation_zh.md（中文）](installation_zh.md)** · **[installation.md (English)](installation.md)**
 
 ### 给 LLM Agent 看的
 
 获取安装指南并照做：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lsdefine/GenericAgent/refs/heads/main/installation.zh.md
+curl -fsSL https://raw.githubusercontent.com/lsdefine/GenericAgent/refs/heads/main/installation_zh.md
 ```
 
 ### 给人类用户看的

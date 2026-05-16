@@ -21,6 +21,16 @@ async function handleExtMessage(msg, sender) {
   if (msg.cmd === 'batch') return await handleBatch(msg, sender);
   if (msg.cmd === 'tabs') {
     try {
+      if (msg.method === 'create') {
+        const tab = await chrome.tabs.create({
+          url: msg.url,
+          active: msg.active !== undefined ? msg.active : false,
+          index: msg.index,
+          windowId: msg.windowId,
+          openerTabId: msg.openerTabId
+        });
+        return { ok: true, data: { id: tab.id, url: tab.url, title: tab.title } };
+      }
       if (msg.method === 'switch') {
         const tab = await chrome.tabs.update(msg.tabId, { active: true });
         await chrome.windows.update(tab.windowId, { focused: true });

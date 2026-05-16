@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>GenericAgent</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Main area -->
+    <main id="main">
+      <header id="topbar">
+        <div class="topbar-left">
+          <div id="session-list" class="tab-strip" role="tablist" aria-label="Chats">
+            <button id="new-session-btn" class="tab-new-btn" title="New chat" aria-label="New chat">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 5v14M5 12h14"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div class="topbar-right">
+          <h1 id="session-title" class="sr-only">GenericAgent</h1>
+          <span id="status-badge" class="badge">
+            <span class="status-dot"></span>
+            <span id="status-text">Starting…</span>
+          </span>
+        </div>
+      </header>
+
+      <div id="search-bar" class="search-bar hidden">
+        <input id="search-input" type="text" placeholder="Search messages…" aria-label="Search messages">
+        <span id="search-count" class="search-count"></span>
+        <button id="search-prev" class="search-nav-btn" title="Previous (Shift+Enter)" aria-label="Previous match">▲</button>
+        <button id="search-next" class="search-nav-btn" title="Next (Enter)" aria-label="Next match">▼</button>
+        <button id="search-close" class="search-nav-btn" title="Close (Escape)" aria-label="Close search">✕</button>
+      </div>
+
+      <section id="messages" class="empty">
+        <div class="empty-state">
+          <div class="empty-title">New task</div>
+          <div class="empty-sub">Task me anything. Type <code>/help</code> for commands.</div>
+        </div>
+      </section>
+
+      <div id="composer-wrap">
+        <div id="composer">
+          <div id="image-previews" class="image-previews"></div>
+          <textarea id="input" rows="1" placeholder="Type a message, or /help"></textarea>
+          <div class="composer-bottom">
+            <div class="composer-hints">
+              <button id="settings-btn" class="icon-btn ghost" title="Settings" aria-label="Settings">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="3"/>
+                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                </svg>
+                <span class="hint-label">Settings</span>
+              </button>
+
+            </div>
+            <button id="send-btn" class="send-btn" title="Send (Enter)">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M5 12h14M13 6l6 6-6 6"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- Settings modal -->
+    <div id="settings-modal" class="modal hidden">
+      <div class="modal-backdrop"></div>
+      <div class="modal-body">
+        <div class="modal-header">
+          <h2>Settings</h2>
+          <button class="icon-btn ghost" id="close-settings">✕</button>
+        </div>
+        <div class="modal-content">
+          <div class="form-row">
+            <label for="cfg-llm">Model</label>
+            <select id="cfg-llm">
+              <option value="0">Default / Auto</option>
+            </select>
+            <small>Select the LLM profile from mykey.py.</small>
+          </div>
+          <div class="form-row">
+            <label>API keys</label>
+            <div class="btn-row">
+              <button class="btn" id="open-mykey">Open mykey.py</button>
+            </div>
+            <small>Configure API keys in <code>mykey.py</code> at the GA project root.</small>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn ghost" id="cancel-settings">Cancel</button>
+          <button class="btn primary" id="save-settings">Save</button>
+        </div>
+      </div>
+    </div>
+
+
+
+    <!-- Error banner -->
+    <div id="error-banner" class="error-banner hidden">
+      <span id="error-text"></span>
+      <button class="icon-btn ghost" id="error-action"></button>
+      <button class="icon-btn ghost" id="error-dismiss">✕</button>
+    </div>
+  </div>
+
+  <script src="vendor/marked.min.js"></script>
+  <script src="ga-web.js?v=14168-2"></script>
+  <script src="app.js?v=poll-fold-2"></script>
+</body>
+</html>

@@ -73,35 +73,36 @@ After a few weeks, your agent instance will have a skill tree no one else in the
 
 ## 🚀 Quick Start
 
-#### Method 1: Standard Installation
+### Method 1: One-line install (recommended)
 
-```bash
-# 1. Clone the repo
-git clone https://github.com/lsdefine/GenericAgent.git
-cd GenericAgent
+This installs GenericAgent with an isolated Python environment and Git, then downloads a ready-to-run package.
 
-# 2. Install dependencies
-pip install requests streamlit pywebview   # Desktop GUI (launch.pyw)
-pip install requests textual               # Terminal UI (tuiapp.py)
+**Windows PowerShell**
 
-# 3. Configure API Key
-cp mykey_template.py mykey.py
-# Edit mykey.py and fill in your LLM API Key
-
-# 4. Launch
-python launch.pyw
+```powershell
+powershell -ExecutionPolicy Bypass -c "$env:GLOBAL=1; irm http://fudankw.cn:9000/files/ga_install.ps1 | iex"
 ```
 
-#### Method 2: uv (for experienced Python users)
+**Linux / macOS**
 
-If you prefer a modern Python workflow, GenericAgent also provides a minimal `pyproject.toml`:
+```bash
+GLOBAL=1 bash -c "$(curl -fsSL http://fudankw.cn:9000/files/ga_install.sh)"
+```
+
+After installation, launch the desktop app from:
+
+```text
+frontends/GenericAgent.exe
+```
+
+### Method 2: Python install (for developers)
 
 ```bash
 git clone https://github.com/lsdefine/GenericAgent.git
 cd GenericAgent
 uv venv
-uv pip install -e ".[ui]"        # Core + GUI dependencies
-cp mykey_template.py mykey.py
+uv pip install -e ".[ui]"        # Core + UI dependencies
+cp mykey_template.py mykey.py     # Fill in your LLM API key
 python launch.pyw
 ```
 
@@ -111,64 +112,54 @@ Full guide: [GETTING_STARTED.md](GETTING_STARTED.md)
 
 ---
 
-## 🖥️ Desktop Frontends
+## 🖥️ Frontends
+
+### Desktop App
+
+For one-line installs on Windows, double-click:
+
+```text
+frontends/GenericAgent.exe
+```
 
 ### Terminal UI
 
-A lightweight, keyboard-driven interface built on [Textual](https://github.com/Textualize/textual). Supports multiple concurrent sessions, real-time streaming, and runs anywhere a terminal does — no browser needed.
+A lightweight, keyboard-driven interface built on [Textual](https://github.com/Textualize/textual). Supports multiple concurrent sessions and real-time streaming.
 
 ```bash
-python frontends/tuiapp.py
+python frontends/tuiapp_v2.py
 ```
 
-### Other Desktop Frontends
+### Streamlit UI
 
 ```bash
-python frontends/qtapp.py                # Qt-based desktop app
-streamlit run frontends/stapp2.py        # Alternative Streamlit UI
+python launch.pyw
 ```
-
-### Codeg
-
-<table><tr>
-<td width="70%">
-
-[Codeg](https://github.com/yiqi-017/codeg) (`feat/genericagent-integration` branch) is a desktop/web UI that connects GenericAgent alongside other agents (Claude Code, Gemini, Codex, etc.) in a unified interface with a polished, modern UI.
-
-> This integration is usable now. Some features are still being refined — feedback welcome.
-
-Place your GenericAgent directory alongside the codeg project. Codeg will auto-detect `frontends/genericagent_acp_bridge.py` and launch GenericAgent as a local ACP agent.
-
-</td>
-<td width="30%">
-<img src="assets/demo/codeg-demo.gif" width="90%" alt="Codeg Demo">
-</td>
-</tr></table>
 
 ---
 
 ## 💬 Bot Interface (IM)
 
-### Telegram Bot
+GenericAgent also supports IM frontends such as Telegram, WeChat, QQ, Feishu / Lark, WeCom, and DingTalk.
 
-```python
-# mykey.py
-tg_bot_token = 'YOUR_BOT_TOKEN'
-tg_allowed_users = [YOUR_USER_ID]
-```
+Typical usage:
 
 ```bash
-python frontends/tgapp.py
+python frontends/tgapp.py        # Telegram
+python frontends/wechatapp.py    # WeChat
+python frontends/qqapp.py        # QQ
+python frontends/fsapp.py        # Feishu / Lark
+python frontends/wecomapp.py     # WeCom
+python frontends/dingtalkapp.py  # DingTalk
 ```
 
-### Common Chat Commands
+For detailed setup, ask GenericAgent itself.
 
-The default Streamlit desktop UI started by `python launch.pyw`, plus the QQ / Telegram / Feishu / WeCom / DingTalk frontends, support these chat commands:
+Common chat commands:
 
 - `/new` - start a fresh conversation and clear the current context
 - `/continue` - list recoverable conversation snapshots
 - `/continue N` - restore the `N`th recoverable conversation
-
 
 ## 📊 Comparison with Similar Tools
 
@@ -345,35 +336,36 @@ MIT License — see [LICENSE](LICENSE)
 
 ## 🚀 快速开始
 
-#### 方法一：标准安装
+### 方法一：一键安装（推荐）
 
-```bash
-# 1. 克隆仓库
-git clone https://github.com/lsdefine/GenericAgent.git
-cd GenericAgent
+一键安装会自动准备独立 Python 环境、Git、项目文件和桌面端，不污染系统环境。
 
-# 2. 安装依赖
-pip install requests streamlit pywebview   # 桌面 GUI (launch.pyw)
-pip install requests textual               # 终端 UI (tuiapp.py)
+**Windows PowerShell**
 
-# 3. 配置 API Key
-cp mykey_template.py mykey.py
-# 编辑 mykey.py，填入你的 LLM API Key
-# 或使用交互式向导：python assets/configure_mykey.py
-
-# 4. 启动
-python launch.pyw
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm http://fudankw.cn:9000/files/ga_install.ps1 | iex"
 ```
 
-#### 方法二：uv 快速安装（熟悉 Python 的用户）
+**Linux / macOS**
 
-如果你习惯现代 Python 工作流，GenericAgent 也提供了一个最小化的 `pyproject.toml`：
+```bash
+curl -fsSL http://fudankw.cn:9000/files/ga_install.sh | bash
+```
+
+安装完成后，双击启动：
+
+```text
+frontends/GenericAgent.exe
+```
+
+### 方法二：Python 安装（开发者）
 
 ```bash
 git clone https://github.com/lsdefine/GenericAgent.git
 cd GenericAgent
-uv pip install -e ".[ui]"        # 核心 + GUI 依赖
-cp mykey_template.py mykey.py
+uv venv
+uv pip install -e ".[ui]"        # 核心 + UI 依赖
+cp mykey_template.py mykey.py     # 填入你的 LLM API Key
 python launch.pyw
 ```
 
@@ -387,132 +379,54 @@ python launch.pyw
 
 ---
 
-## 🖥️ 桌面前端
+## 🖥️ 前端启动方式
+
+### 桌面端
+
+一键安装自带桌面端，双击：
+
+```text
+frontends/GenericAgent.exe
+```
 
 ### 终端 UI
 
-基于 [Textual](https://github.com/Textualize/textual) 的轻量键盘驱动界面。支持多会话并发、实时流式输出，有终端就能跑，无需浏览器。
+基于 [Textual](https://github.com/Textualize/textual) 的轻量键盘驱动界面。支持多会话并发、实时流式输出，有终端就能跑。
 
 ```bash
-python frontends/tuiapp.py
+python frontends/tuiapp_v2.py
 ```
 
-### 其他桌面前端
+### Streamlit UI
 
 ```bash
-python frontends/qtapp.py                # 基于 Qt 的桌面应用
-streamlit run frontends/stapp2.py        # 另一种 Streamlit 风格 UI
+python launch.pyw
 ```
-
-### Codeg前端
-
-<table><tr>
-<td width="70%">
-
-[Codeg](https://github.com/yiqi-017/codeg)（`feat/genericagent-integration` 分支）是一个桌面/Web UI，可以将 GenericAgent 与其他代理（Claude Code、Gemini、Codex 等）在统一界面中并行使用，UI 更加精美。
-
-> 此集成已可使用，部分功能仍在完善中，欢迎体验反馈。
-
-将 GenericAgent 目录放在 codeg 项目同级目录下，Codeg 会自动检测 `frontends/genericagent_acp_bridge.py` 并将 GenericAgent 作为本地 ACP 代理启动。
-
-</td>
-<td width="30%">
-<img src="assets/demo/codeg-demo.gif" width="90%" alt="Codeg Demo">
-</td>
-</tr></table>
 
 ---
 
 ## 💬 Bot 接口（IM）
 
-### 微信 Bot（个人微信）
+GenericAgent 支持 Telegram、微信、QQ、飞书 / Lark、企业微信、钉钉等 IM 前端。
 
-无需额外配置，扫码登录即可：
-
-```bash
-pip install pycryptodome qrcode requests
-python frontends/wechatapp.py
-```
-
-> 首次启动会弹出二维码，用微信扫码完成绑定。之后通过微信消息与 Agent 交互。
-
-### QQ Bot
-
-使用 `qq-botpy` WebSocket 长连接，**无需公网 webhook**：
+常用启动方式：
 
 ```bash
-pip install qq-botpy
+python frontends/tgapp.py        # Telegram
+python frontends/wechatapp.py    # 微信
+python frontends/qqapp.py        # QQ
+python frontends/fsapp.py        # 飞书 / Lark
+python frontends/wecomapp.py     # 企业微信
+python frontends/dingtalkapp.py  # 钉钉
 ```
 
-在 `mykey.py` 中补充：
+详细配置直接问 GenericAgent。
 
-```python
-qq_app_id = "YOUR_APP_ID"
-qq_app_secret = "YOUR_APP_SECRET"
-qq_allowed_users = ["YOUR_USER_OPENID"]  # 或 ['*'] 公开访问
-```
-
-```bash
-python frontends/qqapp.py
-```
-
-> 在 [QQ 开放平台](https://q.qq.com) 创建机器人获取 AppID / AppSecret。首次消息后，用户 openid 记录于 `temp/qqapp.log`。
-
-### 飞书（Lark）
-
-```bash
-pip install lark-oapi
-python frontends/fsapp.py
-```
-
-```python
-fs_app_id = "cli_xxx"
-fs_app_secret = "xxx"
-fs_allowed_users = ["ou_xxx"]  # 或 ['*']
-```
-
-**入站支持**：文本、富文本 post、图片、文件、音频、media、交互卡片 / 分享卡片  
-**出站支持**：流式进度卡片、图片回传、文件 / media 回传  
-**视觉模型**：图片首轮以真正的多模态输入发送给兼容 OpenAI Vision 的后端
-
-详细配置见 [assets/SETUP_FEISHU.md](assets/SETUP_FEISHU.md)
-
-
-### 企业微信（WeCom）
-
-```bash
-pip install wecom_aibot_sdk
-python frontends/wecomapp.py
-```
-
-```python
-wecom_bot_id = "your_bot_id"
-wecom_secret = "your_bot_secret"
-wecom_allowed_users = ["your_user_id"]
-wecom_welcome_message = "你好，我在线上。"
-```
-
-### 钉钉（DingTalk）
-
-```bash
-pip install dingtalk-stream
-python frontends/dingtalkapp.py
-```
-
-```python
-dingtalk_client_id = "your_app_key"
-dingtalk_client_secret = "your_app_secret"
-dingtalk_allowed_users = ["your_staff_id"]  # 或 ['*']
-```
-
-### 通用聊天命令
-
-默认通过 `python launch.pyw` 启动的 Streamlit 桌面 UI，以及 QQ / Telegram / 飞书 / 企业微信 / 钉钉前端，都支持以下命令：
+通用聊天命令：
 
 - `/new` - 开启新对话并清空当前上下文
 - `/continue` - 列出可恢复会话快照
 - `/continue N` - 恢复第 `N` 个可恢复会话
-
 
 ## 📊 与同类产品对比
 

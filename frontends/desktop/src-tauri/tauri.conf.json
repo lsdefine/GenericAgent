@@ -1,0 +1,29 @@
+{
+  "productName": "GenericAgent",
+  "version": "0.1.0",
+  "identifier": "com.genericagent.app",
+  "build": {
+    "frontendDist": "../static"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "security": {
+      "csp": null
+    },
+    "windows": [
+      {
+        "title": "GenericAgent",
+        "label": "main",
+        "width": 1280,
+        "height": 800,
+        "resizable": true,
+        "url": "http://127.0.0.1:14168/"
+      }
+    ]
+  },
+  "bundle": {
+    "active": true,
+    "targets": "nsis",
+    "icon": ["icons/icon.ico"]
+  }
+}

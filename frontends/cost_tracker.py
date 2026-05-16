@@ -1,10 +1,11 @@
 """Per-thread LLM token usage, captured via llmcore monkey-patches.
 
 `install()` wraps `llmcore._record_usage` (covers all three API modes) and
-`llmcore.print` (Anthropic SSE writes the final `output_tokens` only via
-`[Output] tokens=N`, never through `_record_usage`). Tracking is keyed by
-`threading.current_thread().name`; each TUI session runs the agent on a
-uniquely named thread (`ga-tui-agent-<id>`), so `/cost` is a thread lookup.
+`llmcore.print` (the `messages` SSE path emits the final `output_tokens`
+only via `[Output] tokens=N`, never through `_record_usage`). Tracking is
+keyed by `threading.current_thread().name`; each TUI session runs the
+agent on a uniquely named thread (`ga-tui-agent-<id>`), so `/cost` is a
+thread lookup.
 """
 import re, threading, time
 from dataclasses import dataclass, field

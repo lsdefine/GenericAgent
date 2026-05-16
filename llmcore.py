@@ -910,7 +910,6 @@ class MixinSession:
         for s in self._sessions: s.max_retries = 0
         self._orig_raw_asks = [s.raw_ask for s in self._sessions]
         self._sessions[0].raw_ask = self._raw_ask
-        self.model = getattr(self._sessions[0], 'model', None)
         self._cur_idx, self._switched_at = 0, 0.0
     def __getattr__(self, name): return getattr(self._sessions[0], name)
     _BROADCAST_ATTRS = frozenset({'system', 'tools', 'temperature', 'max_tokens', 'reasoning_effort', 'history'})
@@ -922,6 +921,8 @@ class MixinSession:
         else: object.__setattr__(self, name, value)
     @property
     def primary(self): return self._sessions[0]
+    @property
+    def model(self): return getattr(self._sessions[self._cur_idx], 'model', None)
     def _pick(self):
         if self._cur_idx and time.time() - self._switched_at > self._spring_sec: self._cur_idx = 0
         return self._cur_idx

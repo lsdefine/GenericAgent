@@ -101,6 +101,9 @@ memory/L4_raw_sessions/*
 # Code Review Principles
 !memory/code_review_principles.md
 
+# Review Mode SOP
+!memory/review_sop.md
+
 # Visual Studio
 .vs/
 restore_commit.txt

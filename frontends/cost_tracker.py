@@ -1,13 +1,14 @@
-"""Per-thread LLM token usage, captured via llmcore monkey-patches.
+"""Per-thread LLM token usage via llmcore monkey-patches.
 
-`install()` wraps `llmcore._record_usage` (covers all three API modes) and
-`llmcore.print` (the `messages` SSE path emits the final `output_tokens`
-only via `[Output] tokens=N`, never through `_record_usage`). Tracking is
-keyed by `threading.current_thread().name`; each TUI session runs the
-agent on a uniquely named thread (`ga-tui-agent-<id>`), so `/cost` is a
-thread lookup.
+`install()` wraps `llmcore._record_usage` + `llmcore.print` (the SSE
+`messages` path only emits final `output_tokens` through `[Output] tokens=N`).
+Trackers are keyed by `threading.current_thread().name`; each TUI session
+runs its agent on `ga-tui-agent-<id>`, so `/cost` is a thread lookup.
+
+Subagent processes are out-of-process, so `scan_subagent_logs` parses the
+same `[Cache]` / `[Output]` print lines from `temp/*/stdout.log`.
 """
-import re, threading, time
+import glob, os, re, threading, time
 from dataclasses import dataclass, field
 
 
@@ -18,8 +19,9 @@ class TokenStats:
     output: int = 0
     cache_create: int = 0
     cache_read: int = 0
-    # Latest request's effective prompt size — used for the % context-left line.
+    # Latest single-LLM-call sizes — drive the spinner's `↑ N · ↓ M`.
     last_input: int = 0
+    last_output: int = 0
     started_at: float = field(default_factory=time.time)
 
     def total_input_side(self) -> int:
@@ -36,50 +38,69 @@ class TokenStats:
         return max(0.0, time.time() - self.started_at)
 
 
-# Best-effort model → context window. `startswith` match; None hides the line.
-_CTX_LIMITS: list[tuple[str, int]] = [
-    ("claude-sonnet-4-5", 1_000_000),
-    ("claude-opus-4",       200_000),
-    ("claude-haiku-4",      200_000),
-    ("claude-sonnet-4",     200_000),
-    ("claude-3-5-sonnet",   200_000),
-    ("claude-3-5-haiku",    200_000),
-    ("claude-3-7-sonnet",   200_000),
-    ("claude-3-opus",       200_000),
-    ("claude-3-haiku",      200_000),
-    ("claude-3-sonnet",     200_000),
-    ("gpt-5-pro",           400_000),
-    ("gpt-5",               256_000),
-    ("gpt-4o",              128_000),
-    ("gpt-4-turbo",         128_000),
-    ("gpt-4",                 8_192),
-    ("o1",                  200_000),
-    ("o3",                  200_000),
-    ("o4",                  200_000),
-    ("gemini-2.5",        2_000_000),
-    ("gemini-2",          1_000_000),
-    ("gemini-1.5",        1_000_000),
-    ("glm-5",               256_000),
-    ("glm-4",               128_000),
-    ("qwen",                128_000),
-    ("deepseek",             64_000),
-    ("kimi",                200_000),
-    ("moonshot",            200_000),
-]
+# GA's real context budget lives on `BaseSession.context_win` (chars). The
+# trim trigger is `context_win * 3` (see llmcore.trim_messages_history), so
+# `/cost` compares actual-history chars against that cap for consistent units.
+def context_window_chars(backend) -> int:
+    """`context_win * 3` — the char cap before `trim_messages_history` kicks
+    in. Reads dynamically so a `mykey.py` override propagates. Returns 0 on
+    bad/missing backend so the caller can hide the row."""
+    try:
+        return int(getattr(backend, 'context_win', 0)) * 3
+    except (TypeError, ValueError):
+        return 0
 
 
-def context_limit_for(model: str | None) -> int | None:
-    if not model: return None
-    m = model.lower()
-    for prefix, limit in _CTX_LIMITS:
-        if m.startswith(prefix): return limit
-    return None
+def current_input_chars(backend) -> int:
+    """Char-size of the message history (same unit as `trim_messages_history`)."""
+    try:
+        import json as _json
+        history = getattr(backend, 'history', None) or []
+        return sum(len(_json.dumps(m, ensure_ascii=False)) for m in history)
+    except Exception:
+        return 0
 
 
 _trackers: dict[str, TokenStats] = {}
 _lock = threading.Lock()
 _OUT_RE = re.compile(r'\[Output\]\s+tokens=(\d+)')
+_CACHE_RE_NEW = re.compile(r'\[Cache\]\s+input=(\d+)\s+creation=(\d+)\s+read=(\d+)')
+_CACHE_RE_OLD = re.compile(r'\[Cache\]\s+input=(\d+)\s+cached=(\d+)')
 _INSTALLED = False
+_SUBAGENT_GLOB = os.path.join("temp", "*", "stdout.log")
+
+
+def scan_subagent_logs(since: float = 0.0, root: str | None = None) -> TokenStats:
+    """Aggregate subagent tokens from `temp/<task>/stdout.log` files; pass
+    `since=tui_start_time` to scope to this run. Best-effort: bad logs skipped."""
+    out = TokenStats()
+    if since > 0: out.started_at = since
+    pattern = os.path.join(root, _SUBAGENT_GLOB) if root else _SUBAGENT_GLOB
+    for p in glob.glob(pattern):
+        try:
+            if since and os.path.getmtime(p) < since: continue
+            with open(p, encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    if line.startswith("[Output]"):
+                        m = _OUT_RE.match(line)
+                        if m:
+                            out.output += int(m.group(1)); out.requests += 1
+                    elif line.startswith("[Cache]"):
+                        # messages → `input=N creation=C read=R` (input excl. cache);
+                        # chat_completions / responses → `input=N cached=R` (input incl. cached).
+                        m = _CACHE_RE_NEW.match(line)
+                        if m:
+                            i, c, r = int(m.group(1)), int(m.group(2)), int(m.group(3))
+                            out.input += i
+                            out.cache_create += c; out.cache_read += r
+                            continue
+                        m = _CACHE_RE_OLD.match(line)
+                        if m:
+                            i, r = int(m.group(1)), int(m.group(2))
+                            out.input += max(0, i - r); out.cache_read += r
+        except OSError:
+            continue
+    return out
 
 
 def get(thread_name: str) -> TokenStats:
@@ -107,31 +128,32 @@ def install() -> None:
     orig_record, orig_print = llmcore._record_usage, print
 
     def record_patched(usage, api_mode):
+        # Handles INPUT / CACHE only; OUTPUT comes via `[Output]` print_patched
+        # below (the SSE path emits it that way; double-counting was the prior bug).
         try:
             if usage:
                 t = get(threading.current_thread().name)
                 t.requests += 1
                 if api_mode == 'messages':
-                    # SSE delivers final output via [Output] print; non-stream
-                    # delivers it here. `output_tokens` in stream message_start
-                    # is a 0–1 placeholder, acceptable noise.
                     inp = int(usage.get('input_tokens', 0) or 0)
                     cc = int(usage.get('cache_creation_input_tokens', 0) or 0)
                     cr = int(usage.get('cache_read_input_tokens', 0) or 0)
                     t.input += inp; t.cache_create += cc; t.cache_read += cr
-                    t.output += int(usage.get('output_tokens', 0) or 0)
+                    # Non-stream `messages` skips the [Output] print, so count
+                    # output_tokens here; SSE message_start carries a 1-token
+                    # placeholder to skip.
+                    out = int(usage.get('output_tokens', 0) or 0)
+                    if out > 1: t.output += out; t.last_output = out
                     t.last_input = inp + cc + cr
                 elif api_mode == 'chat_completions':
                     cached = int((usage.get('prompt_tokens_details') or {}).get('cached_tokens', 0) or 0)
                     inp = int(usage.get('prompt_tokens', 0) or 0) - cached
                     t.input += inp; t.cache_read += cached
-                    t.output += int(usage.get('completion_tokens', 0) or 0)
                     t.last_input = inp + cached
                 elif api_mode == 'responses':
                     cached = int((usage.get('input_tokens_details') or {}).get('cached_tokens', 0) or 0)
                     inp = int(usage.get('input_tokens', 0) or 0) - cached
                     t.input += inp; t.cache_read += cached
-                    t.output += int(usage.get('output_tokens', 0) or 0)
                     t.last_input = inp + cached
         except Exception: pass
         return orig_record(usage, api_mode)
@@ -141,7 +163,10 @@ def install() -> None:
         try:
             if args and isinstance(args[0], str):
                 m = _OUT_RE.match(args[0])
-                if m: get(threading.current_thread().name).output += int(m.group(1))
+                if m:
+                    t = get(threading.current_thread().name)
+                    n = int(m.group(1))
+                    t.output += n; t.last_output = n
         except Exception: pass
         return orig_print(*args, **kwargs)
     llmcore.print = print_patched

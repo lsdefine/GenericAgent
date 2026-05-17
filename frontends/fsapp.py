@@ -3,7 +3,7 @@ import glob, json, os, queue as Q, re, sys, threading, time
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 os.chdir(PROJECT_ROOT)
-from agentmain import GeneraticAgent
+from agentmain import GeneraticAgent, GenericAgentRuntime
 from frontends.chatapp_common import format_restore
 from frontends.continue_cmd import handle_frontend_command as handle_continue_frontend, reset_conversation
 from llmcore import mykeys
@@ -235,9 +235,52 @@ ALLOWED_USERS = _to_allowed_set(mykeys.get("fs_allowed_users", []))
 PUBLIC_ACCESS = not ALLOWED_USERS or "*" in ALLOWED_USERS
 AGENT_TIMEOUT_SEC = 900
 
-agent = GeneraticAgent()
-threading.Thread(target=agent.run, daemon=True).start()
+runtime = GenericAgentRuntime()
 client, user_tasks = None, {}
+session_aliases = {}
+session_lock = threading.RLock()
+
+
+def _msg_attr(message, name, default=None):
+    value = getattr(message, name, default)
+    return value if value not in (None, "") else default
+
+
+def _message_thread_ids(message):
+    ids = []
+    for name in ("root_id", "parent_id", "thread_id", "message_id"):
+        value = _msg_attr(message, name)
+        if value and value not in ids:
+            ids.append(value)
+    return ids
+
+
+def _session_key(chat_id, message_id):
+    return f"{chat_id or 'direct'}:{message_id}"
+
+
+def resolve_feishu_session(open_id, chat_id, message):
+    with session_lock:
+        for mid in _message_thread_ids(message):
+            sid = session_aliases.get(_session_key(chat_id, mid))
+            if sid:
+                return runtime.get_or_create(sid, metadata={"open_id": open_id, "chat_id": chat_id}), False
+        root = _msg_attr(message, "root_id") or _msg_attr(message, "parent_id") or message.message_id
+        sid = _session_key(chat_id, root)
+        sess = runtime.get_or_create(sid, metadata={"open_id": open_id, "chat_id": chat_id, "root_message_id": root})
+        for mid in _message_thread_ids(message):
+            session_aliases[_session_key(chat_id, mid)] = sid
+        session_aliases[_session_key(chat_id, root)] = sid
+        return sess, True
+
+
+def bind_feishu_session_message(session, message_id):
+    if not message_id:
+        return
+    chat_id = session.metadata.get("chat_id")
+    with session_lock:
+        session_aliases[_session_key(chat_id, message_id)] = session.session_id
+        session.metadata["card_message_id"] = message_id
 
 
 def create_client():
@@ -588,6 +631,7 @@ def handle_message(data):
     if not PUBLIC_ACCESS and open_id not in ALLOWED_USERS:
         print(f"未授权用户: {open_id}")
         return
+    session, is_new_session = resolve_feishu_session(open_id, chat_id, message)
     user_input, image_paths = _build_user_message(message)
     if not user_input:
         if chat_id:
@@ -597,24 +641,26 @@ def handle_message(data):
         return
     print(f"收到消息 [{open_id}] ({message.message_type}, {len(image_paths)} images): {user_input[:200]}")
     if message.message_type == "text" and user_input.startswith("/"):
-        return handle_command(open_id, user_input, chat_id)
+        return handle_command(open_id, user_input, chat_id, session=session)
 
     def run_agent():
-        user_tasks[open_id] = {"running": True}
+        user_tasks[session.session_id] = {"running": True}
         receive_id = chat_id or open_id
         rid_type = "chat_id" if chat_id else "open_id"
         done_event = threading.Event()
-        hook_key = f"fs_{open_id}"
+        hook_key = f"fs_{session.session_id}"
         card = _TaskCard(receive_id, rid_type)
         card.start()
+        bind_feishu_session_message(session, card.msg_id)
         on_final = lambda raw: _send_generated_files(receive_id, raw, receive_id_type=rid_type)
+        agent = session.agent
         if not hasattr(agent, '_turn_end_hooks'): agent._turn_end_hooks = {}
         agent._turn_end_hooks[hook_key] = _make_task_hook(card, done_event, on_final)
         try:
-            agent.put_task(user_input, source="feishu", images=image_paths)
+            session.put_task(user_input, source="feishu", images=image_paths)
             start = time.time()
             while not done_event.wait(timeout=3):
-                if not user_tasks.get(open_id, {}).get("running", True):
+                if not user_tasks.get(session.session_id, {}).get("running", True):
                     agent.abort()
                     card.fail("已停止")
                     break
@@ -627,12 +673,12 @@ def handle_message(data):
             card.fail(f"错误: {e}")
         finally:
             agent._turn_end_hooks.pop(hook_key, None)
-            user_tasks.pop(open_id, None)
+            user_tasks.pop(session.session_id, None)
 
     threading.Thread(target=run_agent, daemon=True).start()
 
 
-def handle_command(open_id, cmd, chat_id=None):
+def handle_command(open_id, cmd, chat_id=None, session=None):
     def _send_cmd_response(content):
         if chat_id:
             send_message(chat_id, content, receive_id_type="chat_id")
@@ -640,12 +686,15 @@ def handle_command(open_id, cmd, chat_id=None):
             send_message(open_id, content)
     parts = (cmd or "").split()
     op = (parts[0] if parts else "").lower()
+    agent = session.agent if session is not None else None
     if op == "/stop":
-        if open_id in user_tasks:
-            user_tasks[open_id]["running"] = False
-        agent.abort()
+        if session is not None:
+            user_tasks.setdefault(session.session_id, {})["running"] = False
+            agent.abort()
         _send_cmd_response("正在停止...")
     elif op == "/new":
+        if agent is None:
+            return _send_cmd_response("No active session")
         _send_cmd_response(reset_conversation(agent))
     elif op == "/help":
         _send_cmd_response("命令列表:\n/stop - 停止当前任务\n/status - 查看状态\n/llm - 查看当前模型列表\n/llm [n] - 切换到第 n 个模型\n/restore - 恢复上次对话历史\n/continue - 列出可恢复会话\n/continue [n] - 恢复第 n 个会话\n/new - 开启新对话并清空当前上下文\n/help - 显示帮助")
@@ -653,7 +702,7 @@ def handle_command(open_id, cmd, chat_id=None):
         llm = agent.get_llm_name() if agent.llmclient else "未配置"
         _send_cmd_response(f"状态: {'🔴 运行中' if agent.is_running else '🟢 空闲'}\nLLM: [{agent.llm_no}] {llm}")
     elif op == "/llm":
-        if not agent.llmclient:
+        if agent is None or not agent.llmclient:
             return _send_cmd_response("❌ 当前没有可用的 LLM 配置")
         if len(parts) > 1:
             try:
@@ -664,6 +713,8 @@ def handle_command(open_id, cmd, chat_id=None):
         lines = [f"{'→' if cur else '  '} [{i}] {name}" for i, name, cur in agent.list_llms()]
         _send_cmd_response("LLMs:\n" + "\n".join(lines))
     elif op == "/restore":
+        if agent is None:
+            return _send_cmd_response("No active session")
         try:
             restored_info, err = format_restore()
             if err:
@@ -675,6 +726,8 @@ def handle_command(open_id, cmd, chat_id=None):
         except Exception as e:
             _send_cmd_response(f"恢复失败: {e}")
     elif op == "/continue" or cmd.startswith("/continue"):
+        if agent is None:
+            return _send_cmd_response("No active session")
         _send_cmd_response(handle_continue_frontend(agent, cmd))
     else:
         _send_cmd_response(f"未知命令: {cmd}")

@@ -168,6 +168,70 @@ class GenericAgent:
                 self.task_queue.task_done()
                 if self.handler is not None: self.handler.code_stop_signal.append(1)
 
+
+
+class GenericAgentSession:
+    """One isolated task room inside the same GA installation."""
+    def __init__(self, session_id, metadata=None):
+        self.session_id = session_id
+        self.metadata = metadata or {}
+        self.agent = GeneraticAgent()
+        self.agent.peer_hint = True
+        self.documents = []
+        self.created_at = time.time()
+        self.updated_at = self.created_at
+        threading.Thread(target=self.agent.run, daemon=True).start()
+
+    def touch(self):
+        self.updated_at = time.time()
+
+    def put_task(self, query, source="user", images=None):
+        self.touch()
+        return self.agent.put_task(query, source=source, images=images)
+
+    def abort(self):
+        self.touch()
+        return self.agent.abort()
+
+    def add_document(self, path, name=None):
+        if not path:
+            return
+        self.documents.append({"path": path, "name": name or os.path.basename(path), "time": time.time()})
+        self.touch()
+
+
+class GenericAgentRuntime:
+    """Native multi-session runtime for one GA process."""
+    def __init__(self):
+        self.lock = threading.RLock()
+        self.sessions = {}
+
+    def get_or_create(self, session_id, metadata=None):
+        with self.lock:
+            sess = self.sessions.get(session_id)
+            if sess is None:
+                sess = GenericAgentSession(session_id, metadata=metadata)
+                self.sessions[session_id] = sess
+            elif metadata:
+                sess.metadata.update(metadata)
+                sess.touch()
+            return sess
+
+    def get(self, session_id):
+        with self.lock:
+            return self.sessions.get(session_id)
+
+    def abort(self, session_id):
+        sess = self.get(session_id)
+        if sess:
+            sess.abort()
+            return True
+        return False
+
+    def active_sessions(self):
+        with self.lock:
+            return list(self.sessions.values())
+
 GeneraticAgent = GenericAgent    
 
 if __name__ == '__main__':

@@ -3,6 +3,5 @@
   "repeat": "weekly",
   "enabled": true,
   "max_delay_hours": 12,
-  "exec_mode": "direct",
-  "exec_script": "reflect/analyzers/tri_axis_scanner.py"
+  "prompt": "执行三轴扫描。先读 tri_axis_scan_sop 了解完整流程，然后按SOP步骤执行。严格按SOP中的代码块执行Phase 2-5，不可跳过任何Phase，不可自行编写替代代码，输出文件名必须与SOP一致(scan_report.json, activity_matrix.json, scan_state.json)。Phase 5末尾必须输出 [TRI_AXIS_SCAN_COMPLETE]。"
 }

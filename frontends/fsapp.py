@@ -548,6 +548,54 @@ def _build_step_detail(resp, tool_calls):
     return "\n\n".join(parts)
 
 
+def _section_title(text, index):
+    first = next((line.strip() for line in (text or "").splitlines() if line.strip()), "")
+    first = re.sub(r"^[#>*`\s-]+", "", first).strip()
+    first = re.sub(r"^\d+[.)?]\s*", "", first).strip()
+    return (first[:80] if first else f"Section {index}")
+
+
+def _split_card_sections(text, limit=6000):
+    text = (text or "").strip()
+    if not text:
+        return [("Result", "_(empty)_")]
+    heading_re = re.compile(r"(?m)^(#{1,4}\s+.+|\*\*[^*]{2,100}\*\*\s*)$")
+    matches = list(heading_re.finditer(text))
+    sections = []
+    if matches:
+        for i, match in enumerate(matches):
+            end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+            chunk = text[match.start():end].strip()
+            title = re.sub(r"^[#\s]+", "", match.group(1)).strip(" *")
+            sections.append((title or f"Section {i + 1}", chunk))
+    else:
+        paragraphs = re.split(r"\n\s*\n", text)
+        current, current_len = [], 0
+        for para in paragraphs:
+            para = para.strip()
+            if not para:
+                continue
+            if current and current_len + len(para) + 2 > limit:
+                body = "\n\n".join(current)
+                sections.append((_section_title(body, len(sections) + 1), body))
+                current, current_len = [para], len(para)
+            else:
+                current.append(para)
+                current_len += len(para) + 2
+        if current:
+            body = "\n\n".join(current)
+            sections.append((_section_title(body, len(sections) + 1), body))
+    expanded = []
+    for title, body in sections or [("Result", text)]:
+        body = body.strip()
+        if len(body) <= limit:
+            expanded.append((title, body))
+            continue
+        for offset in range(0, len(body), limit):
+            expanded.append((f"{title} ({offset // limit + 1})", body[offset:offset + limit]))
+    return expanded or [("Result", text)]
+
+
 class _TaskCard:
     """飞书任务卡片：单卡片持续 patch；每步一个独立折叠面板（header 显示 summary，展开看详情）。"""
     _DETAIL_LIMIT = 8000
@@ -565,15 +613,23 @@ class _TaskCard:
         self.turn_base = 1
         self.note = None
 
-    def _step_panel(self, idx, summary, detail):
-        detail = detail or "_(无输出)_"
-        if len(detail) > self._DETAIL_LIMIT:
-            detail = detail[:self._DETAIL_LIMIT] + f"\n\n…(已截断,共 {len(detail)} 字符)"
+    def _panel(self, title, content, limit=None):
+        content = content or "_(empty)_"
+        limit = limit or self._DETAIL_LIMIT
+        if len(content) > limit:
+            content = content[:limit] + f"\n\n... truncated, total {len(content)} chars"
         return {
             "tag": "collapsible_panel", "expanded": False,
-            "header": {"title": {"tag": "plain_text", "content": f"Turn {idx} · {summary}"}},
-            "elements": [{"tag": "markdown", "content": detail}],
+            "header": {"title": {"tag": "plain_text", "content": (title or "Section")[:120]}},
+            "elements": [{"tag": "markdown", "content": content}],
         }
+
+    def _step_panel(self, idx, summary, detail):
+        return self._panel(f"Turn {idx} - {summary}", detail or "_(empty)_", self._DETAIL_LIMIT)
+
+    def _final_panels(self):
+        sections = _split_card_sections(self.final or "_(empty)_", self._FINAL_LIMIT)
+        return [self._panel(title, body, self._FINAL_LIMIT) for title, body in sections]
 
     def _build(self):
         header = f"**{self.status}**"
@@ -585,7 +641,8 @@ class _TaskCard:
         for i, (s, d) in enumerate(self.steps, self.turn_base):
             els.append(self._step_panel(i, s, d))
         if self.final:
-            els += [{"tag": "hr"}, {"tag": "markdown", "content": self.final}]
+            els.append({"tag": "hr"})
+            els.extend(self._final_panels())
         return _card_raw(els)
 
     def _push(self):
@@ -625,14 +682,14 @@ class _TaskCard:
             self._push()
 
     def done(self, text):
-        self.status = "✅ 已完成"
-        self.final = (text or "_(无文本输出)_")[:self._FINAL_LIMIT]
+        self.status = "\u2705 \u5df2\u5b8c\u6210"
+        self.final = text or "_(\u65e0\u6587\u672c\u8f93\u51fa)_"
         ok, limit = self._push()
         if limit:
             self._rollover()
             self.steps = []
             self.turn_base = self.turn_no + 1
-            self.final = (text or "_(无文本输出)_")[:self._FINAL_LIMIT]
+            self.final = text or "_(\u65e0\u6587\u672c\u8f93\u51fa)_"
             self._push()
 
     def fail(self, msg):

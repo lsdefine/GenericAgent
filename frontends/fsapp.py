@@ -313,6 +313,27 @@ def _send_raw(receive_id, payload, msg_type, rtype):
     return None
 
 
+
+def _reply_raw(message_id, payload, msg_type, reply_in_thread=True):
+    if not message_id:
+        return None
+    try:
+        body = ReplyMessageRequest.builder().message_id(message_id).request_body(
+            ReplyMessageRequestBody.builder()
+            .msg_type(msg_type)
+            .content(payload)
+            .reply_in_thread(reply_in_thread)
+            .build()
+        ).build()
+        r = client.im.v1.message.reply(body)
+        if r.success():
+            return r.data.message_id if r.data else None
+        print(f"reply failed: {r.code}, {r.msg}")
+    except Exception as e:
+        print(f"[ERROR] _reply_raw network error: {e}")
+    return None
+
+
 def _patch_card(message_id, card_json):
     return _patch_card_result(message_id, card_json)[0]
 
@@ -524,8 +545,9 @@ class _TaskCard:
     _DETAIL_LIMIT = 8000
     _FINAL_LIMIT = 6000
 
-    def __init__(self, receive_id, rid_type):
+    def __init__(self, receive_id, rid_type, reply_to_message_id=None):
         self.rid, self.rtype = receive_id, rid_type
+        self.reply_to_message_id = reply_to_message_id
         self.steps = []          # [(summary, detail), ...]
         self.status = "🤔 思考中..."
         self.final = None
@@ -562,9 +584,13 @@ class _TaskCard:
         card = self._build()
         if self.msg_id:
             return _patch_card_result(self.msg_id, card)
-        else:
-            self.msg_id = _send_raw(self.rid, card, "interactive", self.rtype)
-            return bool(self.msg_id), False
+        if self.reply_to_message_id:
+            self.msg_id = _reply_raw(self.reply_to_message_id, card, "interactive", reply_in_thread=True)
+            if self.msg_id:
+                return True, False
+            self.reply_to_message_id = None
+        self.msg_id = _send_raw(self.rid, card, "interactive", self.rtype)
+        return bool(self.msg_id), False
 
     def _rollover(self):
         self.page_no += 1
@@ -649,7 +675,7 @@ def handle_message(data):
         rid_type = "chat_id" if chat_id else "open_id"
         done_event = threading.Event()
         hook_key = f"fs_{session.session_id}"
-        card = _TaskCard(receive_id, rid_type)
+        card = _TaskCard(receive_id, rid_type, reply_to_message_id=message.message_id if is_new_session else None)
         card.start()
         bind_feishu_session_message(session, card.msg_id)
         on_final = lambda raw: _send_generated_files(receive_id, raw, receive_id_type=rid_type)

@@ -274,6 +274,10 @@ def resolve_feishu_session(open_id, chat_id, message):
         return sess, True
 
 
+def _session_reply_anchor(session, fallback=None):
+    return session.metadata.get("root_message_id") or session.metadata.get("card_message_id") or fallback
+
+
 def bind_feishu_session_message(session, message_id):
     if not message_id:
         return
@@ -672,13 +676,14 @@ def handle_message(data):
     if message.message_type == "text" and user_input.startswith("/"):
         return handle_command(open_id, user_input, chat_id, session=session)
 
-    task_item = {"user_input": user_input, "image_paths": image_paths, "message_id": message.message_id}
+    reply_anchor = _session_reply_anchor(session, message.message_id)
+    task_item = {"user_input": user_input, "image_paths": image_paths, "message_id": message.message_id, "reply_to_message_id": reply_anchor}
     with session_lock:
         active_task = user_tasks.get(session.session_id)
         if active_task:
             active_task["queue"].put(task_item)
             active_task["queued"] = active_task.get("queued", 0) + 1
-            _reply_text(message.message_id, "\u5df2\u653e\u5165\u672c\u8bdd\u9898\u961f\u5217\uff0c\u5f53\u524d\u4efb\u52a1\u5b8c\u6210\u540e\u4f1a\u7ee7\u7eed\u5904\u7406\u3002")
+            _reply_text(_session_reply_anchor(session, message.message_id), "\u5df2\u653e\u5165\u672c\u8bdd\u9898\u961f\u5217\uff0c\u5f53\u524d\u4efb\u52a1\u5b8c\u6210\u540e\u4f1a\u7ee7\u7eed\u5904\u7406\u3002")
             return
         task_state = {"running": True, "queued": 0, "queue": Q.Queue()}
         user_tasks[session.session_id] = task_state
@@ -693,7 +698,7 @@ def handle_message(data):
         try:
             while current:
                 done_event = threading.Event()
-                reply_to_message_id = current.get("message_id") or session.metadata.get("card_message_id") or session.metadata.get("root_message_id")
+                reply_to_message_id = current.get("reply_to_message_id") or _session_reply_anchor(session, current.get("message_id"))
                 card = _TaskCard(receive_id, rid_type, reply_to_message_id=reply_to_message_id)
                 card.start()
                 bind_feishu_session_message(session, card.msg_id)

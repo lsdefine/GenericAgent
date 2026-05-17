@@ -122,13 +122,13 @@ class FeishuSessionQueueTests(unittest.TestCase):
         fsapp.handle_message(_event("msg-2", "second task"))
         time.sleep(0.5)
 
-        self.assertIn(("ack", "msg-2", "\u5df2\u653e\u5165\u672c\u8bdd\u9898\u961f\u5217\uff0c\u5f53\u524d\u4efb\u52a1\u5b8c\u6210\u540e\u4f1a\u7ee7\u7eed\u5904\u7406\u3002"), self.records)
+        self.assertIn(("ack", "root-1", "\u5df2\u653e\u5165\u672c\u8bdd\u9898\u961f\u5217\uff0c\u5f53\u524d\u4efb\u52a1\u5b8c\u6210\u540e\u4f1a\u7ee7\u7eed\u5904\u7406\u3002"), self.records)
         self.assertEqual(
             [record for record in self.records if record[0] == "put_task"],
             [("put_task", 1, "first task"), ("put_task", 2, "second task")],
         )
-        self.assertLess(self.records.index(("card_done", "card-1", "final 1")), self.records.index(("card_start", "card-2", "msg-2")))
-        self.assertEqual([record for record in self.records if record[0] == "card_start"], [("card_start", "card-1", "msg-1"), ("card_start", "card-2", "msg-2")])
+        self.assertLess(self.records.index(("card_done", "card-1", "final 1")), self.records.index(("card_start", "card-2", "root-1")))
+        self.assertEqual([record for record in self.records if record[0] == "card_start"], [("card_start", "card-1", "root-1"), ("card_start", "card-2", "root-1")])
 
 
 if __name__ == "__main__":

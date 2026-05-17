@@ -361,6 +361,10 @@ def send_message(receive_id, content, msg_type="text", use_card=False, receive_i
     return _send_raw(receive_id, content, msg_type, receive_id_type)
 
 
+def _reply_text(message_id, content):
+    return _reply_raw(message_id, json.dumps({"text": content}, ensure_ascii=False), "text", reply_in_thread=True)
+
+
 def update_message(message_id, content):
     return _patch_card(message_id, _card(content))
 
@@ -655,51 +659,81 @@ def handle_message(data):
     open_id = sender.sender_id.open_id
     chat_id = message.chat_id
     if not PUBLIC_ACCESS and open_id not in ALLOWED_USERS:
-        print(f"未授权用户: {open_id}")
+        print(f"\u672a\u6388\u6743\u7528\u6237: {open_id}")
         return
     session, is_new_session = resolve_feishu_session(open_id, chat_id, message)
     user_input, image_paths = _build_user_message(message)
     if not user_input:
-        if chat_id:
-            send_message(chat_id, f"⚠️ 暂不支持处理此类飞书消息：{message.message_type}", receive_id_type="chat_id")
-        else:
-            send_message(open_id, f"⚠️ 暂不支持处理此类飞书消息：{message.message_type}")
+        target = chat_id or open_id
+        target_type = "chat_id" if chat_id else "open_id"
+        send_message(target, f"\u26a0\ufe0f \u6682\u4e0d\u652f\u6301\u5904\u7406\u6b64\u7c7b\u98de\u4e66\u6d88\u606f\uff1a{message.message_type}", receive_id_type=target_type)
         return
-    print(f"收到消息 [{open_id}] ({message.message_type}, {len(image_paths)} images): {user_input[:200]}")
+    print(f"received message [{open_id}] session={session.session_id} ({message.message_type}, {len(image_paths)} images): {user_input[:200]}")
     if message.message_type == "text" and user_input.startswith("/"):
         return handle_command(open_id, user_input, chat_id, session=session)
 
+    task_item = {"user_input": user_input, "image_paths": image_paths, "message_id": message.message_id}
+    with session_lock:
+        active_task = user_tasks.get(session.session_id)
+        if active_task:
+            active_task["queue"].put(task_item)
+            active_task["queued"] = active_task.get("queued", 0) + 1
+            _reply_text(message.message_id, "\u5df2\u653e\u5165\u672c\u8bdd\u9898\u961f\u5217\uff0c\u5f53\u524d\u4efb\u52a1\u5b8c\u6210\u540e\u4f1a\u7ee7\u7eed\u5904\u7406\u3002")
+            return
+        task_state = {"running": True, "queued": 0, "queue": Q.Queue()}
+        user_tasks[session.session_id] = task_state
+
     def run_agent():
-        user_tasks[session.session_id] = {"running": True}
         receive_id = chat_id or open_id
         rid_type = "chat_id" if chat_id else "open_id"
-        done_event = threading.Event()
         hook_key = f"fs_{session.session_id}"
-        card = _TaskCard(receive_id, rid_type, reply_to_message_id=message.message_id if is_new_session else None)
-        card.start()
-        bind_feishu_session_message(session, card.msg_id)
         on_final = lambda raw: _send_generated_files(receive_id, raw, receive_id_type=rid_type)
         agent = session.agent
-        if not hasattr(agent, '_turn_end_hooks'): agent._turn_end_hooks = {}
-        agent._turn_end_hooks[hook_key] = _make_task_hook(card, done_event, on_final)
+        current = task_item
         try:
-            session.put_task(user_input, source="feishu", images=image_paths)
-            start = time.time()
-            while not done_event.wait(timeout=3):
-                if not user_tasks.get(session.session_id, {}).get("running", True):
-                    agent.abort()
-                    card.fail("已停止")
-                    break
-                if time.time() - start > AGENT_TIMEOUT_SEC:
-                    agent.abort()
-                    card.fail("任务超时")
-                    break
-        except Exception as e:
-            traceback.print_exc()
-            card.fail(f"错误: {e}")
+            while current:
+                done_event = threading.Event()
+                reply_to_message_id = current.get("message_id") or session.metadata.get("card_message_id") or session.metadata.get("root_message_id")
+                card = _TaskCard(receive_id, rid_type, reply_to_message_id=reply_to_message_id)
+                card.start()
+                bind_feishu_session_message(session, card.msg_id)
+                if not hasattr(agent, '_turn_end_hooks'):
+                    agent._turn_end_hooks = {}
+                agent._turn_end_hooks[hook_key] = _make_task_hook(card, done_event, on_final)
+                try:
+                    session.put_task(current["user_input"], source="feishu", images=current.get("image_paths") or [])
+                    start_time = time.time()
+                    while not done_event.wait(timeout=3):
+                        if not task_state.get("running", True):
+                            agent.abort()
+                            card.fail("\u5df2\u505c\u6b62")
+                            break
+                        if time.time() - start_time > AGENT_TIMEOUT_SEC:
+                            task_state["running"] = False
+                            agent.abort()
+                            card.fail("\u4efb\u52a1\u8d85\u65f6")
+                            break
+                except Exception as e:
+                    traceback.print_exc()
+                    card.fail(f"\u9519\u8bef: {e}")
+                finally:
+                    agent._turn_end_hooks.pop(hook_key, None)
+
+                with session_lock:
+                    if not task_state.get("running", True):
+                        user_tasks.pop(session.session_id, None)
+                        return
+                    try:
+                        current = task_state["queue"].get_nowait()
+                        task_state["queue"].task_done()
+                        task_state["queued"] = max(0, task_state.get("queued", 1) - 1)
+                    except Q.Empty:
+                        user_tasks.pop(session.session_id, None)
+                        return
         finally:
-            agent._turn_end_hooks.pop(hook_key, None)
-            user_tasks.pop(session.session_id, None)
+            with session_lock:
+                if user_tasks.get(session.session_id) is task_state:
+                    user_tasks.pop(session.session_id, None)
 
     threading.Thread(target=run_agent, daemon=True).start()
 

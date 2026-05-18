@@ -233,20 +233,36 @@ def handle(agent, query, display_queue):
     return query
 
 
+_INJECT_MARKERS = ('### [WORKING MEMORY]', '[SYSTEM TIPS]', '[SYSTEM]', '[System]',
+                   '[DANGER]', '### [总结提炼经验]')
+
+
 def _user_text(prompt_body):
-    """User-typed text from a prompt JSON; '' if this is an agent auto-continuation."""
+    """User-typed text from a prompt JSON; '' if this is an agent auto-continuation.
+
+    A Prompt is auto-continue when *either* (a) it carries any tool_result block
+    (so it's the next round of an in-flight LLM call), or (b) its text blocks all
+    match known injection prefixes ([WORKING MEMORY], [SYSTEM TIPS], [System]
+    regenerate prompts, [DANGER] guards, etc.). Real first-prompts only contain
+    one plain text block with no injection markers.
+    """
     try: msg = json.loads(prompt_body)
     except Exception: return ''
     if not isinstance(msg, dict): return ''
-    for blk in msg.get('content', []) or []:
+    blocks = msg.get('content', []) or []
+    if any(isinstance(b, dict) and b.get('type') == 'tool_result' for b in blocks):
+        return ''
+    for blk in blocks:
         if isinstance(blk, dict) and blk.get('type') == 'text':
             t = (blk.get('text') or '').strip()
-            if t and not t.startswith('### [WORKING MEMORY]'): return t
+            if t and not any(mk in t for mk in _INJECT_MARKERS): return t
     return ''
 
 
 def _assistant_text(response_body):
-    """Joined text from a response blocks repr; '' on parse failure."""
+    """Joined plain text from a response blocks repr; '' on parse failure.
+    Used by /export to grab the model's prose only, without tool noise.
+    """
     try: blocks = ast.literal_eval(response_body)
     except Exception: return ''
     if not isinstance(blocks, list): return ''
@@ -255,33 +271,105 @@ def _assistant_text(response_body):
                      and isinstance(b.get('text'), str) and b['text'].strip())
 
 
-_TURN_MARK = '**LLM Running (Turn {}) ...**\n\n'
+def _format_tool_use(block):
+    """Match agent_loop.py:72 verbose tool-call header."""
+    name = block.get('name', '?')
+    args = block.get('input', {})
+    try: pretty = json.dumps(args, indent=2, ensure_ascii=False).replace('\\n', '\n')
+    except Exception: pretty = str(args)
+    return f"🛠️ Tool: `{name}`  📥 args:\n````text\n{pretty}\n````\n"
+
+
+def _format_tool_result(content):
+    """Match agent_loop.py:79-81 five-backtick fence around tool output."""
+    if isinstance(content, list):
+        parts = []
+        for b in content:
+            if isinstance(b, dict) and b.get('type') == 'text':
+                parts.append(b.get('text', '') or '')
+            elif isinstance(b, str):
+                parts.append(b)
+        body = '\n'.join(parts)
+    else:
+        body = '' if content is None else str(content)
+    return f"`````\n{body}\n`````\n"
+
+
+def _tool_results_from_prompt(prompt_body):
+    """Return {tool_use_id: formatted_fence} from a Prompt JSON's content blocks."""
+    try: msg = json.loads(prompt_body)
+    except Exception: return {}
+    if not isinstance(msg, dict): return {}
+    out = {}
+    for blk in msg.get('content', []) or []:
+        if isinstance(blk, dict) and blk.get('type') == 'tool_result':
+            tid = blk.get('tool_use_id') or ''
+            if tid: out[tid] = _format_tool_result(blk.get('content'))
+    return out
+
+
+def _format_response_segment(response_body, tool_results):
+    """Rebuild one LLM call's transcript slice: text blocks + tool_use headers +
+    matching tool_result fences. Mirrors agent_loop verbose output so fold_turns
+    sees the same string shape as live mode.
+    """
+    try: blocks = ast.literal_eval(response_body)
+    except Exception: return ''
+    if not isinstance(blocks, list): return ''
+    texts, tool_parts = [], []
+    for b in blocks:
+        if not isinstance(b, dict): continue
+        t = b.get('type')
+        if t == 'text':
+            s = b.get('text', '')
+            if isinstance(s, str) and s.strip(): texts.append(s)
+        elif t == 'tool_use':
+            tool_parts.append(_format_tool_use(b))
+            tid = b.get('id') or ''
+            if tid and tid in tool_results: tool_parts.append(tool_results[tid])
+    return '\n\n'.join(p for p in ['\n\n'.join(texts), '\n'.join(tool_parts)] if p)
 
 
 def extract_ui_messages(path):
     """Parse a model_responses log into [{role, content}, ...] for UI replay.
 
-    Auto-continuation turns are folded into one assistant bubble with Turn markers,
-    matching live chat rendering via fold_turns().
+    Each user-initiated round becomes one user bubble plus one assistant bubble.
+    Auto-continuation LLM calls are concatenated into the same assistant bubble,
+    separated by ``**LLM Running (Turn N) ...**`` markers. Tool calls and their
+    results are rendered into the assistant content using the same string format
+    that agent_loop yields live, so fold_turns can fold them identically.
     """
     try:
         with open(path, encoding='utf-8', errors='replace') as f: content = f.read()
     except Exception: return []
+    pairs = _pairs(content)
+    if not pairs: return []
+    # tool_results live in the *next* Prompt's content; index look-ahead.
+    next_tr = [{} for _ in pairs]
+    for i in range(len(pairs) - 1):
+        next_tr[i] = _tool_results_from_prompt(pairs[i + 1][0])
 
-    rounds = []  # [(user_text, [turn_text, ...]), ...]
-    for prompt, response in _pairs(content):
+    out, assistant, round_turn = [], None, 0
+    for i, (prompt, response) in enumerate(pairs):
         user = _user_text(prompt)
-        if user or not rounds: rounds.append((user, []))
-        rounds[-1][1].append(_assistant_text(response))
-
-    out = []
-    for user, turns in rounds:
-        if not user or not any(turns): continue
-        body = '\n\n'.join(t if i == 0 else _TURN_MARK.format(i + 1) + t
-                           for i, t in enumerate(turns))
-        out += [{'role': 'user', 'content': user},
-                {'role': 'assistant', 'content': body}]
-    return out
+        seg = _format_response_segment(response, next_tr[i])
+        if user:
+            if assistant is not None: out.append(assistant)
+            out.append({'role': 'user', 'content': user})
+            # Turn 1 marker too — agent_loop yields one per LLM call, including the
+            # first, so fold_turns treats every non-last call uniformly as a fold.
+            assistant = {'role': 'assistant',
+                         'content': f"\n\n**LLM Running (Turn 1) ...**\n\n{seg}"}
+            round_turn = 1
+        else:
+            if assistant is None:
+                assistant = {'role': 'assistant', 'content': ''}
+                round_turn = 1
+            round_turn += 1
+            marker = f"\n\n**LLM Running (Turn {round_turn}) ...**\n\n"
+            assistant['content'] = (assistant['content'] or '') + marker + seg
+    if assistant is not None: out.append(assistant)
+    return [m for m in out if (m.get('content') or '').strip()]
 
 
 def handle_frontend_command(agent, query, exclude_pid=None):

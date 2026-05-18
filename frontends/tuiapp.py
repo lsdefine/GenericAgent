@@ -86,8 +86,11 @@ def fold_turns(text: str) -> list[dict[str, str]]:
         placeholders.append(match.group(0))
         return f"\x00PH{len(placeholders) - 1}\x00"
 
-    safe = re.sub(r"`{4,}.*?`{4,}", stash, text, flags=re.DOTALL)
-    safe = re.sub(r"`{4,}[^`].*$", stash, safe, flags=re.DOTALL)
+    # Line-anchored fence matcher — see tuiapp_v2.fold_turns for rationale.
+    # Unanchored variant mis-paired backticks embedded in file_read output
+    # with later real fences, swallowing turn markers and ballooning the
+    # final "text" segment to MBs (1.85s markdown render on /continue).
+    safe = re.sub(r"^`{4,}.*?^`{4,}\n?", stash, text, flags=re.DOTALL | re.MULTILINE)
     parts = re.split(r"(\**LLM Running \(Turn \d+\) \.\.\.\**)", safe)
 
     def restore(part: str) -> str:

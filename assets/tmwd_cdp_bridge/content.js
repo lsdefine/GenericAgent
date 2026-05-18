@@ -35,7 +35,7 @@ async function handle(el) {
     } else if (cmd === 'batch') {
       resp = await chrome.runtime.sendMessage({ cmd: 'batch', commands: req.commands, tabId: req.tabId });
     } else if (cmd === 'tabs') {
-      resp = await chrome.runtime.sendMessage({ cmd: 'tabs', method: req.method, tabId: req.tabId });
+      resp = await chrome.runtime.sendMessage({ cmd: 'tabs', method: req.method, tabId: req.tabId, url: req.url, active: req.active, index: req.index, windowId: req.windowId, openerTabId: req.openerTabId });
     } else {
       resp = { ok: false, error: 'unknown cmd: ' + cmd };
     }

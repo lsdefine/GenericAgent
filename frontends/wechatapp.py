@@ -298,15 +298,6 @@ def _clean(t):
     t = re.sub(r'</?summary>', '', t)
     return re.sub(r'\n{3,}', '\n\n', _strip_md(t)).strip()
 
-def _turn_parts(t):
-    _ph = []
-    safe = re.sub(r'`{4,}.*?`{4,}', lambda m: (_ph.append(m.group(0)), f'\x00PH{len(_ph)-1}\x00')[1], t, flags=re.DOTALL)
-    parts = re.split(r'(\**LLM Running \(Turn \d+\) \.\.\.\**)', safe)
-    parts = [re.sub(r'\x00PH(\d+)\x00', lambda m: _ph[int(m.group(1))], p) for p in parts]
-    if len(parts) < 4: return [], t
-    turns = [parts[i] + (parts[i+1] if i+1 < len(parts) else '') for i in range(1, len(parts), 2)]
-    return (([parts[0]] if parts[0].strip() else []) + turns[:-1], turns[-1])
-
 def on_message(bot, msg):
     text = bot.extract_text(msg).strip()
     uid = msg.get('from_user_id', '')
@@ -320,7 +311,6 @@ def on_message(bot, msg):
     # Commands
     if text in ('/stop', '/abort'):
         agent.abort()
-        bot.send_text(uid, '已停止', context_token=ctx)
         return
     if text.startswith('/llm'):
         args = text.split()
@@ -347,7 +337,7 @@ def on_message(bot, msg):
                 except: pass
                 _typing_stop.wait(2.0)
         threading.Thread(target=_keep_typing, daemon=True).start()
-        result = ''; sent = 0; mi = 0; last_send = 0
+        result = ''; sent = 0; mi = 0; last_send = 0; item = {}
         def _wx_send(text):
             s = text.strip(); t0 = time.time()
             try:
@@ -362,24 +352,28 @@ def on_message(bot, msg):
             now = time.time()
             if mi >= 9 or not show.strip(): return False
             if mi and now - last_send < 6 * mi: return None
-            if _wx_send(show[:2000]): mi += 1; last_send = time.time(); return True
+            if _wx_send(show[:3000]): mi += 1; last_send = time.time(); return True
             return False
         try:
+            done = []; turn = 1
             while True:
                 item = dq.get(timeout=300)
-                if 'done' in item: result = item['done']; break
-                raw = item.get('next', '')
-                done, partial = _turn_parts(raw)
+                if 'done' in item: break
+                if item.get('turn', turn) > turn:
+                    outputs = item.get('outputs', [])
+                    lastdone = outputs[-2] if len(outputs) >= 2 else ''
+                    turn = item['turn']; done.append(lastdone)
                 if len(done) > sent:
                     merged = _clean('\n\n'.join(done[sent:]))
                     print(f'[WX] turns={len(done)}/{len(done)+1} sent={sent} sending={len(done)-sent}', file=sys.__stdout__)
-                    if _send(merged):
-                        sent = len(done)
+                    if _send(merged): sent = len(done)
         except queue.Empty: result = '[超时]'
         _typing_stop.set()
-        done, partial = _turn_parts(result)
-        rest = '\n\n'.join(done[sent:] + [partial] + ['\n\n[任务已完成]'])
-        if rest.strip(): _wx_send((_clean(rest))[-2000:])
+
+        if 'done' in item: result, done = item['done'], item.get('outputs', [])
+        rest = _clean('\n\n'.join(done[sent:] + ['\n\n[任务已完成]']).strip())
+        if rest: _wx_send(rest[-3000:])
+
         files = re.findall(r'\[FILE:([^\]]+)\]', result)
         bad = {'filepath', '<filepath>', 'path', '<path>', 'file_path', '<file_path>', '...'}
         files = [f for f in files if f.strip().lower() not in bad and (f if os.path.isabs(f) else os.path.join(_TEMP_DIR, f)) not in media_paths]

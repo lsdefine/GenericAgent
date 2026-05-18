@@ -1,13 +1,4 @@
-import os
-import sys
-import re
-import time
-import json
-import uuid
-import queue
-import asyncio
-import threading
-import builtins
+import os, sys, re, time, json, uuid, queue, asyncio, threading, builtins
 from dataclasses import dataclass, field
 from typing import Dict, Any, Optional, List
 
@@ -37,20 +28,16 @@ HTML_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "conductor.
 
 app = FastAPI(title="Conductor")
 
-
 class ChatIn(BaseModel):
     msg: str
     role: str = "conductor"  # conductor | system | user
 
-
 class StartSubagentIn(BaseModel):
     prompt: str
-
 
 class SubagentActionIn(BaseModel):
     action: str = "intervene"  # intervene | abort | kill
     msg: str = ""
-
 
 @dataclass
 class SubAgentState:
@@ -64,31 +51,24 @@ class SubAgentState:
     last_done: str = ""
     monitor_threads: List[threading.Thread] = field(default_factory=list)
 
-
 subagents: Dict[str, SubAgentState] = {}
 sub_lock = threading.RLock()
 ws_clients: set[WebSocket] = set()
 main_loop: Optional[asyncio.AbstractEventLoop] = None
-
 # conductor event queue: only user messages and subagent-done events enter here.
 conductor_events: "queue.Queue[dict]" = queue.Queue()
 conductor_agent: Optional[GenericAgent] = None
 conductor_started = False
-
 chat_messages: List[dict] = []
-
 
 def now_ms() -> int:
     return int(time.time() * 1000)
 
-
 def short_id() -> str:
     return uuid.uuid4().hex[:8]
 
-
 _TURN_SPLIT_RE = re.compile(r'\**LLM Running \(Turn \d+\) \.\.\.\**')
 _SUMMARY_RE = re.compile(r'<summary>(.*?)</summary>\s*', re.DOTALL)
-
 
 def extract_last_summary(full: str) -> str:
     """Extract the latest <summary> content for in-progress display."""
@@ -97,7 +77,6 @@ def extract_last_summary(full: str) -> str:
         return ""
     s = matches[-1].strip()
     return s[-1000:] if len(s) > 1000 else s
-
 
 def extract_last_text_reply(full: str) -> str:
     """Extract only the last turn's text reply (like stapp.py fold_turns logic)."""
@@ -113,7 +92,6 @@ def extract_last_text_reply(full: str) -> str:
     # Cap length
     return last[-3000:] if len(last) > 3000 else last
 
-
 def subagent_snapshot() -> list[dict]:
     with sub_lock:
         return [
@@ -126,13 +104,12 @@ def subagent_snapshot() -> list[dict]:
                 "updated_at": s.updated_at,
             }
             for s in subagents.values()
+            if s.status != "aborted"
         ]
-
 
 def schedule_broadcast(payload: dict):
     if main_loop and main_loop.is_running():
         asyncio.run_coroutine_threadsafe(broadcast(payload), main_loop)
-
 
 async def broadcast(payload: dict):
     dead = []
@@ -144,10 +121,8 @@ async def broadcast(payload: dict):
     for ws in dead:
         ws_clients.discard(ws)
 
-
 def push_cards():
     schedule_broadcast({"type": "subagents", "items": subagent_snapshot()})
-
 
 def add_chat(msg: str, role: str = "conductor"):
     item = {"id": short_id(), "role": role, "msg": msg, "ts": now_ms(), "read": role != "user"}
@@ -157,12 +132,10 @@ def add_chat(msg: str, role: str = "conductor"):
     schedule_broadcast({"type": "chat", "item": item})
     return item
 
-
 def start_agent_runner(agent: GenericAgent, name: str):
     t = threading.Thread(target=agent.run, name=name, daemon=True)
     t.start()
     return t
-
 
 def monitor_display_queue(agent_id: str, dq: "queue.Queue", trigger_when_done: bool):
     """Consume one GenericAgent display_queue.
@@ -199,7 +172,6 @@ def monitor_display_queue(agent_id: str, dq: "queue.Queue", trigger_when_done: b
                 conductor_events.put({"type": "subagent_done", "id": agent_id, "reply": done})
             break
 
-
 def start_subagent(prompt: str) -> dict:
     sid = short_id()
     agent = GenericAgent()
@@ -217,7 +189,6 @@ def start_subagent(prompt: str) -> dict:
     push_cards()
     return {"id": sid, "status": "running"}
 
-
 def keyinfo_subagent(sid: str, msg: str) -> dict:
     """Inject into agent's working key_info; visible from next turn onward."""
     with sub_lock:
@@ -228,7 +199,6 @@ def keyinfo_subagent(sid: str, msg: str) -> dict:
     h.working['key_info'] = h.working.get('key_info', '') + f"\n[MASTER] {msg}"
     s.updated_at = time.time()
     return {"id": sid, "status": "keyinfo_injected"}
-
 
 def input_subagent(sid: str, msg: str) -> dict:
     """Start a new task round (used for input/reply when agent is stopped)."""
@@ -249,7 +219,6 @@ def input_subagent(sid: str, msg: str) -> dict:
     push_cards()
     return {"id": sid, "status": "running"}
 
-
 def conductor_readme() -> str:
     base = f"http://{HOST}:{PORT}"
     return "\n".join([
@@ -259,15 +228,14 @@ def conductor_readme() -> str:
         "POST /subagent\tbody: {\"prompt\": \"...\"}\t启动新subagent，返回 {\"id\": \"xxx\"}",
         'POST /subagent/{id}\tbody: {\"action\": \"keyinfo\", \"msg\": \"...\"}\t注入key_info（agent下轮可见）',
         'POST /subagent/{id}\tbody: {\"action\": \"input\", \"msg\": \"...\"}\t开新一轮任务（agent停下后追加）',
-        'POST /subagent/{id}\tbody: {\"action\": \"abort\"}\t停止该subagent',
+        'POST /subagent/{id}\tbody: {\"action\": \"stop\"}\t中断执行但保留（可继续input/reply）',
+        'POST /subagent/{id}\tbody: {\"action\": \"kill\"}\t彻底杀死（从卡片消失，不可复用）',
         "GET /chat?last=N\t返回最近N条对话（默认20）",
         "GET /subagent\t返回 {\"items\": [...]}\t查看所有subagent状态",
         "GET /readme\t本文档",
         "",
         "触发时机: 用户新消息 | subagent done",
     ])
-
-
 
 def conductor_prompt_from_events(events: list) -> str:
     # 极简摘要：subagent数量和状态
@@ -278,39 +246,56 @@ def conductor_prompt_from_events(events: list) -> str:
     done_count = sum(1 for e in events if e.get("type") == "subagent_done")
     summary = f"subagents: {running} running, {stopped} stopped | {unread}条用户未读消息, {done_count}个subagent完成报告"
     base = f"http://{HOST}:{PORT}"
-    return f"""你是agent总管。用户只和你对话，你负责一切执行细节。
-API: {base}
+    return f"""你是agent总管。用户只和你对话，你负责调度、验收、交付，目标是降低用户管理多个agent的负担。
+API: {base}；先requests，GET /readme查用法，GET /chat读未读对话，GET /subagent看状态；POST /chat是唯一对用户说话方式。
 
 铁律：
-- 你绝不亲自执行任何任务，一切工作必须通过POST /subagent分派。你只做调度、审查、沟通。
-- 分派完毕后立刻结束本轮回复（停下来），等待下次轮询唤醒你。绝不阻塞等待subagent结果。
-- 每次唤醒只做最小必要动作（发消息/开subagent/reply subagent），然后立刻停。
+- 绝不亲自执行任务/探测环境；一切执行交给subagent。你只分析、派遣、审查、沟通。
+- 每次唤醒只做最小必要动作（发消息/开subagent/reply/keyinfo/abort），做完立刻停，等待下次事件唤醒。
+- 改写prompt时严禁添加用户未提及的假设、工具、前提条件。只能精炼/结构化用户原意，不能脑补，只能做很小的改写
 
-职责：
-- 理解用户意图，从记忆和上下文揣摩真实需要，不反复确认显而易见的事
-- 涉及改源码、删数据、安全敏感操作，需要改写prompt让subagent先产生方案，然后二次确认执行
-- 不准自己探测环境！！！快速转派给subagent以处理用户下一个指令
+用户消息流程：
+1. 结合记忆、上下文和用户偏好判断真实需求；不清楚/不能代劳时，用精简checklist一次性问用户。
+2. 判断是新任务还是延续现有任务；优先复用已有stopped subagent（用input追加），只有确实无关的新任务才新建。
+3. 分派前必须POST /chat告知用户：改写后的prompt + 分派方案（新建/复用哪个subagent）。
+4. 执行分派，完成即停。危险操作（改源码/删数据/安全敏感）必须改成先让subagent出方案；你验收后POST /chat请用户确认，确认后才继续执行。
 
-- 判断用户意图是新任务还是对现有任务的延续，小心分派subagent
-- 必要时对subagent追加指令或keyinfo引导
-- 有无法确定/无法代劳的事项，列精简checklist一次性问用户（不要一个个问）
-- 任务完成后给用户简洁报告
+subagent完成流程：
+1. 读subagent输出；若最后一条不足以判断，GET /subagent或日志补足信息。
+2. 预测用户是否满意；不满意就reply/keyinfo要求返工、修改、优化，继续监督，不急着报告。
+3. 预计用户满意后，POST /chat给简洁交付报告。
 
 原则：
-- 能自己决定的自己决定，只在真正需要用户判断时才打扰
-- 验收优先：subagent完成后，先自己审查结果，有问题直接reply让它继续修，反复直到质量过关再报告用户
-- POST /chat 是你和用户说话的唯一方式（必须调接口，不要只在回复里写）
-- GET /readme 查API用法，GET /chat 看对话历史，GET /subagent 看状态
+- 信任subagent足够聪明，不要写具体步骤和容易探测的信息；能自己判断的自己判断，只在真正需要用户决策时打扰。
 {summary}"""
 
+def _auto_cleanup_loop():
+    """Background: auto-abort stopped subagents idle for >1 hour."""
+    IDLE_TIMEOUT = 3600  # 1 hour
+    while True:
+        time.sleep(300)  # check every 5 minutes
+        now = time.time()
+        to_abort = []
+        with sub_lock:
+            for sid, s in subagents.items():
+                if s.status == "stopped" and (now - s.updated_at) > IDLE_TIMEOUT:
+                    to_abort.append((sid, s))
+        for sid, s in to_abort:
+            s.agent.abort()
+            with sub_lock:
+                s.status = "aborted"
+                s.updated_at = now
+        if to_abort:
+            push_cards()
 
-def monitor_conductor_queue(dq: "queue.Queue"):
-    """Conductor output is discarded. Visible reply must go through POST /chat only."""
+def monitor_conductor_queue(dq: "queue.Queue") -> str:
+    """Block until done. Conductor output is not surfaced to users; the returned
+    text is for caller-side error detection only (#342)."""
     while True:
         item = dq.get()
         if "done" in item:
-            break
-
+            print(f"Conductor task done")
+            return item.get("done", "") or ""
 
 def conductor_loop():
     global conductor_agent, conductor_started
@@ -318,6 +303,8 @@ def conductor_loop():
     conductor_agent.inc_out = True
     start_agent_runner(conductor_agent, "conductor-agent")
     conductor_started = True
+    # Start background cleanup thread
+    threading.Thread(target=_auto_cleanup_loop, name="subagent-cleanup", daemon=True).start()
     while True:
         # Block until first event arrives
         first = conductor_events.get()
@@ -335,10 +322,20 @@ def conductor_loop():
             prompt = conductor_prompt_from_events(events)
             dq = conductor_agent.put_task(prompt, source="conductor")
             # Block here until conductor finishes — serializes execution
-            monitor_conductor_queue(dq)
+            done_text = monitor_conductor_queue(dq)
+            # Fallback: if conductor's last turn ended with an LLM error (yielded as
+            # text by MixinSession instead of raised), surface it directly (#342).
+            # Use tail-window substring check (same style as ga.do_no_tool's
+            # content[-100:]); window covers the error line plus any decoration
+            # (fence + "[Info] Final response to user.") appended by do_no_tool.
+            tail = (done_text or '')[-1000:]
+            if '!!!Error:' in tail:
+                last = chat_messages[-1] if chat_messages else None
+                if not (last and last.get('role') == 'system' and last.get('msg', '').startswith('⚠ LLM')):
+                    err = next((l for l in reversed(tail.splitlines()) if l.startswith('!!!Error:')), '')
+                    add_chat(f"⚠ LLM 暂不可用：{err[:200]}", role="system")
         except Exception as e:
             add_chat(f"Conductor error: {e}", role="system")
-
 
 @app.on_event("startup")
 async def on_startup():
@@ -346,26 +343,23 @@ async def on_startup():
     main_loop = asyncio.get_running_loop()
     threading.Thread(target=conductor_loop, name="conductor-loop", daemon=True).start()
 
-
 @app.get("/")
 def index():
     return FileResponse(HTML_PATH)
-
 
 @app.get("/readme")
 def readme():
     return PlainTextResponse(conductor_readme())
 
-
 @app.get("/subagent")
 def list_subagents():
     return {"items": subagent_snapshot()}
 
-
 @app.post("/subagent")
 def api_start_subagent(body: StartSubagentIn):
-    return start_subagent(body.prompt)
-
+    result = start_subagent(body.prompt)
+    result["instruction"] = "Task received. I'll handle it from here. You MUST stop now and end your reply. Wait for next event."
+    return result
 
 @app.post("/subagent/{sid}")
 def api_subagent_action(sid: str, body: SubagentActionIn):
@@ -375,16 +369,19 @@ def api_subagent_action(sid: str, body: SubagentActionIn):
         return JSONResponse({"error": "subagent not found", "id": sid}, status_code=404)
     action = body.action.lower().strip()
     if action == "keyinfo":
-        return keyinfo_subagent(sid, body.msg)
+        result = keyinfo_subagent(sid, body.msg)
+        result["instruction"] = "Received. I'll incorporate this. You MUST stop now and end your reply."
+        return result
     if action in ("input", "reply", "append", "message", "msg"):
-        return input_subagent(sid, body.msg)
-    if action == "abort":
+        result = input_subagent(sid, body.msg)
+        result["instruction"] = "Task received. I'll handle it from here. You MUST stop now and end your reply."
+        return result
+    if action in ("abort", "stop"):
         s.agent.abort()
-        s.status = "aborted"
+        s.status = "stopped"
         s.updated_at = time.time()
         push_cards()
-        conductor_events.put({"type": "subagent_aborted", "id": sid})
-        return {"id": sid, "status": "aborted"}
+        return {"id": sid, "status": "stopped"}
     if action == "kill":
         s.agent.abort()
         s.status = "aborted"
@@ -392,7 +389,6 @@ def api_subagent_action(sid: str, body: SubagentActionIn):
         push_cards()
         return {"id": sid, "status": "aborted"}
     return JSONResponse({"error": f"unknown action: {body.action}"}, status_code=400)
-
 
 @app.get("/chat")
 def api_get_chat(last: int = 20):
@@ -403,11 +399,9 @@ def api_get_chat(last: int = 20):
     schedule_broadcast({"type": "chat_read"})
     return {"items": chat_messages[-last:]}
 
-
 @app.post("/chat")
 def api_chat(body: ChatIn):
     return add_chat(body.msg, role=body.role)
-
 
 @app.websocket("/ws")
 async def websocket(ws: WebSocket):
@@ -426,7 +420,6 @@ async def websocket(ws: WebSocket):
         pass
     finally:
         ws_clients.discard(ws)
-
 
 if __name__ == "__main__":
     import uvicorn, webbrowser, threading

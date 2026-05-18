@@ -15,7 +15,8 @@
   "start_time": <time.time()>,
   "turns_used": 0,
   "max_turns": 200,
-  "status": "running"
+  "status": "running",
+  "done_prompt": ""
 }
 ```
 

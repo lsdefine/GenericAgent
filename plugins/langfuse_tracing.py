@@ -20,7 +20,7 @@ if _lf:
     _tls = threading.local()
 
     _orig_log = llmcore._write_llm_log
-    def _patched_log(label, content):
+    def _patched_log(label, content, log_path=None):
         try:
             if label == 'Prompt':
                 _tls.gen = _lf.start_observation(name='llm.chat', as_type='generation', input=content[:20000])
@@ -29,7 +29,7 @@ if _lf:
                 _tls.gen.update(output=content[:20000], usage_details=getattr(_tls, 'usage', None))
                 _tls.gen.end(); _tls.gen = None
         except Exception: pass
-        return _orig_log(label, content)
+        return _orig_log(label, content, log_path)
     llmcore._write_llm_log = _patched_log
 
     def _extract_usage(buf):

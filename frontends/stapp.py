@@ -281,11 +281,8 @@ if prompt := st.chat_input("any task?"):
         result = handle_frontend_command(agent, cmd)
         history = extract_ui_messages(target) if target and result.startswith('✅') else None
         tail = [{"role": "assistant", "content": result, "time": ts}]
-        if history:
-            st.session_state.messages = history + tail
-        else:
-            st.session_state.messages = list(st.session_state.messages) + \
-                [{"role": "user", "content": cmd, "time": ts}] + tail
+        if history: st.session_state.messages = history + tail
+        else: st.session_state.messages = list(st.session_state.messages)+[{"role": "user", "content": cmd, "time": ts}]+tail
         _reset_and_rerun()
     if cmd.startswith("/btw"):
         answer = btw_handle_frontend(agent, cmd)  # sync; bypasses put_task → main agent.run() untouched

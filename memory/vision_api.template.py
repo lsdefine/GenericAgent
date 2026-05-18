@@ -80,24 +80,27 @@ def _call_claude(b64, prompt, timeout, max_tokens=1024):
     cfg = getattr(mk, CLAUDE_CONFIG_KEY)
     resp = requests.post(
         cfg['apibase'] + '/v1/messages',
-        json={'model': cfg['model'], 'max_tokens': max_tokens, 'messages': [{
+        json={'model': cfg['model'], 'max_tokens': max_tokens, 'stream': False, 'messages': [{
             'role': 'user',
             'content': [
                 {'type': 'image', 'source': {'type': 'base64', 'media_type': 'image/jpeg', 'data': b64}},
                 {'type': 'text', 'text': prompt}
             ]
         }]},
-        headers={'x-api-key': cfg['apikey'], 'anthropic-version': '2023-06-01', 'content-type': 'application/json'},
+        headers = {"x-api-key": cfg['apikey'], "Content-Type": "application/json", "anthropic-version": "2023-06-01", "anthropic-beta": "prompt-caching-2024-07-31"},
         timeout=timeout
     )
     resp.raise_for_status()
-    return resp.json()['content'][0]['text']
+    for item in resp.json()['content']:
+        if item.get('type') == 'text':
+            return item['text']
+    return f"Error: 响应中未找到text内容块"
 
 def _call_openai_compat(b64, prompt, timeout, *, apibase, apikey, model, proxy=None):
     proxies = {'https': proxy, 'http': proxy} if proxy else None
     resp = requests.post(
         apibase.rstrip('/') + '/v1/chat/completions',
-        json={'model': model, 'messages': [{
+        json={'model': model, 'stream': False, 'messages': [{
             'role': 'user',
             'content': [
                 {'type': 'text', 'text': prompt},
@@ -108,7 +111,14 @@ def _call_openai_compat(b64, prompt, timeout, *, apibase, apikey, model, proxy=N
         proxies=proxies, timeout=timeout
     )
     resp.raise_for_status()
-    return resp.json()['choices'][0]['message']['content']
+    content = resp.json()['choices'][0]['message']['content']
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        for item in content:
+            if isinstance(item, dict) and item.get('type') == 'text':
+                return item['text']
+    return f"Error: 响应中未找到text内容"
 
 if __name__ == '__main__':
     pass

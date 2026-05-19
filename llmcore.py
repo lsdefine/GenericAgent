@@ -1,7 +1,87 @@
-import os, json, re, time, requests, sys, threading, urllib3, base64, importlib, uuid
+import os, json, re, time, requests, sys, threading, urllib3, base64, importlib, uuid, hashlib, secrets, webbrowser, select
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import urlencode, urlparse, parse_qs
 from datetime import datetime
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 _RESP_CACHE_KEY = str(uuid.uuid4())
+
+XAI_OAUTH_ISSUER = 'https://auth.x.ai'
+XAI_OAUTH_CLIENT_ID = 'b1a00492-073a-47ea-816f-4c329264a828'
+XAI_OAUTH_SCOPE = 'openid profile email offline_access grok-cli:access api:access'
+XAI_OAUTH_CALLBACK = 'http://127.0.0.1:56121/callback'
+XAI_OAUTH_STORE = os.path.expanduser('~/.genericagent/xai_oauth.json')
+XAI_OAUTH_AUTHORIZE_BASE = 'https://auth.x.ai/oauth2/authorize'
+XAI_OAUTH_TOKEN_URL = 'https://auth.x.ai/oauth2/token'
+
+def _b64url(raw): return base64.urlsafe_b64encode(raw).decode().rstrip('=')
+def _xai_oauth_load(path=XAI_OAUTH_STORE):
+    try:
+        with open(os.path.expanduser(path), encoding='utf-8') as f: return json.load(f)
+    except FileNotFoundError: return {}
+def _xai_oauth_save(data, path=XAI_OAUTH_STORE):
+    path = os.path.expanduser(path); os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'w', encoding='utf-8') as f: json.dump(data, f, ensure_ascii=False, indent=2)
+    try: os.chmod(path, 0o600)
+    except OSError: pass
+
+def _xai_oauth_authorize_url(params):
+    return f'{XAI_OAUTH_AUTHORIZE_BASE}?{urlencode(params)}'
+
+def _xai_oauth_token_request(data, proxy=None):
+    r = requests.post(XAI_OAUTH_TOKEN_URL, data=data, timeout=(10, 60), proxies={"http": proxy, "https": proxy} if proxy else None)
+    r.raise_for_status(); tok = r.json(); tok['expires_at'] = time.time() + int(tok.get('expires_in', 3600))
+    return tok
+def _xai_oauth_parse_callback(value):
+    value = (value or '').strip()
+    if not value: return {}
+    parsed = urlparse(value)
+    if parsed.query: return {k: v[0] for k, v in parse_qs(parsed.query).items() if v}
+    return {'code': value}
+def xai_oauth_login(store_path=XAI_OAUTH_STORE, proxy=None, open_browser=True):
+    verifier = _b64url(secrets.token_bytes(32)); challenge = _b64url(hashlib.sha256(verifier.encode()).digest()); state = secrets.token_urlsafe(24)
+    nonce = secrets.token_urlsafe(24)
+    params = {'client_id': XAI_OAUTH_CLIENT_ID, 'redirect_uri': XAI_OAUTH_CALLBACK, 'response_type': 'code', 'scope': XAI_OAUTH_SCOPE, 'state': state, 'nonce': nonce, 'code_challenge': challenge, 'code_challenge_method': 'S256', 'plan': 'generic', 'referrer': 'hermes-agent'}
+    auth_url = _xai_oauth_authorize_url(params)
+    result = {}
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args): pass
+        def do_GET(self):
+            qs = parse_qs(urlparse(self.path).query)
+            result.update({k: v[0] for k, v in qs.items() if v})
+            self.send_response(200); self.end_headers(); self.wfile.write(b'GenericAgent xAI login complete. You can close this tab.')
+    httpd = HTTPServer(('127.0.0.1', 56121), Handler); httpd.timeout = 300
+    print('Open this URL to login xAI:\n' + auth_url)
+    print('If the browser cannot connect to 127.0.0.1 after authorizing, paste the shown code or full callback URL here.')
+    if open_browser:
+        try: webbrowser.open(auth_url)
+        except Exception: pass
+    httpd.timeout = 1
+    deadline = time.time() + 300
+    while not result.get('code') and time.time() < deadline:
+        httpd.handle_request()
+        if result.get('code'):
+            break
+        if sys.stdin in select.select([sys.stdin], [], [], 0)[0]:
+            result.update(_xai_oauth_parse_callback(sys.stdin.readline()))
+            break
+    httpd.server_close()
+    if not result.get('code'):
+        try:
+            result.update(_xai_oauth_parse_callback(input('Callback URL or code: ')))
+        except EOFError:
+            pass
+    if result.get('state') and result.get('state') != state: raise RuntimeError('xAI OAuth callback state mismatch')
+    if not result.get('code'): raise RuntimeError('xAI OAuth callback missing/invalid code')
+    tok = _xai_oauth_token_request({'grant_type': 'authorization_code', 'client_id': XAI_OAUTH_CLIENT_ID, 'code': result['code'], 'redirect_uri': XAI_OAUTH_CALLBACK, 'code_verifier': verifier, 'code_challenge': challenge, 'code_challenge_method': 'S256'}, proxy)
+    _xai_oauth_save(tok, store_path); return tok
+def xai_oauth_access_token(store_path=XAI_OAUTH_STORE, proxy=None):
+    tok = _xai_oauth_load(store_path)
+    if not tok.get('access_token'): raise RuntimeError('xAI OAuth not logged in. Run: python agentmain.py --xai-login')
+    if tok.get('expires_at', 0) - time.time() < 60 and tok.get('refresh_token'):
+        new_tok = _xai_oauth_token_request({'grant_type': 'refresh_token', 'client_id': XAI_OAUTH_CLIENT_ID, 'refresh_token': tok['refresh_token']}, proxy)
+        if 'refresh_token' not in new_tok: new_tok['refresh_token'] = tok.get('refresh_token')
+        _xai_oauth_save(new_tok, store_path); tok = new_tok
+    return tok['access_token']
 
 def _load_mykeys():
     global _mykey_path
@@ -390,11 +470,14 @@ def _openai_stream(sess, messages):
     temperature = sess.temperature
     if 'kimi' in ml or 'moonshot' in ml: temperature = 1
     elif 'minimax' in ml: temperature = max(0.01, min(temperature, 1.0))  # MiniMax requires temp in (0, 1]
+    if getattr(sess, 'oauth_provider', '') == 'xai': sess.api_key = xai_oauth_access_token(sess.oauth_store, sess.proxies.get('http') if sess.proxies else None)
     headers = {"Authorization": f"Bearer {sess.api_key}", "Content-Type": "application/json", "Accept": "text/event-stream"}
     if api_mode == "responses":
         url = auto_make_url(sess.api_base, "responses")
-        payload = {"model": model, "input": _to_responses_input(messages), "stream": sess.stream, 
-                   "prompt_cache_key": _RESP_CACHE_KEY, "instructions": sess.system or "You are an Omnipotent Executor."}
+        payload = {"model": model, "input": _to_responses_input(messages), "stream": sess.stream,
+                   "instructions": sess.system or "You are an Omnipotent Executor."}
+        # xAI's Responses-compatible endpoint rejects OpenAI-specific prompt cache keys.
+        if 'api.x.ai' not in sess.api_base.lower(): payload["prompt_cache_key"] = _RESP_CACHE_KEY
         if sess.reasoning_effort: payload["reasoning"] = {"effort": sess.reasoning_effort}
         if sess.max_tokens: payload["max_output_tokens"] = sess.max_tokens
     else:
@@ -507,16 +590,22 @@ def _msgs_claude2oai(messages):
 
 class BaseSession:
     def __init__(self, cfg):
-        self.api_key = cfg['apikey']
-        self.api_base = cfg['apibase'].rstrip('/')
+        self.oauth_provider = str(cfg.get('oauth_provider', '')).strip().lower()
+        self.oauth_store = cfg.get('oauth_store') or XAI_OAUTH_STORE
+        proxy = cfg.get('proxy')
+        self.proxies = {"http": proxy, "https": proxy} if proxy else None
+        if self.oauth_provider == 'xai':
+            self.api_key = xai_oauth_access_token(self.oauth_store, proxy)
+            self.api_base = cfg.get('apibase', 'https://api.x.ai/v1').rstrip('/')
+        else:
+            self.api_key = cfg['apikey']
+            self.api_base = cfg['apibase'].rstrip('/')
         self.model = cfg.get('model', '')
         self.context_win = cfg.get('context_win', 28000)
         self.history = []
         self.lock = threading.Lock()
         self.system = ""
         self.name = cfg.get('name', self.model)
-        proxy = cfg.get('proxy')
-        self.proxies = {"http": proxy, "https": proxy} if proxy else None
         self.max_retries = max(0, int(cfg.get('max_retries', 4)))
         self.verify = cfg.get('verify', True)
         self.stream = cfg.get('stream', True)

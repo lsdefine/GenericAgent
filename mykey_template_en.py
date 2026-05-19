@@ -55,7 +55,22 @@ native_oai_config = {
 }
 
 
-# ── 3. Mixin failover (optional) ─────────────────────────────────────────────
+# ── 3. xAI / Grok via OAuth ─────────────────────────────────────────────────
+#  First run: python agentmain.py --xai-login
+#  llmcore then uses access_token/refresh_token from ~/.genericagent/xai_oauth.json.
+# native_oai_config_xai = {
+#     'name': 'grok',
+#     'oauth_provider': 'xai',                         # xAI OAuth login state; no apikey needed
+#     'apibase': 'https://api.x.ai/v1',
+#     'model': 'grok-4.3',
+#     # 'oauth_store': '~/.genericagent/xai_oauth.json', # optional custom token path
+#     # 'reasoning_effort': 'high',          # none|minimal|low|medium|high|xhigh
+#     'max_retries': 3,
+#     'read_timeout': 120,
+# }
+
+
+# ── 4. Mixin failover (optional) ─────────────────────────────────────────────
 #  List sessions by 'name'; if one fails, the next is tried automatically.
 #  Constraint: all referenced sessions must be Native (mixing Native Claude
 #  and Native OAI is fine; mixing Native with non-Native is not).
@@ -66,7 +81,7 @@ native_oai_config = {
 # }
 
 
-# ── 4. Global HTTP proxy (optional) ──────────────────────────────────────────
+# ── 5. Global HTTP proxy (optional) ──────────────────────────────────────────
 #  Applies to every session that doesn't set its own 'proxy' field.
 # proxy = 'http://127.0.0.1:7890'
 

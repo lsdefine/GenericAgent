@@ -378,7 +378,22 @@ native_oai_config = {
 # }
 
 
-# ── 4c. OpenRouter (OAI 协议多模型中继) ─────────────────────────────────────
+# ── 4c. xAI / Grok (OAuth login) ────────────────────────────────────────────
+#  先运行：python agentmain.py --xai-login
+#  登录后 llmcore 使用 ~/.genericagent/xai_oauth.json 中的 access_token/refresh_token。
+# native_oai_config_xai = {
+#     'name': 'grok',                                  # /llms 显示名 & mixin 引用名
+#     'oauth_provider': 'xai',                         # 使用 xAI OAuth 登录态，不需要 apikey
+#     'apibase': 'https://api.x.ai/v1',                # 补齐到 /v1/chat/completions
+#     'model': 'grok-4.3',                             # 可通过 https://api.x.ai/v1/models 查询
+#     # 'oauth_store': '~/.genericagent/xai_oauth.json', # 可选：自定义 token 保存位置
+#     # 'reasoning_effort': 'high',                    # 可选：none|minimal|low|medium|high|xhigh
+#     'max_retries': 3,
+#     'read_timeout': 120,
+# }
+
+
+# ── 4d. OpenRouter (OAI 协议多模型中继) ─────────────────────────────────────
 #  OpenRouter 是最通用的多模型 OAI 中继，https://openrouter.ai/api/v1。
 #  model 名用 provider/model 格式（如 anthropic/claude-opus-4-7）。
 # oai_config_openrouter = {

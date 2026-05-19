@@ -575,6 +575,57 @@ class GenericAgentHandler(BaseHandler):
         for hook in getattr(self.parent, '_turn_end_hooks', {}).values(): hook(locals())  # current readonly
         return next_prompt
 
+def _parse_skill_metadata(path):
+    name = ""
+    description = ""
+    fallback_heading = ""
+    fallback_description = ""
+    try:
+        with open(path, 'r', encoding='utf-8', errors='replace') as f:
+            lines = f.read(2048).splitlines()
+    except OSError:
+        return os.path.splitext(os.path.basename(path))[0], ""
+
+    for line in lines[:20]:
+        stripped = line.strip()
+        lower = stripped.lower()
+        if lower.startswith('name:'):
+            name = stripped.split(':', 1)[1].strip()
+        elif lower.startswith('description:'):
+            description = stripped.split(':', 1)[1].strip()
+
+        if stripped.startswith('#') and not fallback_heading:
+            fallback_heading = stripped.lstrip('#').strip()
+        elif stripped and not stripped.startswith('#') and not fallback_description:
+            fallback_description = stripped[:120]
+
+        if name and description:
+            break
+
+    if not name:
+        name = fallback_heading or os.path.splitext(os.path.basename(path))[0]
+    if not description:
+        description = fallback_description
+    return name, description
+
+
+def _format_skill_index():
+    memory_dir = os.path.join(script_dir, 'memory')
+    skill_paths = sorted(Path(memory_dir).glob('*.md'))
+    if not skill_paths:
+        return ""
+
+    lines = ["\n[Skill/SOP Index] Before acting, scan this index first. If a relevant skill exists, read that file before implementing."]
+    for path in skill_paths:
+        name, description = _parse_skill_metadata(str(path))
+        relative_path = os.path.relpath(path, script_dir)
+        if description:
+            lines.append(f"- {relative_path} | name: {name} | description: {description}")
+        else:
+            lines.append(f"- {relative_path} | name: {name} | description: ")
+    return "\n".join(lines) + "\n"
+
+
 def get_global_memory():
     prompt = "\n"
     try:
@@ -585,5 +636,6 @@ def get_global_memory():
         prompt += f"\n[Memory] (../memory)\n"
         prompt += structure + '\n../memory/global_mem_insight.txt:\n'
         prompt += insight + "\n"
+        prompt += _format_skill_index()
     except FileNotFoundError: pass
     return prompt

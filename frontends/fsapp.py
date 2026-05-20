@@ -1,4 +1,9 @@
 import glob, json, os, queue as Q, re, sys, threading, time
+import atexit, hashlib
+try:
+    import msvcrt
+except Exception:
+    msvcrt = None
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
@@ -34,7 +39,74 @@ MEDIA_DIR = os.path.join(TEMP_DIR, "feishu_media")
 os.makedirs(MEDIA_DIR, exist_ok=True)
 
 
+def _acquire_fsapp_singleton():
+    """Per-agent process lock; prevents duplicate Feishu long-connection clients."""
+    if msvcrt is None:
+        return None
+    path = os.path.join(TEMP_DIR, "fsapp_singleton.lock")
+    f = open(path, "a+b")
+    try:
+        msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+    except OSError:
+        print(f"[INFO] another fsapp is already running for {PROJECT_ROOT}; exiting duplicate pid={os.getpid()}", flush=True)
+        f.close()
+        sys.exit(0)
+    atexit.register(lambda: (msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1), f.close()))
+    return f
+
+
+_FSAPP_LOCK = _acquire_fsapp_singleton()
 _TRUNC_TAIL = 300  # 截断兜底时保留原文尾部字符数
+_DEDUP_FILE = os.path.join(TEMP_DIR, "fsapp_seen_message_ids.txt")
+_DEDUP_TTL_SEC = 6 * 3600
+_DEDUP_MAX = 500
+
+
+def _message_claim_once(message_id):
+    """Return True only for the first process that claims this Feishu message_id."""
+    if not message_id:
+        return True
+    now = time.time()
+    lock_path = _DEDUP_FILE + ".lock"
+    lf = None
+    try:
+        if msvcrt is not None:
+            lf = open(lock_path, "a+b")
+            msvcrt.locking(lf.fileno(), msvcrt.LK_LOCK, 1)
+        rows = []
+        if os.path.exists(_DEDUP_FILE):
+            with open(_DEDUP_FILE, "r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    parts = line.rstrip("\n").split(" ", 1)
+                    if len(parts) != 2:
+                        continue
+                    try:
+                        ts = float(parts[0])
+                    except Exception:
+                        continue
+                    mid = parts[1]
+                    if now - ts <= _DEDUP_TTL_SEC:
+                        rows.append((ts, mid))
+        if any(mid == message_id for _, mid in rows):
+            return False
+        rows.append((now, message_id))
+        rows = rows[-_DEDUP_MAX:]
+        tmp = _DEDUP_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            for ts, mid in rows:
+                f.write(f"{ts:.3f} {mid}\n")
+        os.replace(tmp, _DEDUP_FILE)
+        return True
+    except Exception as e:
+        print(f"[WARN] message dedup failed: {e}")
+        return True
+    finally:
+        if lf is not None:
+            try:
+                msvcrt.locking(lf.fileno(), msvcrt.LK_UNLCK, 1)
+                lf.close()
+            except Exception:
+                pass
 
 
 def _clean(text):
@@ -236,7 +308,12 @@ PUBLIC_ACCESS = not ALLOWED_USERS or "*" in ALLOWED_USERS
 AGENT_TIMEOUT_SEC = 900
 
 agent = GeneraticAgent()
-threading.Thread(target=agent.run, daemon=True).start()
+_agent_thread = threading.Thread(target=agent.run, daemon=True, name="GA-core")
+_agent_thread.start()
+try:
+    print(f"[INFO] GA core started pid={os.getpid()} thread_alive={_agent_thread.is_alive()} llm={agent.get_llm_name()}")
+except Exception as e:
+    print(f"[WARN] GA core started but status unavailable: {e}")
 client, user_tasks = None, {}
 
 
@@ -556,7 +633,15 @@ class _TaskCard:
             self.steps = []
             self.turn_base = self.turn_no + 1
             self.final = (text or "_(无文本输出)_")[:self._FINAL_LIMIT]
-            self._push()
+            ok, _ = self._push()
+        # Last-resort delivery: if card creation/patch fails (common after cold boot
+        # or message-card expiry), still send a plain text reply so the user is not
+        # left with no response.
+        if not ok:
+            try:
+                send_message(self.rid, _display_text(text), receive_id_type=self.rtype)
+            except Exception as e:
+                print(f"[ERROR] done fallback send failed: {e}")
 
     def fail(self, msg):
         self.status = f"❌ {msg}"
@@ -570,7 +655,30 @@ def _make_task_hook(card, done_event, on_final):
             if ctx.get('exit_reason'):
                 resp = ctx.get('response')
                 raw = resp.content if hasattr(resp, 'content') else str(resp)
-                card.done(_display_text(raw))
+                display = _display_text(raw)
+                if display.startswith("（无文本输出）"):
+                    # fallback: show thinking + tool_calls when content is empty after cleaning
+                    parts = []
+                    thinking = getattr(resp, 'thinking', '') or ''
+                    if thinking:
+                        parts.append(f"**[Thinking]**\n{thinking.strip()}")
+                    tool_calls = ctx.get('tool_calls') or []
+                    for tc in tool_calls:
+                        name = tc.get('tool_name') or tc.get('name', '?')
+                        args = tc.get('args') or tc.get('arguments') or {}
+                        if name == 'ask_user':
+                            q = args.get('question', '')
+                            candidates = args.get('candidates') or []
+                            if candidates:
+                                q += '\n' + '\n'.join(f'- {c}' for c in candidates)
+                            parts.append(q)
+                        else:
+                            args_s = json.dumps(args, ensure_ascii=False)
+                            if len(args_s) > 200:
+                                args_s = args_s[:200] + '...'
+                            parts.append(f"`{name}`: {args_s}")
+                    display = "\n\n".join(p for p in parts if p) or display
+                card.done(display)
                 on_final(raw)
                 done_event.set()
             elif ctx.get('summary'):
@@ -583,6 +691,10 @@ def _make_task_hook(card, done_event, on_final):
 
 def handle_message(data):
     event, message, sender = data.event, data.event.message, data.event.sender
+    msg_id = getattr(message, "message_id", "") or ""
+    if msg_id and not _message_claim_once(msg_id):
+        print(f"[INFO] duplicate Feishu message ignored: {msg_id}")
+        return
     open_id = sender.sender_id.open_id
     chat_id = message.chat_id
     if not PUBLIC_ACCESS and open_id not in ALLOWED_USERS:
@@ -611,9 +723,27 @@ def handle_message(data):
         if not hasattr(agent, '_turn_end_hooks'): agent._turn_end_hooks = {}
         agent._turn_end_hooks[hook_key] = _make_task_hook(card, done_event, on_final)
         try:
-            agent.put_task(user_input, source="feishu", images=image_paths)
+            # Keep the display_queue as the authoritative completion channel.
+            # The turn_end_hook updates the rich card per turn, but startup/cold-run
+            # races or hook errors must not leave Feishu waiting forever.
+            dq = agent.put_task(user_input, source="feishu", images=image_paths)
             start = time.time()
-            while not done_event.wait(timeout=3):
+            while True:
+                # Drain any agent output first; this is independent of desktop/Streamlit UI.
+                try:
+                    while True:
+                        item = dq.get_nowait()
+                        if 'done' in item:
+                            raw = item.get('done', '')
+                            if not done_event.is_set():
+                                card.done(_display_text(raw))
+                                on_final(raw)
+                                done_event.set()
+                            break
+                except Q.Empty:
+                    pass
+                if done_event.is_set():
+                    break
                 if not user_tasks.get(open_id, {}).get("running", True):
                     agent.abort()
                     card.fail("已停止")
@@ -622,6 +752,7 @@ def handle_message(data):
                     agent.abort()
                     card.fail("任务超时")
                     break
+                done_event.wait(timeout=0.5)
         except Exception as e:
             traceback.print_exc()
             card.fail(f"错误: {e}")

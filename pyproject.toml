@@ -13,6 +13,7 @@ dependencies = [
     "beautifulsoup4>=4.12",
     "bottle>=0.12",
     "simple-websocket-server>=0.4",
+    "aiohttp>=3.9",
 ]
 
 [project.optional-dependencies]

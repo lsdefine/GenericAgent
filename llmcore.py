@@ -297,12 +297,14 @@ def _record_usage(usage, api_mode):
     if not usage: return
     if api_mode == 'responses':
         cached = (usage.get("input_tokens_details") or {}).get("cached_tokens", 0)
-        inp = usage.get("input_tokens", 0)
+        inp = usage.get("input_tokens", 0); out = usage.get("output_tokens", 0)
         print(f"[Cache] input={inp} cached={cached}")
+        if out: print(f"[Output] tokens={out}")
     elif api_mode == 'chat_completions':
         cached = (usage.get("prompt_tokens_details") or {}).get("cached_tokens", 0)
-        inp = usage.get("prompt_tokens", 0)
+        inp = usage.get("prompt_tokens", 0); out = usage.get("completion_tokens", 0)
         print(f"[Cache] input={inp} cached={cached}")
+        if out: print(f"[Output] tokens={out}")
     elif api_mode == 'messages':
         ci, cr, inp = usage.get("cache_creation_input_tokens", 0), usage.get("cache_read_input_tokens", 0), usage.get("input_tokens", 0)
         print(f"[Cache] input={inp} creation={ci} read={cr}")
@@ -910,7 +912,6 @@ class MixinSession:
         for s in self._sessions: s.max_retries = 0
         self._orig_raw_asks = [s.raw_ask for s in self._sessions]
         self._sessions[0].raw_ask = self._raw_ask
-        self.model = getattr(self._sessions[0], 'model', None)
         self._cur_idx, self._switched_at = 0, 0.0
     def __getattr__(self, name): return getattr(self._sessions[0], name)
     _BROADCAST_ATTRS = frozenset({'system', 'tools', 'temperature', 'max_tokens', 'reasoning_effort', 'history'})
@@ -922,6 +923,8 @@ class MixinSession:
         else: object.__setattr__(self, name, value)
     @property
     def primary(self): return self._sessions[0]
+    @property
+    def model(self): return getattr(self._sessions[self._cur_idx], 'model', None)
     def _pick(self):
         if self._cur_idx and time.time() - self._switched_at > self._spring_sec: self._cur_idx = 0
         return self._cur_idx

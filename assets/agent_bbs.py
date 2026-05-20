@@ -19,6 +19,9 @@ BOARDS, BOARDS_MTIME_NS, BOARDS_LOCK = DEFAULT_BOARDS, None, Lock()
 def load_boards_if_changed():
     global BOARDS, BOARDS_MTIME_NS
     with BOARDS_LOCK:
+        if BOARDS_FILE is None:
+            if BOARDS_MTIME_NS is None: init_db(); BOARDS_MTIME_NS = 0
+            return BOARDS
         if not os.path.exists(BOARDS_FILE):
             json.dump(DEFAULT_BOARDS, open(BOARDS_FILE, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
         mtime = os.stat(BOARDS_FILE).st_mtime_ns
@@ -32,7 +35,6 @@ def load_boards_if_changed():
         return BOARDS
 
 UPLOAD_DIR = "bbs_files"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 app = FastAPI(title="Agent BBS", docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -140,7 +142,9 @@ def verify_token(token, db_path):
     return row["name"]
 
 @app.on_event("startup")
-def startup(): load_boards_if_changed()
+def startup():
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    load_boards_if_changed()
 
 @app.post("/register")
 def register(request: Request, name=Body(..., embed=True)):
@@ -211,5 +215,9 @@ def download_file(rand_id: str, filename: str):
     return FileResponse(path, filename=filename)
 
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=58800)
+    import argparse, uvicorn
+    p = argparse.ArgumentParser(); p.add_argument("--cwd"); p.add_argument("--port", type=int, default=58800); p.add_argument("--key")
+    a = p.parse_args();
+    if a.cwd: os.chdir(a.cwd)
+    if a.key: BOARDS_FILE = None; BOARDS.clear(); BOARDS[a.key] = {"name": "default", "db": f"{a.key}.db"}
+    uvicorn.run(app, host="0.0.0.0", port=a.port)

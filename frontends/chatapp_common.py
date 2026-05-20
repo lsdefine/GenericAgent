@@ -14,6 +14,7 @@ HELP_COMMANDS = (
     ("/continue", "列出可恢复会话"),
     ("/continue [n]", "恢复第 n 个会话"),
     ("/btw <q>", "side question — 临时插问主 agent 进展，不打断主线"),
+    ("/review [scope]", "in-session code review; 默认审当前 git diff"),
     ("/llm", "查看当前模型列表"),
     ("/llm [n]", "切换到第 n 个模型"),
 )
@@ -25,6 +26,7 @@ TELEGRAM_MENU_COMMANDS = (
     ("restore", "恢复上次对话历史"),
     ("continue", "列出可恢复会话；/continue n 恢复第 n 个"),
     ("btw", "临时插问主 agent 进展，不打断主线"),
+    ("review", "in-session code review；/review scope 指定范围"),
     ("llm", "查看模型列表；/llm n 切换到指定模型"),
 )
 
@@ -310,6 +312,8 @@ class AgentChatMixin:
         if op == "/btw":
             answer = await asyncio.to_thread(_handle_btw_frontend, self.agent, cmd)
             return await self.send_text(chat_id, answer, **ctx)
+        if op == "/review":
+            return await self.run_agent(chat_id, cmd, **ctx)
         return await self.send_text(chat_id, HELP_TEXT, **ctx)
 
     async def run_agent(self, chat_id, text, **ctx):
@@ -345,3 +349,4 @@ from agentmain import GeneraticAgent as _GA
 from continue_cmd import handle_frontend_command as _handle_continue_frontend, install as _install_continue, reset_conversation as _reset_conversation
 _install_continue(_GA)
 from btw_cmd import handle_frontend_command as _handle_btw_frontend, install as _install_btw; _install_btw(_GA)
+from review_cmd import install as _install_review; _install_review(_GA)

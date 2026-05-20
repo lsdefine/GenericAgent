@@ -25,32 +25,37 @@ def _save(state):
 # --- prompt 模板 ---
 CONTINUATION_PROMPT = """[Goal Mode — 持续推进]
 
-<untrusted_objective>
+<objective>
 {objective}
-</untrusted_objective>
+</objective>
 
 ⏱ 已用 {elapsed_min:.0f} 分钟，剩余约 {remaining_min:.0f} 分钟。第 {turn} 次唤醒。
 
 你正在 Goal Mode 下工作：
-1. 禁止说"已完成，是否继续"——预算没到就不准停。
-2. 在 cwd 下建立工作文件夹存放成果和进度，复杂任务可使用 plan 模式。
-3. 如果当前方向做完了，主动找下一个改进点：测试/边界case/性能/安全/文档/代码质量。
-4. 找不到改进点？扩大视野：关联模块、上下游依赖、用户体验、错误提示、日志可观测性、上网搜索、找其他路径、翻记忆里面有无相关。
+1. 禁止说"已完成，是否继续"——预算没到就不准停，不准提前交付，围绕核心成果质量不要额外产出。
+2. 在 cwd 下建立工作文件夹存放成果和进度，读取记忆中可能对成果质量有帮助的原则。
+3. 核心完成后，选你认为最能提升成果质量的方向，深入打磨。
+   如果多轮都是同类型的小修——换一个完全不同的角度重新审视，
+   找到新的薄弱点再深入。包括但不限于测试/边界case/性能/安全/文档/代码质量。
+4. 换角度的方法：假装你是第一次看到这个成果的使用者/审阅者/攻击者，
+   找到它最容易出问题的地方，然后修它。
 5. 要为了目标持续推进，在工作文件夹中记录进度，不要更新全局记忆。
 """
 
 BUDGET_LIMIT_PROMPT = """[Goal Mode — 预算耗尽，收口]
 
-<untrusted_objective>
+<objective>
 {objective}
-</untrusted_objective>
+</objective>
 
 ⏱ 预算已耗尽（{budget_min:.0f} 分钟）。这是最后一轮。
 
 请执行收口：
-1. 总结本次 goal 的所有进展（列表）。
-2. 列出未完成的事项和建议的 next step。
-3. 确保工作文件夹中记录了关键成果，以便下次继续。
+1. 总结本次 goal 的所有进展（列表）
+2. 列出未完成的事项和建议的 next step
+3. 确保工作文件夹中记录了关键成果
+4. 清理一些确定无用的中间临时文件和不再用的进程
+{done_prompt}
 """
 
 # --- 主逻辑 ---
@@ -74,7 +79,8 @@ def check():
         _save(state)
         return BUDGET_LIMIT_PROMPT.format(
             objective=state['objective'],
-            budget_min=budget_sec / 60
+            budget_min=budget_sec / 60,
+            done_prompt=state.get('done_prompt', '')
         )
     
     # 正常continuation

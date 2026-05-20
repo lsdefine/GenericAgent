@@ -1,0 +1,15 @@
+{
+  "identifier": "default",
+  "description": "Default capabilities for all windows",
+  "windows": ["main", "setup"],
+  "permissions": [
+    "core:default",
+    "core:window:default",
+    "core:window:allow-show",
+    "core:window:allow-hide",
+    "core:window:allow-set-focus",
+    "core:window:allow-close",
+    "core:window:allow-get-all-windows",
+    "core:webview:default"
+  ]
+}

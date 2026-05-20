@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>GenericAgent — Setup</title>
+<style>
+:root{--bg:#fff;--text:#0a0a0a;--muted:#6b6b6b;--border:#e8e8e8;--accent:#0a0a0a;--accent-text:#fff;--radius:10px;--font:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Helvetica,Arial,sans-serif}
+@media(prefers-color-scheme:dark){:root{--bg:#1a1a1a;--text:#ededed;--muted:#a0a0a0;--border:#2a2a2a;--accent:#ededed;--accent-text:#0a0a0a}}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;font-family:var(--font);background:var(--bg);color:var(--text);display:flex;align-items:center;justify-content:center}
+.card{max-width:480px;width:90%;padding:2.5rem;border:1px solid var(--border);border-radius:var(--radius);text-align:center}
+h1{font-size:1.4rem;margin:0 0 .5rem}
+p{color:var(--muted);font-size:.9rem;margin:.4rem 0;line-height:1.5}
+.input-row{display:flex;gap:8px;margin-top:1.2rem}
+input[type=text]{flex:1;padding:10px 12px;border:1px solid var(--border);border-radius:6px;font-size:.9rem;background:var(--bg);color:var(--text);outline:none}
+input[type=text]:focus{border-color:var(--accent)}
+button{padding:10px 18px;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;background:var(--accent);color:var(--accent-text);font-weight:500}
+button:hover{opacity:.85}
+button:disabled{opacity:.4;cursor:not-allowed}
+.field-label{display:block;text-align:left;font-size:.8rem;font-weight:500;margin-top:1rem;margin-bottom:.3rem;color:var(--text)}
+#status{margin-top:1rem;font-size:.85rem;min-height:1.2em}
+.err{color:#dc2626}.ok{color:#16a34a}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>⚙️ Setup Required</h1>
+  <p>The backend could not start. Please configure the paths below.</p>
+  <p>后端启动失败，请配置以下路径。</p>
+
+  <label class="field-label">Python interpreter 解释器路径</label>
+  <div class="input-row">
+    <input id="pypath" type="text" placeholder="python / path to interpreter" spellcheck="false">
+  </div>
+  <p style="color:var(--muted);font-size:.75rem;margin-top:.3rem">
+    e.g. <code>C:/Python312/python.exe</code> / <code>~/miniconda3/envs/myenv/bin/python</code>
+  </p>
+
+  <label class="field-label">Project directory 项目目录</label>
+  <div class="input-row">
+    <input id="projdir" type="text" placeholder="path to GenericAgent folder" spellcheck="false">
+  </div>
+  <p style="color:var(--muted);font-size:.75rem;margin-top:.3rem">
+    The folder containing <code>frontends/desktop_bridge.py</code>
+  </p>
+
+  <button id="start-btn" onclick="doStart()" style="margin-top:1.2rem;width:100%">Start 启动</button>
+  <div id="status"></div>
+</div>
+<script>
+const {invoke} = window.__TAURI__.core;
+const {getCurrentWindow, Window} = window.__TAURI__.window;
+const statusEl = document.getElementById('status');
+const btn = document.getElementById('start-btn');
+const pyInput = document.getElementById('pypath');
+const dirInput = document.getElementById('projdir');
+
+// Pre-fill from Rust config discovery
+invoke('get_config').then(([py, dir]) => {
+  if (py) pyInput.value = py;
+  if (dir) dirInput.value = dir;
+}).catch(()=>{});
+
+async function doStart() {
+  const pythonPath = pyInput.value.trim();
+  const projectDir = dirInput.value.trim();
+  if (!pythonPath) { statusEl.className='err'; statusEl.textContent='Please enter Python path / 请输入 Python 路径'; return; }
+  if (!projectDir) { statusEl.className='err'; statusEl.textContent='Please enter project directory / 请输入项目目录'; return; }
+  btn.disabled = true;
+  statusEl.className=''; statusEl.textContent='Starting bridge… 正在启动…';
+  try {
+    await invoke('start_bridge_with_config', {pythonPath, projectDir});
+    statusEl.className='ok'; statusEl.textContent='Connected! 已连接，正在打开主窗口…';
+    // Show main window and hide setup
+    const mainWin = await Window.getByLabel('main');
+    if (mainWin) {
+      await mainWin.show();
+      await mainWin.setFocus();
+    }
+    const setupWin = getCurrentWindow();
+    await setupWin.hide();
+  } catch(e) {
+    statusEl.className='err'; statusEl.textContent='Failed: '+e;
+    btn.disabled = false;
+  }
+}
+pyInput.addEventListener('keydown', e=>{ if(e.key==='Enter') dirInput.focus(); });
+dirInput.addEventListener('keydown', e=>{ if(e.key==='Enter') doStart(); });
+</script>
+</body>
+</html>

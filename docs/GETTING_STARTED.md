@@ -268,4 +268,4 @@ GenericAgent 不预设技能，而是**靠使用进化**。每完成一个新任
 
 > Agent 会自动 pull 最新代码并解读 commit log，告诉你新增了什么能力。
 
-> 更多细节请参阅 [README.md](README.md) 或 [详细版图文教程](https://my.feishu.cn/wiki/CGrDw0T76iNFuskmwxdcWrpinPb)。
+> 更多细节请参阅 [README.md](../README.md) 或 [详细版图文教程](https://my.feishu.cn/wiki/CGrDw0T76iNFuskmwxdcWrpinPb)。

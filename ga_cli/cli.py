@@ -119,13 +119,30 @@ def cmd_list():
 
 def cmd_status():
     """检查进程状态"""
-    import psutil
-    running = [p for p in psutil.process_iter(['pid', 'name', 'cmdline'])
-               if p.info['cmdline'] and any('agentmain' in c for c in p.info['cmdline'])]
+    try:
+        import psutil
+    except ImportError:
+        print("⚠️ psutil 未安装，无法检查运行状态")
+        return
+
+    running = []
+    try:
+        for p in psutil.process_iter(['pid', 'name', 'cmdline']):
+            try:
+                cmdline = p.info.get('cmdline') or []
+                if any('agentmain' in c for c in cmdline):
+                    running.append(p)
+            except (PermissionError, psutil.Error):
+                continue
+    except (PermissionError, psutil.Error) as e:
+        print(f"⚠️ 无法枚举进程: {e}")
+        return
+
     if running:
         print(f"🟢 运行中: {len(running)} 个进程")
         for p in running:
-            print(f"   PID {p.info['pid']} — {' '.join(p.info['cmdline'][:3])}")
+            cmdline = p.info.get('cmdline') or []
+            print(f"   PID {p.info['pid']} — {' '.join(cmdline[:3])}")
     else:
         print("⚫ GenericAgent 进程未运行")
 

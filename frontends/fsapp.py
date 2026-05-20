@@ -655,7 +655,30 @@ def _make_task_hook(card, done_event, on_final):
             if ctx.get('exit_reason'):
                 resp = ctx.get('response')
                 raw = resp.content if hasattr(resp, 'content') else str(resp)
-                card.done(_display_text(raw))
+                display = _display_text(raw)
+                if display.startswith("（无文本输出）"):
+                    # fallback: show thinking + tool_calls when content is empty after cleaning
+                    parts = []
+                    thinking = getattr(resp, 'thinking', '') or ''
+                    if thinking:
+                        parts.append(f"**[Thinking]**\n{thinking.strip()}")
+                    tool_calls = ctx.get('tool_calls') or []
+                    for tc in tool_calls:
+                        name = tc.get('tool_name') or tc.get('name', '?')
+                        args = tc.get('args') or tc.get('arguments') or {}
+                        if name == 'ask_user':
+                            q = args.get('question', '')
+                            candidates = args.get('candidates') or []
+                            if candidates:
+                                q += '\n' + '\n'.join(f'- {c}' for c in candidates)
+                            parts.append(q)
+                        else:
+                            args_s = json.dumps(args, ensure_ascii=False)
+                            if len(args_s) > 200:
+                                args_s = args_s[:200] + '...'
+                            parts.append(f"`{name}`: {args_s}")
+                    display = "\n\n".join(p for p in parts if p) or display
+                card.done(display)
                 on_final(raw)
                 done_event.set()
             elif ctx.get('summary'):

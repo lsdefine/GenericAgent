@@ -35,7 +35,6 @@ def load_boards_if_changed():
         return BOARDS
 
 UPLOAD_DIR = "bbs_files"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 app = FastAPI(title="Agent BBS", docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -143,7 +142,9 @@ def verify_token(token, db_path):
     return row["name"]
 
 @app.on_event("startup")
-def startup(): load_boards_if_changed()
+def startup():
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    load_boards_if_changed()
 
 @app.post("/register")
 def register(request: Request, name=Body(..., embed=True)):

@@ -290,6 +290,40 @@ class HardBreakMarkdown(Markdown):
                 HardBreakMarkdown._soft_to_hard(tok.children)
 
 
+# Rich's Markdown.TableElement adds columns without specifying `overflow`,
+# so Rich Table falls back to "ellipsis" — long cell contents get truncated
+# with `…` in narrow terminals. Patch to use "fold" instead so cells wrap
+# across multiple lines and full content stays visible.
+def _patch_markdown_table_overflow():
+    import rich.markdown as _rmd
+    from rich.table import Table as _RichTable
+    from rich import box as _rich_box
+
+    def _table_render(self, console, options):
+        table = _RichTable(
+            box=_rich_box.SIMPLE,
+            pad_edge=False,
+            style="markdown.table.border",
+            show_edge=True,
+            collapse_padding=True,
+        )
+        if self.header is not None and self.header.row is not None:
+            for column in self.header.row.cells:
+                heading = column.content.copy()
+                heading.stylize("markdown.table.header")
+                table.add_column(heading, overflow="fold")
+        if self.body is not None:
+            for row in self.body.rows:
+                row_content = [element.content for element in row.cells]
+                table.add_row(*row_content)
+        yield table
+
+    _rmd.TableElement.__rich_console__ = _table_render
+
+
+_patch_markdown_table_overflow()
+
+
 # Rich/Textual wrap treats a continuous CJK run as one indivisible word and
 # bumps it whole to the next line when it doesn't fit the remaining space,
 # leaving the line tail padded and producing wraps like "AI ↩ 助手...". We patch
@@ -465,6 +499,19 @@ class _MdRender:
 _CENTER_LEAD_MIN = 4
 
 
+def _strip_quote_deco(s: str) -> tuple:
+    """Rich Markdown re-emits the `▌ ` blockquote marker on every wrapped visual
+    line in narrow, but the wide single-line render contains it only once at the
+    block start. Treat the re-prefix on continuation lines as visual indent that
+    doesn't consume wide chars. Returns (content_without_deco, deco_width)."""
+    if not s.startswith("▌"):  # `▌`
+        return s, 0
+    rest = s[1:]
+    if rest.startswith(" "):
+        return rest[1:], 2
+    return rest, 1
+
+
 def _align_md_renders(narrow_raw: str, wide_raw: str):
     """Walk narrow + wide line-by-line; return (source, line_starts, line_indents, line_lengths)."""
     narrow = [l.rstrip() for l in narrow_raw.split("\n")]
@@ -505,10 +552,17 @@ def _align_md_renders(narrow_raw: str, wide_raw: str):
                 is_last = (w_idx == W - 1)
                 while j < K and (accumulated < target or is_last):
                     nt = run_lines[j]
-                    content = nt.lstrip() if j > g_start - run_start else nt
+                    if j > g_start - run_start:
+                        content, _ = _strip_quote_deco(nt.lstrip())
+                    else:
+                        content = nt
                     accumulated += len(content)
                     j += 1
-                    if not is_last and accumulated >= target:
+                    # Each wrap boundary eats one space from the wide line, so
+                    # the narrow side's accumulated content runs (consumed - 1)
+                    # chars short of target at the natural wrap point.
+                    consumed = j - (g_start - run_start)
+                    if not is_last and accumulated + max(0, consumed - 1) >= target:
                         break
                 wrap_groups.append(((g_start, run_start + j), w_line))
 
@@ -549,7 +603,14 @@ def _align_md_renders(narrow_raw: str, wide_raw: str):
         nt0 = narrow[g_start]
         nt0_lead = len(nt0) - len(nt0.lstrip())
         wide_lead = len(wide_line) - len(wide_line.lstrip())
-        is_centered = (single_line and wide_lead > _CENTER_LEAD_MIN and nt0_lead > 0)
+        # Rich centers H1 against the available width, so wide_lead grows with the
+        # console width (≈ 5000 at width=10000) while nt0_lead reflects narrow's
+        # half-padding. Code lines, list/blockquote markers, etc. have wide_lead
+        # ≈ nt0_lead — without the >=2× guard the heuristic would strip indent
+        # from any code line with ≥5 leading spaces (e.g. `    print("hi")`),
+        # causing the visible selection and the copied text to disagree.
+        is_centered = (single_line and wide_lead > _CENTER_LEAD_MIN and nt0_lead > 0
+                       and wide_lead >= 2 * nt0_lead)
 
         if last_was_content:
             source_parts.append("\n")
@@ -574,6 +635,8 @@ def _align_md_renders(narrow_raw: str, wide_raw: str):
                 else:
                     indent = len(nt) - len(nt.lstrip())
                     content = nt.lstrip()
+                    content, deco = _strip_quote_deco(content)
+                    indent += deco
                     while pointer < len(wide_line) and wide_line[pointer].isspace():
                         pointer += 1
                 line_starts[k] = block_start + pointer
@@ -1016,6 +1079,7 @@ COMMANDS = [
     ("/cost",     "[all]",            "显示当前会话 token 用量（all = 所有会话）"),
     ("/export",   "clip|<file>|all",  "导出最后回复"),
     ("/restore",  "",                 "恢复上次模型响应日志"),
+    ("/reload-keys", "",              "重新加载 mykey.py（不重启）"),
     ("/quit",     "",                 "退出"),
 ]
 
@@ -1137,6 +1201,26 @@ class FoldHeader(SelectableStatic):
         super().__init__(body, **kwargs)
         self.msg = msg
         self.fold_idx = fold_idx
+
+
+# User-message display elision: pastes get expanded to full content before send
+# (agent needs the whole thing) but the user-visible message echo collapses the
+# middle so the chat log doesn't get buried under a 1000-line dump.
+_USER_DISPLAY_HEAD_LINES = 10
+_USER_DISPLAY_TAIL_LINES = 5
+_USER_DISPLAY_MAX_LINES = _USER_DISPLAY_HEAD_LINES + _USER_DISPLAY_TAIL_LINES + 4
+
+
+def _elide_user_display(text: str) -> str:
+    """Collapse middle of long user messages: keep head + tail, summarize gap."""
+    lines = text.split("\n")
+    n = len(lines)
+    if n <= _USER_DISPLAY_MAX_LINES:
+        return text
+    omitted = n - _USER_DISPLAY_HEAD_LINES - _USER_DISPLAY_TAIL_LINES
+    head = lines[:_USER_DISPLAY_HEAD_LINES]
+    tail = lines[-_USER_DISPLAY_TAIL_LINES:]
+    return "\n".join(head + [f"⋯ 省略 {omitted} 行 ⋯"] + tail)
 
 
 def _read_clipboard_text() -> str:
@@ -1881,6 +1965,7 @@ class GenericAgentTUI(App[None]):
             "stop": self._cmd_stop, "llm": self._cmd_llm, "export": self._cmd_export,
             "restore": self._cmd_restore, "btw": self._cmd_btw, "review": self._cmd_review,
             "continue": self._cmd_continue, "cost": self._cmd_cost,
+            "reload-keys": self._cmd_reload_keys,
             "quit": self._cmd_quit, "exit": self._cmd_quit,
         }
         try:
@@ -2083,6 +2168,20 @@ class GenericAgentTUI(App[None]):
         i = ids.index(self.current_id)
         self.current_id = ids[(i + 1) % len(ids)]
         self._refresh_all()
+
+    def copy_to_clipboard(self, text: str) -> None:
+        """Override Textual's OSC 52 clipboard (broken on macOS Terminal.app).
+        Use pbcopy on macOS, fall back to OSC 52 on other platforms."""
+        import sys, subprocess as _sp
+        if sys.platform == "darwin":
+            try:
+                _sp.Popen(["pbcopy"], stdin=_sp.PIPE, stdout=_sp.DEVNULL, stderr=_sp.DEVNULL).communicate(text.encode("utf-8"))
+                self._clipboard = text
+                return
+            except Exception:
+                pass
+        # Non-macOS or pbcopy failed: fall back to Textual default (OSC 52)
+        super().copy_to_clipboard(text)
 
     def action_handle_ctrl_c(self) -> None:
         # Two-stage quit: when no task is running, first press clears input and arms;
@@ -2343,6 +2442,19 @@ class GenericAgentTUI(App[None]):
         if palette.highlighted is not None:
             palette.action_select()
 
+    async def _on_paste(self, event: events.Paste) -> None:
+        # Windows Terminal yanks window focus when its large-paste-warning dialog
+        # pops, and the focus doesn't return to any specific widget after confirm.
+        # Without a focused widget Textual routes the Paste event to the App
+        # bubble — InputArea never sees it. Forward it back to the input box.
+        try:
+            inp = self.query_one("#input", InputArea)
+        except Exception:
+            return
+        inp.focus()
+        await inp._on_paste(event)
+        event.stop(); event.prevent_default()
+
     def on_click(self, event: events.Click) -> None:
         w = event.widget
         if isinstance(w, FoldHeader):
@@ -2420,6 +2532,17 @@ class GenericAgentTUI(App[None]):
             container = self.query_one("#messages", VerticalScroll)
         except Exception:
             return
+        # Preserve scroll position across remount. "Near the bottom" snaps to
+        # bottom afterwards so streaming output stays visible; mid-scroll keeps
+        # the same scroll_y so resize/sidebar-toggle don't yank the user away
+        # from what they're reading. 2-line tolerance covers rounding.
+        try:
+            was_at_bottom = (container.scroll_y + container.size.height
+                             >= container.virtual_size.height - 2)
+            prev_scroll_y = container.scroll_y
+        except Exception:
+            was_at_bottom = True
+            prev_scroll_y = 0
         container.remove_children()
         for m in self.current.messages:
             m._role_widget = None
@@ -2430,7 +2553,10 @@ class GenericAgentTUI(App[None]):
             m._spinner_widget = None
         for m in self.current.messages:
             self._mount_message(container, m)
-        container.scroll_end(animate=False)
+        if was_at_bottom:
+            container.scroll_end(animate=False)
+        else:
+            container.scroll_to(y=prev_scroll_y, animate=False)
 
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
         if event.text_area.id != "input":
@@ -2470,6 +2596,16 @@ class GenericAgentTUI(App[None]):
         self._resize_input(inp)
         if not text:
             return
+        # Pick up mykey.py edits without restart: load_llm_sessions() is a
+        # cheap mtime check when nothing changed; on change it rebuilds the
+        # llm clients in place, migrating history. Done per submit so a user
+        # who tweaks mykey then sends a message gets the new config.
+        try:
+            sess = self.sessions.get(self.current_id)
+            if sess is not None and hasattr(sess, "agent"):
+                sess.agent.load_llm_sessions()
+        except Exception:
+            pass
         if text.startswith("/"):
             parts = text.split(maxsplit=1)
             cmd = parts[0][1:].lower()
@@ -2832,6 +2968,30 @@ class GenericAgentTUI(App[None]):
             self._system(f"Stop failed: {e}")
         self._refresh_all()
 
+    def _cmd_reload_keys(self, args, raw):
+        # Force rebuild of every session's llmclients from a fresh mykey.py.
+        # reload_mykeys() uses a module-level mtime cache, so the first agent
+        # to call it consumes the "changed" signal and subsequent agents see
+        # changed=False (and skip rebuild). Invalidate the cache before each
+        # agent so every session picks up the new config.
+        try:
+            import llmcore
+        except Exception as e:
+            self._system(f"❌ 无法 import llmcore: {e}"); return
+        n_ok = n_fail = 0
+        for sess in self.sessions.values():
+            agent = getattr(sess, "agent", None)
+            if agent is None:
+                continue
+            try:
+                llmcore._mykey_mtime = None
+                agent.load_llm_sessions()
+                n_ok += 1
+            except Exception:
+                n_fail += 1
+        msg = f"🔑 已重载 mykey.py（{n_ok} 个会话）" + (f"，{n_fail} 个失败" if n_fail else "")
+        self._system(msg)
+
     def _cmd_llm(self, args, raw):
         sess = self.current
         if args:
@@ -2959,20 +3119,17 @@ class GenericAgentTUI(App[None]):
         sessions = continue_list(exclude_pid=os.getpid())
         if not sessions:
             self._system("❌ 没有可恢复的历史会话"); return
-        LIMIT = 20
         choices = []
         try:
             import session_names as _sn
         except Exception:
             _sn = None
-        for path, mtime, first, n in sessions[:LIMIT]:
+        for path, mtime, first, n in sessions:
             preview = (first or "（无法预览）").replace("\n", " ").strip()[:50]
             nm = _sn.name_for(path) if _sn else ""
             tag = f"{nm} · " if nm else ""
             choices.append((f"{_short_age(mtime)} · {tag}{n}轮 · {preview}", path))
-        head = "选择要恢复的会话 (↑/↓ 移动，→/Enter 确认，Esc 取消)"
-        if len(sessions) > LIMIT:
-            head += f"  [仅显示最近 {LIMIT}/{len(sessions)}]"
+        head = f"选择要恢复的会话 ({len(sessions)} 条 · ↑/↓ 移动，→/Enter 确认，Esc 取消)"
         msg = ChatMessage(
             role="system", content=head, kind="choice", choices=choices,
             on_select=lambda v: self._do_continue_restore(v),
@@ -3934,11 +4091,13 @@ class GenericAgentTUI(App[None]):
             else:
                 content = _TURN_MARKER_RE.sub("", seg.get("content", ""), count=1)
                 # While streaming, the tail text segment grows every chunk — Markdown
-                # parsing it per chunk is the streaming-lag root cause. Render as plain
-                # Text during streaming; _stream_update_assistant swaps in the real
-                # Markdown render once m.done flips True.
+                # parsing it per chunk is the streaming-lag root cause. Render via
+                # Text.from_ansi during streaming (O(n) scan, no reflow) so SGR codes
+                # in the chunk become styles instead of literal `[31m` glyphs;
+                # _stream_update_assistant swaps in the real Markdown render once
+                # m.done flips True.
                 if i == last_i and not m.done:
-                    out.append(("text", Text(content, style=C_FG), None))
+                    out.append(("text", Text.from_ansi(content, style=C_FG), None))
                 else:
                     out.append(("text", cached_render(content), None))
         if m.done:
@@ -4148,7 +4307,7 @@ class GenericAgentTUI(App[None]):
             container.mount(m._body_widget)
             return
         if m.role == "user":
-            body = Text(); body.append("> ", style=C_DIM); body.append(m.content, style=C_FG)
+            body = Text(); body.append("> ", style=C_DIM); body.append(_elide_user_display(m.content), style=C_FG)
             for path in m.image_paths:
                 body.append(f"\n📎 {path}", style=C_MUTED)
             m._body_widget = SelectableStatic(body, classes="msg")
@@ -4238,9 +4397,13 @@ class GenericAgentTUI(App[None]):
             last_seg = fold_turns(cleaned)[-1]
             last_text = _TURN_MARKER_RE.sub("", last_seg.get("content", ""), count=1)
             last_widget = m._segment_widgets[-1]
-            # During streaming use plain Text — Markdown parse per chunk is O(chunks ×
-            # turn_len). Only on the terminal `done` chunk do we render Markdown once
-            # and swap, restoring code blocks / lists / inline styling and clean-copy.
+            # During streaming use Text.from_ansi — Markdown parse per chunk is
+            # O(chunks × turn_len), but raw Text() would render upstream SGR codes
+            # as literal `[31m` glyphs (visible as ANSI garbage until done flips
+            # True or a resize forces remount). from_ansi is O(n) and resolves
+            # the codes into Rich styles. On the terminal `done` chunk we render
+            # Markdown once and swap, restoring code blocks / lists / inline
+            # styling and clean-copy.
             if m.done:
                 rendered = self._render_md(last_text, width)
                 if isinstance(rendered, _MdRender):
@@ -4250,7 +4413,7 @@ class GenericAgentTUI(App[None]):
                     last_widget.update(rendered)
             else:
                 last_widget._ga_render = None
-                last_widget.update(Text(last_text, style=C_FG))
+                last_widget.update(Text.from_ansi(last_text, style=C_FG))
             if m.done and m._spinner_widget is not None:
                 # Convert the live spinner into the post-turn ⠿ card in place.
                 self._capture_done_summary(m)

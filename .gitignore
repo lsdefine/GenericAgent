@@ -78,6 +78,9 @@ memory/L4_raw_sessions/*
 # Goal Hive Mode SOP
 !memory/goal_hive_sop.md
 
+# Morphling SOP
+!memory/morphling_sop.md
+
 # Skill Search SOP
 !memory/skill_search/
 !memory/skill_search/**

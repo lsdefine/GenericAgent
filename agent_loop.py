@@ -1,6 +1,7 @@
 import json, re, os
 from dataclasses import dataclass
 from typing import Any, Optional
+import hooks
 @dataclass
 class StepOutcome:
     data: Any
@@ -19,9 +20,11 @@ class BaseHandler:
         method_name = f"do_{tool_name}"
         if hasattr(self, method_name):
             args['_index'] = index; args['_tool_num'] = tool_num
+            hooks.trigger('tool_before', tool_name=tool_name, args=args, response=response, handler=self)
             prer = yield from try_call_generator(self.tool_before_callback, tool_name, args, response)
             ret = yield from try_call_generator(getattr(self, method_name), args, response)
             _ = yield from try_call_generator(self.tool_after_callback, tool_name, args, response, ret)
+            hooks.trigger('tool_after', tool_name=tool_name, args=args, response=response, ret=ret, handler=self)
             return ret
         elif tool_name == 'bad_json': return StepOutcome(None, next_prompt=args.get('msg', 'bad_json'), should_exit=False)
         else:
@@ -46,6 +49,7 @@ def agent_runner_loop(client, system_prompt, user_input, handler, tools_schema,
         {"role": "user", "content": initial_user_content if initial_user_content is not None else user_input}
     ]
     turn = 0;  handler.max_turns = max_turns
+    hooks.trigger('agent_before', client=client, handler=handler, user_input=user_input, system_prompt=system_prompt)
     while turn < handler.max_turns:
         turn += 1; turnstr = f'LLM Running (Turn {turn}) ...'
         if handler.parent.task_dir: turnstr = f'Turn {turn} ...'
@@ -53,6 +57,8 @@ def agent_runner_loop(client, system_prompt, user_input, handler, tools_schema,
         if yield_info: yield {'turn': turn}
         yield f"\n\n{turnstr}\n\n"
         if turn%10 == 0: client.last_tools = ''  # 每10轮重置一次工具描述
+        hooks.trigger('turn_before', turn=turn, messages=messages, handler=handler, user_input=user_input)
+        hooks.trigger('llm_before', messages=messages, tools=tools_schema, turn=turn, handler=handler)
         response_gen = client.chat(messages=messages, tools=tools_schema)
         if verbose:
             response = yield from response_gen
@@ -61,6 +67,7 @@ def agent_runner_loop(client, system_prompt, user_input, handler, tools_schema,
             response = exhaust(response_gen)
             cleaned = _clean_content(response.content)
             if cleaned: yield cleaned + '\n'
+        hooks.trigger('llm_after', response=response, messages=messages, turn=turn, handler=handler)
 
         if not response.tool_calls: tool_calls = [{'tool_name': 'no_tool', 'args': {}}]
         else: tool_calls = [{'tool_name': tc.function.name, 'args': json.loads(tc.function.arguments), 'id': tc.id}
@@ -95,9 +102,11 @@ def agent_runner_loop(client, system_prompt, user_input, handler, tools_schema,
         if len(next_prompts) == 0 or exit_reason:
             if len(handler._done_hooks) == 0 or exit_reason.get('result', '') == 'EXITED': break
             next_prompts.add(handler._done_hooks.pop(0))
+        hooks.trigger('turn_after', response=response, tool_calls=tool_calls, tool_results=tool_results, turn=turn, next_prompt=next_prompt, exit_reason=exit_reason, handler=handler)
         next_prompt = handler.turn_end_callback(response, tool_calls, tool_results, turn, '\n'.join(next_prompts), exit_reason)
         messages = [{"role": "user", "content": next_prompt, "tool_results": tool_results}]   # just new message, history is kept in *Session
     if exit_reason: handler.turn_end_callback(response, tool_calls, tool_results, turn, '', exit_reason)
+    hooks.trigger('agent_after', exit_reason=exit_reason, handler=handler, turn=turn, client=client)
     return exit_reason or {'result': 'MAX_TURNS_EXCEEDED'}
 
 def _clean_content(text):

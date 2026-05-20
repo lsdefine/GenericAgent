@@ -1,82 +1,94 @@
-# 历史洞察扫描 SOP (history_insight_sop)
+# 历史洞察扫描 SOP
 
-从 L4 历史对话中提取三类有价值信息：情绪爆发、持续习惯、消失事项。
+从历史对话中提取：情绪波动点、持续习惯、已完成/消失事项。
 
 ## 路径
+
 - 数据源: `../memory/L4_raw_sessions/all_user_histories.txt`
-- 产物全部在 `./`（temp目录）: `batches.json`, `scan_results.json`, `normalize_map.json`, `scan_report.json`, `activity_matrix.json`, `scan_state.json`
+- 生成方式: 若不存在，先运行 `compress_session.py` → 产出 `all_histories.txt`（含Agent行） → 过滤掉 `[Agent] ` 开头的行（空格不是冒号） → 另存为 `all_user_histories.txt`
+- ⚠️ `all_histories.txt` 不是数据源，必须用过滤后的 `all_user_histories.txt`
+- 产物目录: `./`（temp）
+- 下游: `session_traceback.py` — `traceback(query, context_chars=1500, nth=0)` 返回前后文
 
-## 流程概览
-P0数据准备 → P1逐批提取(循环) → P2标签归一化+执行脚本
+## 产物
 
----
+| 文件 | 持久 | 格式 |
+|------|------|------|
+| `activity_matrix.json` | ✅ 增量累积 | `{"weeks": ["2025-W11",...], "matrix": {"标签": {"2025-W11": 3}}}` |
+| `scan_state.json` | ✅ | `{"last_session": "0519_xxx"}` |
+| `scan_report.json` | 每次覆盖写 | 见下方 |
+| `task_dict.json` | ❌ 临时 | P2完成后删除 |
+| `scan_results.json` | ❌ 临时 | P2完成后删除 |
+| `batches.json` | ❌ 临时 | P2完成后删除 |
 
-## P0: 数据准备
-前置依赖（若数据源不存在则按顺序生成）：
-1. 运行 `compress_session.py` → 生成 `all_histories.txt`
-2. 从 `all_histories.txt` 过滤掉 `[Agent]:` 行 → 生成 `all_user_histories.txt`
-
-读 `scan_state.json` 获取 `emotion_last_line`（增量起点，首次=0）。读数据源按 `SESSION:` 分割，提取 `[USER]:` 行（忽略≤5字的），只保留行号>起点的新增行。按session为单位装入批次（每批≤120行），写 `batches.json`。格式：`[{session: "名", lines: [[全局行号, "文本"], ...]}, ...]`。
-
-## P1: 逐批提取（核心循环）
-
-⛔ **严格单批处理。已验证：合并多批→后半段数据被编造。**
-
-每轮固定3步，不可变形：
-1. code_run：从`batches.json`读第N批（N=已有结果数），打印格式 `[行号] 文本`
-2. 分析当前输出文本（禁止凭记忆补充、禁止预读下一批）
-3. code_run：将本批结果追加到`scan_results.json`，打印进度`done X/total`
-
-读取脚本自动计算进度：`done = len(已有结果)`，只输出`batches[done]`。N批就是N轮循环，不可压缩。
-
-⛔ **最后一批写入后必须打印提醒：** `print("P1完成！下一步：P2写normalize_map.json → P3执行 python ../memory/build_report.py .")`
-
-### 情绪检测（高阈值，宁漏不误）
-
-仅标记：
-- 累积不满后的爆发（连续多轮后终于发火）
-- 明确愤怒/质问/责备（真的生气，不是追问）
-- 强烈讽刺挖苦（带攻击性）
-- 极度惊喜感激（远超正常反应）
-
-**不标记**：普通不耐烦、催促、语气平和的不满、日常吐槽。判断技巧：去掉情绪修饰后信息量是否减少？减少才标记。
-
-label: NEGATIVE / POSITIVE。输出: `{"line_no": 行号, "text": "[USER]: 前30字", "label": "X", "reason": "一句话", "traceback_query": "前30字(无[USER]:前缀)", "occurrence_nth": 0}`
-
-`occurrence_nth`: 该文本在全文中第几次出现（从0开始），供 `session_traceback.py` 精确溯源。大多数情况为0。
-
-### 活动识别
-每session提取用户在做什么。标签格式：动词+宾语 4-8字（如"配置远程服务器"）。每session 1-5条。不明确标 `["不明确"]`。
-
-输出: `{"session": "名", "tasks": ["标签1", ...], "text": "该session中最能代表活动的一句用户原文(前30字)"}`
-
-`text` 字段供 `build_report.py` 生成 `source_lines`，用于后续 `session_traceback.py` 溯源。
-
-## P2: 标签归一化
-
-⛔ **不可跳过，P3脚本读 `normalize_map.json`，不存在则报错。**
-
-⛔ **归一化前必须 code_run 读取已有 `activity_matrix.json` 的标签列表（若存在）。新标签优先映射到已有标签（语义一致时），保证跨次运行标签一致性。**
-
-提取所有标签去重排序，每批50个进行同义合并。规则：
-- 新标签与已有matrix标签语义一致时，映射到已有标签名（优先级最高）
-- 保守合并：只合并明确同义词，不确定保持独立
-- 同一功能的子步骤合并为功能级（如"X功能重构"+"X功能测试"+"X功能PR"→"X功能开发"），跨性质保持独立（开发≠文档≠部署）
-- "调试bug"≠"修复bug"（动作不同）
-- 输出完整映射 `{"原标签": "归一化名", ...}`，独立标签映射为自身
-
-⛔ **归一化完成后必须 code_run 写入 `normalize_map.json`，同一个 code_run 内紧接着执行：**
-```python
-import subprocess, sys
-r = subprocess.run([sys.executable.replace("pythonw","python"), "../memory/build_report.py", "."], capture_output=True, text=True)
-print(r.stdout); print(r.stderr)
+scan_report.json 格式：
+```json
+{
+  "scan_date": "2025-05-19",
+  "data_range": "0401-0519",
+  "total_sessions": 42,
+  "emotions": [
+    {"session": "0501_xxx", "week": "2025-W18", "trigger": "连续3次修复失败后爆发", "expression": "用户原话前50字", "traceback_query": "用于session_traceback溯源的原文片段"}
+  ],
+  "habits": [{"label": "编写SOP", "sessions": ["0501_xxx", "0508_yyy", "0515_zzz"]}],
+  "abandoned": ["搭建博客", "学习Rust"]
+}
 ```
-看到 `[BUILD_REPORT_DONE]` 即全部完成。未看到则读stderr排错。
 
----
+## 流程
+
+P0 准备 → P1 逐批扫描(循环) → P2 汇总
+
+### P0
+
+过滤 `[Agent]` 行并按 session 分割：`sessions = re.findall(r'={5,}\nSESSION:\s*(.+?)\n={5,}\n(.*?)(?=\n={5,}\nSESSION:|\Z)', content, re.DOTALL)`（content 为去掉 `startswith("[Agent] ")` 行后的全文，注意[Agent]后是空格不是冒号）。 以 session 为单位装入批次（每批≤500 行，不拆分 session）。若 `scan_state.json` 存在，跳过 session 名 ≤ `last_session` 的所有 session，只处理之后的。若 `activity_matrix.json` 已存在，提取其标签名列表供 P1 归类参考。
+启动锚定：`update_working_checkpoint: "history_insight | P1逐批中 | P2: scan_report顶层key严格=scan_date,data_range,total_sessions,emotions,habits,abandoned(6个禁自创) | habits项格式={label,sessions[]} | 临时文件仅删task_dict/scan_results/batches | scan_state持久禁删 | 禁止: 自创阶段/自创产物/跳过P2"`
+
+### P1: 逐批扫描
+
+⛔ 每轮只处理 1 批（合并多批会超出注意力窗口，导致 session 名编造）。禁止在一个 code_run 内用循环/批量处理多批；处理完 1 批后必须结束当前 code_run，下一批在下一轮处理。
+
+每轮一个 code_run，固定结构：先从 batches.json 加载当前批次 session 列表 → `valid_sessions`，`batch_index = scan_state.get("last_batch", -1) + 1`，assert `batch_index < len(batches)`（未越界）。处理完毕后 assert 本轮写入的所有 session ∈ valid_sessions。每批结束时增量更新 `activity_matrix.json`（从本批 task_dict 新增条目统计计数）并更新 `scan_state.json`：`{"last_session": ..., "last_batch": batch_index}`。若本批有 emotions，assert 每条 `set(e.keys()) == {"session","week","trigger","expression","traceback_query"}`。
+
+1. **情绪检测** — 标记明显的情绪波动。
+
+   标记：愤怒/质问/责备、讽刺挖苦、惊喜感激、反复纠正后语气变化、沮丧/无奈表达、预期落空后的失望或方向突变。
+   不标记：纯功能性指令、语气始终平和的反馈。
+
+   结果追加 `scan_results.json`，每批一个对象：`{"batch": N, "emotions": [{"session", "week", "trigger", "expression", "traceback_query"}]}`。traceback_query = 用户原话中最具辨识度的连续片段（15-40字，供下游精确匹配）。
+
+2. **活动归类** — 增量维护 `task_dict.json`（key=动宾短语4-10字）。匹配已有 key 则追加，否则新建。每条：`{"session", "week", "text"}`。归类原则：含相同专有名词才归同一 key；通用动作不归入特定项目；宁多建 key 不错误合并。
+3. **更新矩阵** — 用本轮新构建的 entries 增量更新 `activity_matrix.json`（标签×周 +1）。若文件不存在则新建。
+   ```python
+   # new_entries: 本轮新构建的list，⛔禁止从task_dict.json全量遍历重新统计
+   for e in new_entries:
+       matrix.setdefault(e["label"], {})[e["week"]] = matrix.get(e["label"], {}).get(e["week"], 0) + 1
+   ```
+   写完验证：`assert set(json.load(open("activity_matrix.json")).keys()) == {"weeks", "matrix"}`
+
+P1 终止：当前批次号 == batches.json 总批次数时，**下一轮重读本 SOP P2 段落并执行**，禁止继续处理或自行总结。
+
+### P2: 汇总
+
+⛔ P1 全部完成后必须执行以下步骤，禁止自行生成其他产物文件。
+
+1. **验证矩阵**：确认 `activity_matrix.json` 已由 P1 增量生成。验证：`assert set(json.load(open("activity_matrix.json")).keys()) == {"weeks", "matrix"}`
+
+2. **生成报告**：读 activity_matrix 判定 habits/abandoned，汇总 scan_results 中的情绪，写 `scan_report.json`。
+   - habits — 各周计数之和≥3 且性质为「可复用技能」（周期性维护/持续使用的工具能力），⛔ 只出现1-2次 → 忽略
+   - abandoned — 曾活跃但已完成/放弃的事项（具体项目开发、一次性配置/调研），只需标签名字符串
+   - ⛔ habits 必须用 sessions 数量交叉验证（matrix 计数可能因 bug 虚高），`len(sessions) >= 2` 才可放入
+   顶层 key 严格为 6 个：`scan_date, data_range, total_sessions, emotions, habits, abandoned`（禁止自创 key）。
+   写完验证：`assert set(report.keys()) == {"scan_date","data_range","total_sessions","emotions","habits","abandoned"}`；`assert all(len(h["sessions"]) >= 2 for h in habits)`；若 emotions 非空：`assert set(emotions[0].keys()) == {"session","week","trigger","expression","traceback_query"}`；habits 非空：`assert set(habits[0].keys()) == {"label","sessions"}`；abandoned：`assert all(isinstance(a, str) for a in abandoned)`
+
+3. **收尾（缺一不可）**：单个 code_run 内完成 ① 更新 `scan_state.json`（持久产物，禁止删除） ② 删除且仅删除 `task_dict.json`、`scan_results.json`、`batches.json` 三个临时文件 ③ assert 三个临时文件不存在 + `assert os.path.exists("scan_state.json")` + `assert os.path.exists("activity_matrix.json")` ④ 结束，禁止生成其他文件
 
 ## 坑点
-- session名格式 `MMdd_HHmm-MMdd_HHmm`，取第一个MMdd推算周次
-- `week_str_to_date` 用 `"%Y-W%W-%w"` 格式解析
-- 归一化时标签数可能300+，必须分批处理避免质量退化
-- activity_matrix结构是 `{归一化标签: {week: count}}`（按标签分组），不是 `{week: {标签: count}}`（按周分组）
+
+- week 从 session 名首个日期 `MMdd` 推算 `YYYY-Wnn`（今年）
+- task_dict key 数量 100+ 是正常的
+- P1 禁止代码 if-elif 硬编码判断内容，必须自然语言阅读后用 code_run 写 JSON
+- P2 每个产物的 json.dump 和 assert 必须在同一个 code_run 内
+- P2 emotions 只从 scan_results 汇总，禁止凭记忆补充
+- 所有产物文件名严格按本 SOP，禁止改名
+- ⛔ P1 结束后必须进入 P2（生成 scan_report + 清理临时文件），禁止跳过 P2 直接输出总结或生成其他文件

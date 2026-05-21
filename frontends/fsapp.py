@@ -1,21 +1,85 @@
-import glob, json, os, queue as Q, re, sys, threading, time
-import atexit, hashlib
-try:
-    import msvcrt
-except Exception:
-    msvcrt = None
+import argparse, asyncio, importlib.util, json, os, queue as Q, re, sys, threading, time, uuid
+from pathlib import Path
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 os.chdir(PROJECT_ROOT)
-from agentmain import GeneraticAgent
-from frontends.chatapp_common import format_restore
-from frontends.continue_cmd import handle_frontend_command as handle_continue_frontend, reset_conversation
-from llmcore import mykeys
 
 import traceback
 import lark_oapi as lark
 from lark_oapi.api.im.v1 import *
+
+
+def _ensure_dir(path):
+    path = Path(path)
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _workspace_root_dir():
+    root = os.environ.get("GA_WORKSPACE_ROOT")
+    if root:
+        return _ensure_dir(Path(root).expanduser().resolve())
+    return _ensure_dir(Path(PROJECT_ROOT).resolve())
+
+
+def _workspace_config_dir(root=None):
+    base = Path(root).expanduser().resolve() if root else _workspace_root_dir()
+    if base.name == "ga_config":
+        return _ensure_dir(base)
+    return _ensure_dir(base / "ga_config")
+
+
+def _load_dict_config(path):
+    path = Path(path)
+    if not path.exists():
+        return None
+    try:
+        if path.suffix == ".py":
+            mod_name = f"_fs_mykey_{uuid.uuid4().hex}"
+            spec = importlib.util.spec_from_file_location(mod_name, path)
+            if not spec or not spec.loader:
+                return None
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            data = {k: v for k, v in vars(module).items() if not k.startswith("_")}
+        else:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        return data if isinstance(data, dict) else None
+    except Exception as e:
+        print(f"[ERROR] load config failed {path}: {e}")
+        return None
+
+
+def _resolve_mykey_path():
+    workspace_root = _workspace_root_dir()
+    config_root = _workspace_config_dir(workspace_root)
+    candidates = [
+        config_root / "mykey.json",
+        config_root / "mykey.py",
+        workspace_root / "mykey.json",
+        workspace_root / "mykey.py",
+        Path(PROJECT_ROOT) / "mykey.json",
+        Path(PROJECT_ROOT) / "mykey.py",
+    ]
+    for candidate in candidates:
+        if _load_dict_config(candidate):
+            return candidate
+    return candidates[0]
+
+
+def _ensure_runtime_paths():
+    workspace_root = _workspace_root_dir()
+    config_root = _workspace_config_dir(workspace_root)
+    os.environ.setdefault("GA_WORKSPACE_ROOT", str(workspace_root))
+    os.environ.setdefault("GA_USER_DATA_DIR", str(config_root))
+    return str(workspace_root), str(config_root)
+
+
+_ensure_runtime_paths()
+from agentmain import GeneraticAgent
+from frontends.chatapp_common import AgentChatMixin, FILE_HINT, split_text
 
 _TAG_PATS = [r"<" + t + r">.*?</" + t + r">" for t in ("thinking", "summary", "tool_use", "file_content")]
 _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".ico", ".tiff", ".tif"}
@@ -39,74 +103,29 @@ MEDIA_DIR = os.path.join(TEMP_DIR, "feishu_media")
 os.makedirs(MEDIA_DIR, exist_ok=True)
 
 
-def _acquire_fsapp_singleton():
-    """Per-agent process lock; prevents duplicate Feishu long-connection clients."""
-    if msvcrt is None:
-        return None
-    path = os.path.join(TEMP_DIR, "fsapp_singleton.lock")
-    f = open(path, "a+b")
-    try:
-        msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
-    except OSError:
-        print(f"[INFO] another fsapp is already running for {PROJECT_ROOT}; exiting duplicate pid={os.getpid()}", flush=True)
-        f.close()
-        sys.exit(0)
-    atexit.register(lambda: (msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1), f.close()))
-    return f
-
-
-_FSAPP_LOCK = _acquire_fsapp_singleton()
 _TRUNC_TAIL = 300  # 截断兜底时保留原文尾部字符数
-_DEDUP_FILE = os.path.join(TEMP_DIR, "fsapp_seen_message_ids.txt")
-_DEDUP_TTL_SEC = 6 * 3600
-_DEDUP_MAX = 500
+_DEDUP_TTL_SEC = 10 * 60
+_DEDUP_MAX = 2000
+_DEDUP_LOCK = threading.Lock()
+_SEEN_MESSAGES = {}
 
 
-def _message_claim_once(message_id):
-    """Return True only for the first process that claims this Feishu message_id."""
+def _claim_message_once(message_id):
+    """Best-effort cross-platform dedup for Feishu reconnect redeliveries."""
     if not message_id:
         return True
     now = time.time()
-    lock_path = _DEDUP_FILE + ".lock"
-    lf = None
-    try:
-        if msvcrt is not None:
-            lf = open(lock_path, "a+b")
-            msvcrt.locking(lf.fileno(), msvcrt.LK_LOCK, 1)
-        rows = []
-        if os.path.exists(_DEDUP_FILE):
-            with open(_DEDUP_FILE, "r", encoding="utf-8", errors="replace") as f:
-                for line in f:
-                    parts = line.rstrip("\n").split(" ", 1)
-                    if len(parts) != 2:
-                        continue
-                    try:
-                        ts = float(parts[0])
-                    except Exception:
-                        continue
-                    mid = parts[1]
-                    if now - ts <= _DEDUP_TTL_SEC:
-                        rows.append((ts, mid))
-        if any(mid == message_id for _, mid in rows):
+    with _DEDUP_LOCK:
+        expired = [mid for mid, ts in _SEEN_MESSAGES.items() if now - ts > _DEDUP_TTL_SEC]
+        for mid in expired:
+            _SEEN_MESSAGES.pop(mid, None)
+        if len(_SEEN_MESSAGES) > _DEDUP_MAX:
+            for mid, _ in sorted(_SEEN_MESSAGES.items(), key=lambda item: item[1])[:len(_SEEN_MESSAGES) - _DEDUP_MAX]:
+                _SEEN_MESSAGES.pop(mid, None)
+        if message_id in _SEEN_MESSAGES:
             return False
-        rows.append((now, message_id))
-        rows = rows[-_DEDUP_MAX:]
-        tmp = _DEDUP_FILE + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            for ts, mid in rows:
-                f.write(f"{ts:.3f} {mid}\n")
-        os.replace(tmp, _DEDUP_FILE)
+        _SEEN_MESSAGES[message_id] = now
         return True
-    except Exception as e:
-        print(f"[WARN] message dedup failed: {e}")
-        return True
-    finally:
-        if lf is not None:
-            try:
-                msvcrt.locking(lf.fileno(), msvcrt.LK_UNLCK, 1)
-                lf.close()
-            except Exception:
-                pass
 
 
 def _clean(text):
@@ -128,7 +147,7 @@ def _display_text(text):
     if cleaned:
         return cleaned
     tail = (text or "").strip()[-_TRUNC_TAIL:]
-    return "（无文本输出）" + (f"\n…{tail}" if tail else "")
+    return "⚠️ 模型输出被截断或为空" + (f"\n…{tail}" if tail else "")
 
 
 def _to_allowed_set(value):
@@ -301,24 +320,87 @@ def _extract_post_content(content_json):
     return "", []
 
 
-APP_ID = str(mykeys.get("fs_app_id", "") or "").strip()
-APP_SECRET = str(mykeys.get("fs_app_secret", "") or "").strip()
-ALLOWED_USERS = _to_allowed_set(mykeys.get("fs_allowed_users", []))
-PUBLIC_ACCESS = not ALLOWED_USERS or "*" in ALLOWED_USERS
 AGENT_TIMEOUT_SEC = 900
 
-agent = GeneraticAgent()
-_agent_thread = threading.Thread(target=agent.run, daemon=True, name="GA-core")
-_agent_thread.start()
-try:
-    print(f"[INFO] GA core started pid={os.getpid()} thread_alive={_agent_thread.is_alive()} llm={agent.get_llm_name()}")
-except Exception as e:
-    print(f"[WARN] GA core started but status unavailable: {e}")
-client, user_tasks = None, {}
+agent = None
+agent_error = None
+agent_thread = None
+client, user_tasks, app = None, {}, None
+agent_lock = threading.Lock()
+
+
+def _load_config():
+    path = _resolve_mykey_path()
+    if not path or not path.exists():
+        return {}, str(path or "")
+    try:
+        data = _load_dict_config(path)
+        return data if isinstance(data, dict) else {}, str(path)
+    except Exception as e:
+        print(f"[ERROR] load mykey failed {path}: {e}")
+        return {}, str(path)
+
+
+def _feishu_config():
+    cfg, path = _load_config()
+    app_id = str(cfg.get("fs_app_id", "") or "").strip()
+    app_secret = str(cfg.get("fs_app_secret", "") or "").strip()
+    allowed = _to_allowed_set(cfg.get("fs_allowed_users", []))
+    return app_id, app_secret, allowed, (not allowed or "*" in allowed), path
+
+
+APP_ID, APP_SECRET, ALLOWED_USERS, PUBLIC_ACCESS, CONFIG_PATH = _feishu_config()
+
+
+def get_agent():
+    global agent, agent_error, agent_thread
+    with agent_lock:
+        if agent is not None:
+            return agent
+        if agent_error:
+            raise RuntimeError(agent_error)
+        try:
+            agent = GeneraticAgent()
+            agent_thread = threading.Thread(target=agent.run, daemon=True)
+            agent_thread.start()
+            return agent
+        except Exception as e:
+            agent_error = str(e)
+            raise
 
 
 def create_client():
     return lark.Client.builder().app_id(APP_ID).app_secret(APP_SECRET).log_level(lark.LogLevel.INFO).build()
+
+
+def _mask_secret(value):
+    value = str(value or "")
+    if len(value) <= 8:
+        return "*" * len(value)
+    return value[:4] + "*" * (len(value) - 8) + value[-4:]
+
+
+def check_config(init_agent=False):
+    app_id, app_secret, allowed, public_access, path = _feishu_config()
+    result = {
+        "config_path": path,
+        "app_id": app_id,
+        "app_secret": _mask_secret(app_secret),
+        "app_secret_present": bool(app_secret),
+        "public_access": public_access,
+        "allowed_users": sorted(allowed),
+        "ready": bool(app_id and app_secret),
+    }
+    if init_agent:
+        try:
+            ga = get_agent()
+            result["agent_ready"] = True
+            result["llm_count"] = len(ga.list_llms()) if hasattr(ga, "list_llms") else 0
+            result["current_llm"] = ga.get_llm_name() if getattr(ga, "llmclient", None) else ""
+        except Exception as e:
+            result["agent_ready"] = False
+            result["agent_error"] = str(e)
+    return result
 
 
 def _card_raw(elements):
@@ -343,15 +425,12 @@ def _send_raw(receive_id, payload, msg_type, rtype):
             return r.data.message_id if r.data else None
         print(f"发送失败: {r.code}, {r.msg}")
     except Exception as e:
-        print(f"[ERROR] _send_raw 网络异常: {e}")
+        print(f"[ERROR] send_message failed: {e}")
+        traceback.print_exc()
     return None
 
 
 def _patch_card(message_id, card_json):
-    return _patch_card_result(message_id, card_json)[0]
-
-
-def _patch_card_result(message_id, card_json):
     try:
         body = PatchMessageRequest.builder().message_id(message_id).request_body(
             PatchMessageRequestBody.builder().content(card_json).build()
@@ -359,11 +438,11 @@ def _patch_card_result(message_id, card_json):
         r = client.im.v1.message.patch(body)
         if not r.success():
             print(f"[ERROR] patch_card 失败: {r.code}, {r.msg}")
-        msg = f"{getattr(r, 'code', '')} {getattr(r, 'msg', '')}".lower()
-        return r.success(), ("230099" in msg or "11310" in msg or "element exceeds the limit" in msg)
+        return r.success()
     except Exception as e:
-        print(f"[ERROR] _patch_card 网络异常: {e}")
-        return False, False
+        print(f"[ERROR] patch_card exception: {e}")
+        traceback.print_exc()
+        return False
 
 
 def send_message(receive_id, content, msg_type="text", use_card=False, receive_id_type="open_id"):
@@ -556,7 +635,6 @@ def _build_step_detail(resp, tool_calls):
 class _TaskCard:
     """飞书任务卡片：单卡片持续 patch；每步一个独立折叠面板（header 显示 summary，展开看详情）。"""
     _DETAIL_LIMIT = 8000
-    _FINAL_LIMIT = 6000
 
     def __init__(self, receive_id, rid_type):
         self.rid, self.rtype = receive_id, rid_type
@@ -564,10 +642,8 @@ class _TaskCard:
         self.status = "🤔 思考中..."
         self.final = None
         self.msg_id = None
-        self.page_no = 1
-        self.turn_no = 0
-        self.turn_base = 1
-        self.note = None
+        self.start_fallback_sent = False
+        self.final_fallback_sent = False
 
     def _step_panel(self, idx, summary, detail):
         detail = detail or "_(无输出)_"
@@ -580,13 +656,8 @@ class _TaskCard:
         }
 
     def _build(self):
-        header = f"**{self.status}**"
-        if self.page_no > 1:
-            header += f"\n\n📄 工作卡片 {self.page_no}"
-        els = [{"tag": "markdown", "content": header}]
-        if self.note:
-            els.append({"tag": "markdown", "content": self.note})
-        for i, (s, d) in enumerate(self.steps, self.turn_base):
+        els = [{"tag": "markdown", "content": f"**{self.status}**"}]
+        for i, (s, d) in enumerate(self.steps, 1):
             els.append(self._step_panel(i, s, d))
         if self.final:
             els += [{"tag": "hr"}, {"tag": "markdown", "content": self.final}]
@@ -595,92 +666,53 @@ class _TaskCard:
     def _push(self):
         card = self._build()
         if self.msg_id:
-            return _patch_card_result(self.msg_id, card)
+            ok = _patch_card(self.msg_id, card)
         else:
             self.msg_id = _send_raw(self.rid, card, "interactive", self.rtype)
-            return bool(self.msg_id), False
+            ok = bool(self.msg_id)
+        return ok
 
-    def _rollover(self):
-        self.page_no += 1
-        self.msg_id = None
-        self.final = None
-        self.note = "⚠️ 上一张工作卡片达到飞书限制，本页继续展示后续进展。"
+    def _fallback_text(self, text, *, final=False):
+        attr = "final_fallback_sent" if final else "start_fallback_sent"
+        if getattr(self, attr):
+            return
+        setattr(self, attr, True)
+        send_message(self.rid, text, receive_id_type=self.rtype)
 
     # ── 公开接口 ──
 
     def start(self):
-        self._push()
+        if not self._push():
+            self._fallback_text("🤔 思考中...")
 
     def step(self, summary, detail=""):
-        self.turn_no += 1
-        step = (summary, detail)
-        self.steps.append(step)
-        self.status = f"⏳ 工作中 · Turn {self.turn_no}"
-        ok, limit = self._push()
-        if limit:
-            self.steps.pop()
-            self._rollover()
-            self.turn_base = self.turn_no
-            self.steps = [step]
-            self._push()
+        self.steps.append((summary, detail))
+        self.status = f"⏳ 工作中 · Turn {len(self.steps)}"
+        self._push()
 
     def done(self, text):
         self.status = "✅ 已完成"
-        self.final = (text or "_(无文本输出)_")[:self._FINAL_LIMIT]
-        ok, limit = self._push()
-        if limit:
-            self._rollover()
-            self.steps = []
-            self.turn_base = self.turn_no + 1
-            self.final = (text or "_(无文本输出)_")[:self._FINAL_LIMIT]
-            ok, _ = self._push()
-        # Last-resort delivery: if card creation/patch fails (common after cold boot
-        # or message-card expiry), still send a plain text reply so the user is not
-        # left with no response.
-        if not ok:
-            try:
-                send_message(self.rid, _display_text(text), receive_id_type=self.rtype)
-            except Exception as e:
-                print(f"[ERROR] done fallback send failed: {e}")
+        self.final = text or "_(无文本输出)_"
+        if not self._push():
+            self._fallback_text(_display_text(text), final=True)
 
     def fail(self, msg):
         self.status = f"❌ {msg}"
-        self._push()
+        if not self._push():
+            self._fallback_text(f"❌ {msg}", final=True)
 
 
-def _make_task_hook(card, done_event, on_final):
+def _make_task_hook(card, task_id, on_final):
     """飞书任务 hook：每轮 patch 卡片状态；结束触发 on_final(raw) 处理附件。"""
     def hook(ctx):
         try:
+            parent = getattr(ctx.get("self"), "parent", None)
+            if getattr(parent, "_fs_active_task_id", None) != task_id:
+                return
             if ctx.get('exit_reason'):
                 resp = ctx.get('response')
                 raw = resp.content if hasattr(resp, 'content') else str(resp)
-                display = _display_text(raw)
-                if display.startswith("（无文本输出）"):
-                    # fallback: show thinking + tool_calls when content is empty after cleaning
-                    parts = []
-                    thinking = getattr(resp, 'thinking', '') or ''
-                    if thinking:
-                        parts.append(f"**[Thinking]**\n{thinking.strip()}")
-                    tool_calls = ctx.get('tool_calls') or []
-                    for tc in tool_calls:
-                        name = tc.get('tool_name') or tc.get('name', '?')
-                        args = tc.get('args') or tc.get('arguments') or {}
-                        if name == 'ask_user':
-                            q = args.get('question', '')
-                            candidates = args.get('candidates') or []
-                            if candidates:
-                                q += '\n' + '\n'.join(f'- {c}' for c in candidates)
-                            parts.append(q)
-                        else:
-                            args_s = json.dumps(args, ensure_ascii=False)
-                            if len(args_s) > 200:
-                                args_s = args_s[:200] + '...'
-                            parts.append(f"`{name}`: {args_s}")
-                    display = "\n\n".join(p for p in parts if p) or display
-                card.done(display)
                 on_final(raw)
-                done_event.set()
             elif ctx.get('summary'):
                 detail = _build_step_detail(ctx.get('response'), ctx.get('tool_calls') or [])
                 card.step(ctx['summary'], detail)
@@ -689,11 +721,98 @@ def _make_task_hook(card, done_event, on_final):
     return hook
 
 
+class FeishuApp(AgentChatMixin):
+    label, source, split_limit = "Feishu", "feishu", 4000
+
+    async def send_text(self, chat_id, content, *, receive_id=None, receive_id_type="open_id", **_):
+        rid = receive_id or chat_id
+        for part in split_text(content, self.split_limit):
+            await asyncio.to_thread(send_message, rid, part, "text", False, receive_id_type)
+
+    async def send_done(self, chat_id, raw_text, *, receive_id=None, receive_id_type="open_id", **_):
+        rid = receive_id or chat_id
+        text = _display_text(raw_text)
+        await asyncio.to_thread(send_message, rid, text, "text", False, receive_id_type)
+        await asyncio.to_thread(_send_generated_files, rid, raw_text, receive_id_type)
+
+    async def run_agent(self, chat_id, text, *, receive_id=None, receive_id_type="open_id", images=None, **_):
+        if self.user_tasks:
+            await self.send_text(chat_id, "当前会话已有任务在运行，请等待完成或发送 /stop 后再试。", receive_id=receive_id, receive_id_type=receive_id_type)
+            return
+        state = {"running": True}
+        self.user_tasks[chat_id] = state
+        rid = receive_id or chat_id
+        task_id = f"{chat_id}_{uuid.uuid4().hex}"
+        hook_key = f"fs_{task_id}"
+        card = _TaskCard(rid, receive_id_type)
+        result = {"raw": None, "sent": False}
+        finish_lock = threading.Lock()
+
+        def _finish(raw):
+            with finish_lock:
+                if result["sent"]:
+                    return
+                result["raw"] = raw
+                result["sent"] = True
+            card.done(_display_text(raw))
+            _send_generated_files(rid, raw, receive_id_type=receive_id_type)
+
+        try:
+            await asyncio.to_thread(card.start)
+            if not hasattr(self.agent, '_turn_end_hooks'):
+                self.agent._turn_end_hooks = {}
+            self.agent._turn_end_hooks[hook_key] = _make_task_hook(card, task_id, _finish)
+            self.agent._fs_active_task_id = task_id
+            dq = self.agent.put_task(f"{FILE_HINT}\n\n{text}", source=self.source, images=images or None)
+            start = time.time()
+            while state["running"] and not result["sent"]:
+                try:
+                    item = await asyncio.to_thread(dq.get, True, 1)
+                except Q.Empty:
+                    item = None
+                if item and "done" in item:
+                    await asyncio.to_thread(_finish, item.get("done", ""))
+                    break
+                if time.time() - start > AGENT_TIMEOUT_SEC:
+                    self.agent.abort()
+                    await asyncio.to_thread(card.fail, "任务超时")
+                    break
+            if not state["running"] and not result["sent"]:
+                self.agent.abort()
+                await asyncio.to_thread(card.fail, "已停止")
+        except Exception as e:
+            traceback.print_exc()
+            await asyncio.to_thread(card.fail, f"错误: {e}")
+        finally:
+            if getattr(self.agent, "_fs_active_task_id", None) == task_id:
+                try:
+                    delattr(self.agent, "_fs_active_task_id")
+                except AttributeError:
+                    pass
+            if hasattr(self.agent, '_turn_end_hooks'):
+                self.agent._turn_end_hooks.pop(hook_key, None)
+            self.user_tasks.pop(chat_id, None)
+
+
+def get_app():
+    global app
+    if app is None:
+        app = FeishuApp(get_agent(), user_tasks)
+    return app
+
+
+def _run_async(coro):
+    try:
+        asyncio.run(coro)
+    except Exception:
+        traceback.print_exc()
+
+
 def handle_message(data):
     event, message, sender = data.event, data.event.message, data.event.sender
-    msg_id = getattr(message, "message_id", "") or ""
-    if msg_id and not _message_claim_once(msg_id):
-        print(f"[INFO] duplicate Feishu message ignored: {msg_id}")
+    message_id = getattr(message, "message_id", "") or ""
+    if not _claim_message_once(message_id):
+        print(f"忽略重复飞书消息: {message_id}")
         return
     open_id = sender.sender_id.open_id
     chat_id = message.chat_id
@@ -708,133 +827,54 @@ def handle_message(data):
             send_message(open_id, f"⚠️ 暂不支持处理此类飞书消息：{message.message_type}")
         return
     print(f"收到消息 [{open_id}] ({message.message_type}, {len(image_paths)} images): {user_input[:200]}")
+    receive_id = chat_id or open_id
+    receive_id_type = "chat_id" if chat_id else "open_id"
+    chat_key = receive_id
     if message.message_type == "text" and user_input.startswith("/"):
-        return handle_command(open_id, user_input, chat_id)
-
-    def run_agent():
-        user_tasks[open_id] = {"running": True}
-        receive_id = chat_id or open_id
-        rid_type = "chat_id" if chat_id else "open_id"
-        done_event = threading.Event()
-        hook_key = f"fs_{open_id}"
-        card = _TaskCard(receive_id, rid_type)
-        card.start()
-        on_final = lambda raw: _send_generated_files(receive_id, raw, receive_id_type=rid_type)
-        if not hasattr(agent, '_turn_end_hooks'): agent._turn_end_hooks = {}
-        agent._turn_end_hooks[hook_key] = _make_task_hook(card, done_event, on_final)
-        try:
-            # Keep the display_queue as the authoritative completion channel.
-            # The turn_end_hook updates the rich card per turn, but startup/cold-run
-            # races or hook errors must not leave Feishu waiting forever.
-            dq = agent.put_task(user_input, source="feishu", images=image_paths)
-            start = time.time()
-            while True:
-                # Drain any agent output first; this is independent of desktop/Streamlit UI.
-                try:
-                    while True:
-                        item = dq.get_nowait()
-                        if 'done' in item:
-                            raw = item.get('done', '')
-                            if not done_event.is_set():
-                                card.done(_display_text(raw))
-                                on_final(raw)
-                                done_event.set()
-                            break
-                except Q.Empty:
-                    pass
-                if done_event.is_set():
-                    break
-                if not user_tasks.get(open_id, {}).get("running", True):
-                    agent.abort()
-                    card.fail("已停止")
-                    break
-                if time.time() - start > AGENT_TIMEOUT_SEC:
-                    agent.abort()
-                    card.fail("任务超时")
-                    break
-                done_event.wait(timeout=0.5)
-        except Exception as e:
-            traceback.print_exc()
-            card.fail(f"错误: {e}")
-        finally:
-            agent._turn_end_hooks.pop(hook_key, None)
-            user_tasks.pop(open_id, None)
-
-    threading.Thread(target=run_agent, daemon=True).start()
-
-
-def handle_command(open_id, cmd, chat_id=None):
-    def _send_cmd_response(content):
-        if chat_id:
-            send_message(chat_id, content, receive_id_type="chat_id")
-        else:
-            send_message(open_id, content)
-    parts = (cmd or "").split()
-    op = (parts[0] if parts else "").lower()
-    if op == "/stop":
-        if open_id in user_tasks:
-            user_tasks[open_id]["running"] = False
-        agent.abort()
-        _send_cmd_response("正在停止...")
-    elif op == "/new":
-        _send_cmd_response(reset_conversation(agent))
-    elif op == "/help":
-        _send_cmd_response("命令列表:\n/stop - 停止当前任务\n/status - 查看状态\n/llm - 查看当前模型列表\n/llm [n] - 切换到第 n 个模型\n/restore - 恢复上次对话历史\n/continue - 列出可恢复会话\n/continue [n] - 恢复第 n 个会话\n/new - 开启新对话并清空当前上下文\n/help - 显示帮助")
-    elif op == "/status":
-        llm = agent.get_llm_name() if agent.llmclient else "未配置"
-        _send_cmd_response(f"状态: {'🔴 运行中' if agent.is_running else '🟢 空闲'}\nLLM: [{agent.llm_no}] {llm}")
-    elif op == "/llm":
-        if not agent.llmclient:
-            return _send_cmd_response("❌ 当前没有可用的 LLM 配置")
-        if len(parts) > 1:
-            try:
-                agent.next_llm(int(parts[1]))
-                return _send_cmd_response(f"✅ 已切换到 [{agent.llm_no}] {agent.get_llm_name()}")
-            except Exception:
-                return _send_cmd_response(f"用法: /llm <0-{len(agent.list_llms()) - 1}>")
-        lines = [f"{'→' if cur else '  '} [{i}] {name}" for i, name, cur in agent.list_llms()]
-        _send_cmd_response("LLMs:\n" + "\n".join(lines))
-    elif op == "/restore":
-        try:
-            restored_info, err = format_restore()
-            if err:
-                return _send_cmd_response(err.replace("❌ ", ""))
-            restored, fname, count = restored_info
-            agent.history.extend(restored)
-            agent.abort()
-            _send_cmd_response(f"已恢复 {count} 轮对话\n来源: {fname}\n(仅恢复上下文，请输入新问题继续)")
-        except Exception as e:
-            _send_cmd_response(f"恢复失败: {e}")
-    elif op == "/continue" or cmd.startswith("/continue"):
-        _send_cmd_response(handle_continue_frontend(agent, cmd))
-    else:
-        _send_cmd_response(f"未知命令: {cmd}")
+        threading.Thread(
+            target=_run_async,
+            args=(get_app().handle_command(chat_key, user_input, receive_id=receive_id, receive_id_type=receive_id_type),),
+            daemon=True,
+        ).start()
+        return
+    threading.Thread(
+        target=_run_async,
+        args=(get_app().run_agent(chat_key, user_input, receive_id=receive_id, receive_id_type=receive_id_type, images=image_paths),),
+        daemon=True,
+    ).start()
 
 
 def main():
-    global client
+    global client, APP_ID, APP_SECRET, ALLOWED_USERS, PUBLIC_ACCESS, CONFIG_PATH
+    APP_ID, APP_SECRET, ALLOWED_USERS, PUBLIC_ACCESS, CONFIG_PATH = _feishu_config()
     if not APP_ID or not APP_SECRET:
-        print("错误: 请在 mykey.py 或 mykey.json 中配置 fs_app_id 和 fs_app_secret")
+        print(f"错误: 请在 mykey 配置中填写 fs_app_id 和 fs_app_secret\n配置文件: {CONFIG_PATH}", flush=True)
         sys.exit(1)
-    client = create_client()
     handler = lark.EventDispatcherHandler.builder("", "").register_p2_im_message_receive_v1(handle_message).build()
-    print("=" * 50 + "\n飞书 Agent 已启动（长连接模式）\n" + f"App ID: {APP_ID}\n等待消息...\n" + "=" * 50)
     retry_delay = 5
     while True:
         try:
+            client = create_client()
             cli = lark.ws.Client(APP_ID, APP_SECRET, event_handler=handler, log_level=lark.LogLevel.INFO)
+            print("=" * 50 + "\n飞书 Agent 已启动（长连接模式）\n" + f"App ID: {APP_ID}\n配置: {CONFIG_PATH}\n等待消息...\n" + "=" * 50, flush=True)
             cli.start()
+            retry_delay = 5
+        except KeyboardInterrupt:
+            raise
         except Exception as e:
-            print(f"[WARN] 飞书长连接断开或启动失败: {e}")
-        print(f"[INFO] {retry_delay}s 后重连...")
+            print(f"[WARN] 飞书长连接断开或启动失败: {e}", flush=True)
+            traceback.print_exc()
+        print(f"[INFO] {retry_delay}s 后重连飞书长连接...", flush=True)
         time.sleep(retry_delay)
         retry_delay = min(retry_delay * 2, 120)
-        # 重连时刷新 client
-        try:
-            client = create_client()
-        except Exception:
-            pass
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="A3Agent Feishu frontend")
+    parser.add_argument("--check", action="store_true", help="只检查飞书配置，不启动长连接")
+    parser.add_argument("--check-agent", action="store_true", help="检查配置并初始化 Agent/LLM")
+    args = parser.parse_args()
+    if args.check or args.check_agent:
+        print(json.dumps(check_config(init_agent=args.check_agent), ensure_ascii=False, indent=2), flush=True)
+    else:
+        main()

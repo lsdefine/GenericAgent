@@ -6,8 +6,11 @@ if sys.stderr is None: sys.stderr = open(os.devnull, "w")
 elif hasattr(sys.stderr, 'reconfigure'): sys.stderr.reconfigure(errors='replace')
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from llmcore import reload_mykeys, LLMSession, ToolClient, ClaudeSession, MixinSession, NativeToolClient, NativeClaudeSession, NativeOAISession, resolve_client
+from llmcore import reload_mykeys, ToolClient, MixinSession, NativeToolClient, NativeClaudeSession, NativeOAISession, resolve_client
 from agent_loop import agent_runner_loop
+try:
+    from plugins.hooks import discover_and_load; discover_and_load()
+except Exception: pass
 from ga import GenericAgentHandler, smart_format, get_global_memory, format_error, consume_file
 
 script_dir = os.path.dirname(os.path.abspath(__file__))

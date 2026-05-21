@@ -97,16 +97,17 @@ def render_sidebar():
         st.divider()
         if st.button("开始空闲自主行动"):
             st.session_state.last_reply_time = int(time.time()) - 1800
-            st.toast("已将上次回复时间设为1800秒前"); st.rerun()
+            st.session_state.autonomous_enabled = True
+            st.toast("已将上次回复时间设为1800秒前，自主行动已激活"); st.rerun(scope="app")
         if st.session_state.autonomous_enabled:
             if st.button("⏸️ 禁止自主行动"):
                 st.session_state.autonomous_enabled = False
-                st.toast("⏸️ 已禁止自主行动"); st.rerun()
+                st.toast("⏸️ 已禁止自主行动"); st.rerun(scope="app")
             st.caption("🟢 自主行动运行中，会在你离开它30分钟后自动进行")
         else:
             if st.button("▶️ 允许自主行动", type="primary"):
                 st.session_state.autonomous_enabled = True
-                st.toast("✅ 已允许自主行动"); st.rerun()
+                st.toast("✅ 已允许自主行动"); st.rerun(scope="app")
             st.caption("🔴 自主行动已停止")
 with st.sidebar: render_sidebar()
 

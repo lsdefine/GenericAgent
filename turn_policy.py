@@ -1,8 +1,6 @@
 
 import os
 
-# ── Turn Policy Functions ──
-
 def policy_danger_ask_user(turn, _plan, next_prompt):
     """每75轮强制ask_user（非plan模式）"""
     if turn % 75 == 0 and (not _plan):
@@ -47,9 +45,6 @@ def policy_plan_limit(turn, _plan, next_prompt):
         )
     return ""
 
-
-# ── Registration ──
-
 # Default turn policies that ship with the agent
 DEFAULT_TURN_POLICIES = [
     policy_danger_ask_user,
@@ -58,18 +53,8 @@ DEFAULT_TURN_POLICIES = [
     policy_plan_limit,
 ]
 
-
 def register_turn_policies(handler, policies=None):
     """Register turn policies onto a GenericAgentHandler instance.
-
-    Sets handler._turn_policies with the given policies (or DEFAULT_TURN_POLICIES).
-    Each policy is wrapped to receive (turn, _plan, next_prompt) directly
-    — no handler binding needed since these are pure functions.
-
-    Args:
-        handler: GenericAgentHandler instance
-        policies: list of callable(turn, _plan, next_prompt) -> str
-                  Defaults to DEFAULT_TURN_POLICIES
     """
     if policies is None:
         policies = DEFAULT_TURN_POLICIES

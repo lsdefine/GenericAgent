@@ -574,7 +574,6 @@ class GenericAgentHandler(BaseHandler):
         return next_prompt
 
 def get_global_memory():
-    """读取全局记忆并格式化"""
     prompt = "\n"
     try:
         suffix = '_en' if os.environ.get('GA_LANG', '') == 'en' else ''

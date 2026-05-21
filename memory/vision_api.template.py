@@ -46,15 +46,22 @@ def ask_vision(image_input, prompt="详细描述这张图片的内容", timeout=
 
 # ===================== 以下为内部实现 =====================
 
+def _is_url(s):
+    return isinstance(s, str) and (s.startswith('http://') or s.startswith('https://'))
+
 def _prepare_image(image_input, max_pixels=1440000):
-    """加载+缩放+base64编码，返回b64字符串"""
+    """加载+缩放+base64编码，或直传URL。返回 dict: {'type':'url','url':...} 或 {'type':'base64','data':...,'media_type':'image/jpeg'}"""
+    if _is_url(image_input):
+        print(f"  🔗 使用URL直传: {image_input[:80]}...")
+        return {'type': 'url', 'url': image_input}
+
     from PIL import Image
     if isinstance(image_input, Image.Image):
         img = image_input
     elif isinstance(image_input, (str, Path)):
         img = Image.open(image_input)
     else:
-        raise TypeError(f"image_input 必须是文件路径或PIL Image，实际: {type(image_input).__name__}")
+        raise TypeError(f"image_input 必须是URL/文件路径/PIL Image，实际: {type(image_input).__name__}")
     w, h = img.size
     if w * h > max_pixels:
         scale = (max_pixels / (w * h)) ** 0.5
@@ -69,7 +76,7 @@ def _prepare_image(image_input, max_pixels=1440000):
     img.save(buf, format='JPEG', quality=80, optimize=True)
     b64 = base64.b64encode(buf.getvalue()).decode('utf-8')
     print(f"  📦 Base64: {len(buf.getvalue())/1024:.1f}KB")
-    return b64
+    return {'type': 'base64', 'data': b64, 'media_type': 'image/jpeg'}
 
 def _load_config():
     import mykey
@@ -78,14 +85,15 @@ def _load_config():
 def _call_claude(b64, prompt, timeout, max_tokens=1024):
     mk = _load_config()
     cfg = getattr(mk, CLAUDE_CONFIG_KEY)
+    if img_info['type'] == 'url':
+        img_block = {'type': 'image', 'source': {'type': 'url', 'url': img_info['url']}}
+    else:
+        img_block = {'type': 'image', 'source': {'type': 'base64', 'media_type': img_info['media_type'], 'data': img_info['data']}}
     resp = requests.post(
         cfg['apibase'] + '/v1/messages',
         json={'model': cfg['model'], 'max_tokens': max_tokens, 'stream': False, 'messages': [{
             'role': 'user',
-            'content': [
-                {'type': 'image', 'source': {'type': 'base64', 'media_type': 'image/jpeg', 'data': b64}},
-                {'type': 'text', 'text': prompt}
-            ]
+            'content': [img_block, {'type': 'text', 'text': prompt}]
         }]},
         headers = {"x-api-key": cfg['apikey'], "Content-Type": "application/json", "anthropic-version": "2023-06-01", "anthropic-beta": "prompt-caching-2024-07-31"},
         timeout=timeout
@@ -98,13 +106,17 @@ def _call_claude(b64, prompt, timeout, max_tokens=1024):
 
 def _call_openai_compat(b64, prompt, timeout, *, apibase, apikey, model, proxy=None):
     proxies = {'https': proxy, 'http': proxy} if proxy else None
+    if img_info['type'] == 'url':
+        img_url = img_info['url']
+    else:
+        img_url = f"data:{img_info['media_type']};base64,{img_info['data']}"
     resp = requests.post(
         apibase.rstrip('/') + '/v1/chat/completions',
         json={'model': model, 'stream': False, 'messages': [{
             'role': 'user',
             'content': [
                 {'type': 'text', 'text': prompt},
-                {'type': 'image_url', 'image_url': {'url': f'data:image/jpeg;base64,{b64}'}}
+                {'type': 'image_url', 'image_url': {'url': img_url}}
             ]
         }]},
         headers={'Authorization': f"Bearer {apikey}", 'Content-Type': 'application/json'},

@@ -1,16 +1,3 @@
-"""Turn Policy Module — pluggable turn strategy chain for GenericAgentHandler.
-
-Extracted from ga.py: turn policies are standalone functions that receive
-(turn, _plan, next_prompt) and return "" or a string to append to the prompt.
-
-Auto-loading: ga.py __init__ imports register_turn_policies and calls it:
-    from turn_policy import register_turn_policies
-    ...
-    register_turn_policies(self)
-
-Policy functions here do NOT need handler binding — they are pure functions
-that only depend on (turn, _plan, next_prompt) arguments.
-"""
 
 import os
 

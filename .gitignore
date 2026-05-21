@@ -1,7 +1,5 @@
 temp/
 tmp/
-tests/
-pr_memory/
 __pycache__/
 *.py[cod]
 *$py.class

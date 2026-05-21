@@ -268,6 +268,13 @@ class GenericAgentHandler(BaseHandler):
         self.history_info = last_history if last_history else []
         self.code_stop_signal = []
         self._done_hooks = []
+        # Turn policy hooks - pluggable strategy chain
+        self._turn_policies = [
+            self._policy_danger_ask_user,
+            self._policy_danger_retry,
+            self._policy_inject_memory,
+            self._policy_plan_limit,
+        ]
 
     def _get_abs_path(self, path):
         if not path: return ""
@@ -543,7 +550,35 @@ class GenericAgentHandler(BaseHandler):
             try: print(prompt)
             except: pass
         return prompt
-    
+
+    # ── Turn Policy Hooks (可插拔策略链) ──
+
+    def _policy_danger_ask_user(self, turn, _plan, next_prompt):
+        """每75轮强制ask_user（非plan模式）"""
+        if turn % 75 == 0 and (not _plan):
+            return f"\n\n[DANGER] 已连续执行第 {turn} 轮。必须总结情况进行ask_user，不允许继续重试。"
+        return ""
+
+    def _policy_danger_retry(self, turn, _plan, next_prompt):
+        """每7轮禁止无效重试"""
+        if turn % 7 == 0:
+            return f"\n\n[DANGER] 已连续执行第 {turn} 轮。禁止无效重试。若无有效进展，必须切换策略：1. 探测物理边界 2. 请求用户协助。如有需要，可调用 update_working_checkpoint 保存关键上下文。"
+        return ""
+
+    def _policy_inject_memory(self, turn, _plan, next_prompt):
+        """每10轮注入全局记忆"""
+        if turn % 10 == 0:
+            return get_global_memory()
+        return ""
+
+    def _policy_plan_limit(self, turn, _plan, next_prompt):
+        """Plan模式上限检测"""
+        if _plan and turn >= 10 and turn % 5 == 0 and turn <= 110:
+            return f"[Plan Hint] 正在计划模式。必须 file_read({_plan}) 确认当前步骤，回复开头引用：📌 当前步骤：...\n\n"
+        if _plan and turn >= 120:
+            return f"\n\n[DANGER] Plan模式已运行 {turn} 轮，已达上限。必须 ask_user 汇报进度并确认是否继续。"
+        return ""
+
     def turn_end_callback(self, response, tool_calls, tool_results, turn, next_prompt, exit_reason):
         _c = re.sub(r'```.*?```|<thinking>.*?</thinking>', '', response.content, flags=re.DOTALL)
         rsumm = re.search(r"<summary>(.*?)</summary>", _c, re.DOTALL)
@@ -559,15 +594,9 @@ class GenericAgentHandler(BaseHandler):
         self.history_info.append(f'[Agent] {summary}')
         _plan = self._in_plan_mode()
 
-        if turn % 75 == 0 and (not _plan):
-            next_prompt += f"\n\n[DANGER] 已连续执行第 {turn} 轮。必须总结情况进行ask_user，不允许继续重试。"
-        elif turn % 7 == 0:
-            next_prompt += f"\n\n[DANGER] 已连续执行第 {turn} 轮。禁止无效重试。若无有效进展，必须切换策略：1. 探测物理边界 2. 请求用户协助。如有需要，可调用 update_working_checkpoint 保存关键上下文。"
-        elif turn % 10 == 0: next_prompt += get_global_memory()
-
-        if _plan and turn >= 10 and turn % 5 == 0:
-            next_prompt = f"[Plan Hint] 正在计划模式。必须 file_read({_plan}) 确认当前步骤，回复开头引用：📌 当前步骤：...\n\n" + next_prompt
-        if _plan and turn >= 120: next_prompt += f"\n\n[DANGER] Plan模式已运行 {turn} 轮，已达上限。必须 ask_user 汇报进度并确认是否继续。"
+        # Policy hook chain - each policy returns "" or a string to append
+        for policy in self._turn_policies:
+            next_prompt += policy(turn, _plan, next_prompt) or ""
 
         injkeyinfo = consume_file(self.parent.task_dir, '_keyinfo')
         injprompt = consume_file(self.parent.task_dir, '_intervene')

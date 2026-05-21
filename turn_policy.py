@@ -41,6 +41,7 @@ def policy_danger_retry(turn, _plan, next_prompt):
 def policy_inject_memory(turn, _plan, next_prompt):
     """每10轮注入全局记忆"""
     if turn % 10 == 0:
+        from ga import get_global_memory
         return get_global_memory()
     return ""
 
@@ -58,27 +59,6 @@ def policy_plan_limit(turn, _plan, next_prompt):
             "必须 ask_user 汇报进度并确认是否继续。"
         )
     return ""
-
-
-# ── Global Memory Provider ──
-
-def get_global_memory():
-    """读取全局记忆并格式化（原 ga.py 模块级函数）"""
-    prompt = "\n"
-    try:
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        suffix = '_en' if os.environ.get('GA_LANG', '') == 'en' else ''
-        with open(os.path.join(script_dir, 'memory/global_mem_insight.txt'), 'r', encoding='utf-8', errors='replace') as f:
-            insight = f.read()
-        with open(os.path.join(script_dir, f'assets/insight_fixed_structure{suffix}.txt'), 'r', encoding='utf-8') as f:
-            structure = f.read()
-        prompt += f'cwd = {os.path.join(script_dir, "temp")} (./)\n'
-        prompt += "\n[Memory] (../memory)\n"
-        prompt += structure + '\n../memory/global_mem_insight.txt:\n'
-        prompt += insight + "\n"
-    except FileNotFoundError:
-        pass
-    return prompt
 
 
 # ── Registration ──

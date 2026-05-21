@@ -581,7 +581,7 @@ def get_global_memory():
         with open(os.path.join(script_dir, 'memory/global_mem_insight.txt'), 'r', encoding='utf-8', errors='replace') as f: insight = f.read()
         with open(os.path.join(script_dir, f'assets/insight_fixed_structure{suffix}.txt'), 'r', encoding='utf-8') as f: structure = f.read()
         prompt += f'cwd = {os.path.join(script_dir, "temp")} (./)\n'
-        prompt += "\n[Memory] (../memory)\n"
+        prompt += f"\n[Memory] (../memory)\n"
         prompt += structure + '\n../memory/global_mem_insight.txt:\n'
         prompt += insight + "\n"
     except FileNotFoundError: pass

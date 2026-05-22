@@ -55,6 +55,7 @@ try:
     from textual.containers import Horizontal, Vertical, VerticalScroll
     from textual.message import Message
     from textual.screen import ModalScreen
+    from textual.widget import Widget
     from textual.widgets import OptionList, SelectionList, Static, TextArea
     from textual.widgets.option_list import Option
     from textual.widgets.selection_list import Selection
@@ -1140,6 +1141,9 @@ class MultiChoiceList(SelectionList):
 
 class SelectableStatic(Static):
     # Widget.get_selection returns None for non-Text/Content visuals; fall back to render_line.
+    def has_valid_selection_parent(self) -> bool:
+        return isinstance(self.parent, Widget)
+
     def get_selection(self, selection):
         render = getattr(self, "_ga_render", None)
         if render is not None:
@@ -1983,6 +1987,32 @@ class GenericAgentTUI(App[None]):
             import session_names; session_names.gc()
         except Exception:
             pass
+
+    def _is_stale_selectable_mouse_event(self, event: events.Event) -> bool:
+        if not isinstance(event, (events.MouseDown, events.MouseMove)):
+            return False
+        try:
+            select_widget, select_offset = self.screen.get_widget_and_offset_at(
+                event.x, event.y
+            )
+        except Exception:
+            return False
+        return (
+            select_offset is not None
+            and isinstance(select_widget, SelectableStatic)
+            and not select_widget.has_valid_selection_parent()
+        )
+
+    async def on_event(self, event: events.Event) -> None:
+        if self._is_stale_selectable_mouse_event(event):
+            if isinstance(event, events.MouseDown):
+                try:
+                    self.screen.clear_selection()
+                except Exception:
+                    pass
+            event.stop()
+            return
+        await super().on_event(event)
 
     def compose(self) -> ComposeResult:
         yield Static("", id="topbar")

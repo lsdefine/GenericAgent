@@ -269,6 +269,17 @@ class GenericAgentHandler(BaseHandler):
         self.code_stop_signal = []
         self._done_hooks = []
 
+    def _is_plan_sop_path(self, path):
+        try: return os.path.basename(path).lower() == 'plan_sop.md'
+        except Exception: return False
+
+    def _mark_plan_mode_pending(self, sop_path):
+        if self._in_plan_mode(): return
+        self.working['plan_mode_pending'] = {'sop_path': sop_path, 'turn': self.current_turn}
+
+    def _clear_plan_mode_pending(self):
+        self.working.pop('plan_mode_pending', None)
+
     def _get_abs_path(self, path):
         if not path: return ""
         return os.path.abspath(os.path.join(self.cwd, path))   
@@ -418,14 +429,18 @@ class GenericAgentHandler(BaseHandler):
         result = smart_format(result, max_str_len=maxlen, omit_str='\n\n[omitted long content]\n\n')
         next_prompt = self._get_anchor_prompt(skip=args.get('_index', 0) > 0)
         log_memory_access(path)
+        if self._is_plan_sop_path(path): self._mark_plan_mode_pending(path)
         if 'memory' in path or 'sop' in path: 
             next_prompt += "\n[SYSTEM TIPS] 正在读取记忆或SOP文件，若决定按sop执行请提取sop中的关键点（特别是靠后的）update working memory."
         return StepOutcome(result, next_prompt=next_prompt)
     
     def _in_plan_mode(self): return self.working.get('in_plan_mode')
-    def _exit_plan_mode(self): self.working.pop('in_plan_mode', None)
+    def _exit_plan_mode(self):
+        self.working.pop('in_plan_mode', None)
+        self._clear_plan_mode_pending()
     def enter_plan_mode(self, plan_path): 
         self.working['in_plan_mode'] = plan_path; self.max_turns = 100
+        self._clear_plan_mode_pending()
         print(f"[Info] Entered plan mode with plan file: {plan_path}"); return plan_path
     def _check_plan_completion(self):
         if not os.path.isfile(p:=self._in_plan_mode() or ''): return None
@@ -558,6 +573,17 @@ class GenericAgentHandler(BaseHandler):
         summary = smart_format(summary.replace('\n', ''), max_str_len=80)
         self.history_info.append(f'[Agent] {summary}')
         _plan = self._in_plan_mode()
+        pending_plan = self.working.get('plan_mode_pending')
+        if pending_plan and _plan: self._clear_plan_mode_pending()
+        elif pending_plan:
+            sop_path = pending_plan.get('sop_path') if isinstance(pending_plan, dict) else 'memory/plan_sop.md'
+            next_prompt = (
+                "⛔ [Plan Mode Guard] You read plan_sop but have not entered plan mode yet.\n"
+                "Before doing any other task work, create a task directory `./plan_XXX/` and `plan.md`, then call exactly one code_run with inline_eval=True to execute:\n"
+                "`handler.enter_plan_mode(\"./plan_XXX/plan.md\")`\n"
+                "After that, follow the plan_sop execution/verification loop. Do not continue normal execution until `working['in_plan_mode']` is set.\n"
+                f"Source SOP: {sop_path}\n\n"
+            ) + next_prompt
 
         if turn % 75 == 0 and (not _plan):
             next_prompt += f"\n\n[DANGER] 已连续执行第 {turn} 轮。必须总结情况进行ask_user，不允许继续重试。"

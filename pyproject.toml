@@ -44,3 +44,6 @@ packages = ["ga_cli"]
 
 [project.scripts]
 ga = "ga_cli.cli:main"
+
+[tool.ruff]
+exclude = ["TMWebDriver.py"]

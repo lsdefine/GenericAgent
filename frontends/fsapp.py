@@ -80,6 +80,11 @@ def _ensure_runtime_paths():
 _ensure_runtime_paths()
 from agentmain import GeneraticAgent
 from frontends.chatapp_common import AgentChatMixin, FILE_HINT, split_text
+from frontends.feishu_task_stream import (
+    FeishuTaskStream,
+    build_step_detail as build_stream_step_detail,
+    humanize_step_summary,
+)
 
 _TAG_PATS = [r"<" + t + r">.*?</" + t + r">" for t in ("thinking", "summary", "tool_use", "file_content")]
 _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".ico", ".tiff", ".tif"}
@@ -619,91 +624,12 @@ def _fmt_tool_call(tc):
 
 
 def _build_step_detail(resp, tool_calls):
-    """从 LLM response + tool_calls 组装单步展开详情（纯函数）。"""
-    parts = []
-    thinking = (getattr(resp, 'thinking', '') or '').strip() if resp else ''
-    if thinking:
-        parts.append(f"### 💭 Thinking\n{thinking}")
-    if tool_calls:
-        parts.append("### 🛠 Tool Calls\n" + "\n".join(_fmt_tool_call(tc) for tc in tool_calls))
-    content = _display_text((getattr(resp, 'content', '') or '')).strip() if resp else ''
-    if content and content != '...':
-        parts.append(f"### 📝 Output\n{content}")
-    return "\n\n".join(parts)
+    """从 LLM response + tool_calls 组装用户可读的单步详情。"""
+    return build_stream_step_detail(resp, tool_calls or [], _display_text)
 
 
-class _TaskCard:
-    """飞书任务卡片：单卡片持续 patch；每步一个独立折叠面板（header 显示 summary，展开看详情）。"""
-    _DETAIL_LIMIT = 8000
-
-    def __init__(self, receive_id, rid_type):
-        self.rid, self.rtype = receive_id, rid_type
-        self.steps = []          # [(summary, detail), ...]
-        self.status = "🤔 思考中..."
-        self.final = None
-        self.msg_id = None
-        self.start_fallback_sent = False
-        self.final_fallback_sent = False
-
-    def _step_panel(self, idx, summary, detail):
-        detail = detail or "_(无输出)_"
-        if len(detail) > self._DETAIL_LIMIT:
-            detail = detail[:self._DETAIL_LIMIT] + f"\n\n…(已截断,共 {len(detail)} 字符)"
-        return {
-            "tag": "collapsible_panel", "expanded": False,
-            "header": {"title": {"tag": "plain_text", "content": f"Turn {idx} · {summary}"}},
-            "elements": [{"tag": "markdown", "content": detail}],
-        }
-
-    def _build(self):
-        els = [{"tag": "markdown", "content": f"**{self.status}**"}]
-        for i, (s, d) in enumerate(self.steps, 1):
-            els.append(self._step_panel(i, s, d))
-        if self.final:
-            els += [{"tag": "hr"}, {"tag": "markdown", "content": self.final}]
-        return _card_raw(els)
-
-    def _push(self):
-        card = self._build()
-        if self.msg_id:
-            ok = _patch_card(self.msg_id, card)
-        else:
-            self.msg_id = _send_raw(self.rid, card, "interactive", self.rtype)
-            ok = bool(self.msg_id)
-        return ok
-
-    def _fallback_text(self, text, *, final=False):
-        attr = "final_fallback_sent" if final else "start_fallback_sent"
-        if getattr(self, attr):
-            return
-        setattr(self, attr, True)
-        send_message(self.rid, text, receive_id_type=self.rtype)
-
-    # ── 公开接口 ──
-
-    def start(self):
-        if not self._push():
-            self._fallback_text("🤔 思考中...")
-
-    def step(self, summary, detail=""):
-        self.steps.append((summary, detail))
-        self.status = f"⏳ 工作中 · Turn {len(self.steps)}"
-        self._push()
-
-    def done(self, text):
-        self.status = "✅ 已完成"
-        self.final = text or "_(无文本输出)_"
-        if not self._push():
-            self._fallback_text(_display_text(text), final=True)
-
-    def fail(self, msg):
-        self.status = f"❌ {msg}"
-        if not self._push():
-            self._fallback_text(f"❌ {msg}", final=True)
-
-
-def _make_task_hook(card, task_id, on_final):
-    """飞书任务 hook：每轮 patch 卡片状态；结束触发 on_final(raw) 处理附件。"""
+def _make_task_hook(task_stream, task_id, on_final):
+    """飞书任务 hook：每轮更新同一个任务工作台；结束后处理附件。"""
     def hook(ctx):
         try:
             parent = getattr(ctx.get("self"), "parent", None)
@@ -714,8 +640,15 @@ def _make_task_hook(card, task_id, on_final):
                 raw = resp.content if hasattr(resp, 'content') else str(resp)
                 on_final(raw)
             elif ctx.get('summary'):
-                detail = _build_step_detail(ctx.get('response'), ctx.get('tool_calls') or [])
-                card.step(ctx['summary'], detail)
+                tool_calls = ctx.get('tool_calls') or []
+                detail = build_stream_step_detail(
+                    ctx.get('response'),
+                    tool_calls,
+                    _display_text,
+                    tool_results=ctx.get('tool_results') or [],
+                )
+                summary = humanize_step_summary(ctx.get('summary') or "", tool_calls)
+                task_stream.step(summary, detail)
         except Exception as e:
             print(f"[fs hook] error: {e}")
     return hook
@@ -744,7 +677,15 @@ class FeishuApp(AgentChatMixin):
         rid = receive_id or chat_id
         task_id = f"{chat_id}_{uuid.uuid4().hex}"
         hook_key = f"fs_{task_id}"
-        card = _TaskCard(rid, receive_id_type)
+        task_stream = FeishuTaskStream(
+            rid,
+            receive_id_type,
+            send_raw=_send_raw,
+            patch_card=_patch_card,
+            display_text=_display_text,
+            group_compact=(receive_id_type == "chat_id"),
+            send_initial_status=False,
+        )
         result = {"raw": None, "sent": False}
         finish_lock = threading.Lock()
 
@@ -754,17 +695,18 @@ class FeishuApp(AgentChatMixin):
                     return
                 result["raw"] = raw
                 result["sent"] = True
-            card.done(_display_text(raw))
+            task_stream.done(raw)
             _send_generated_files(rid, raw, receive_id_type=receive_id_type)
 
         try:
-            await asyncio.to_thread(card.start)
+            await asyncio.to_thread(task_stream.start)
             if not hasattr(self.agent, '_turn_end_hooks'):
                 self.agent._turn_end_hooks = {}
-            self.agent._turn_end_hooks[hook_key] = _make_task_hook(card, task_id, _finish)
+            self.agent._turn_end_hooks[hook_key] = _make_task_hook(task_stream, task_id, _finish)
             self.agent._fs_active_task_id = task_id
             dq = self.agent.put_task(f"{FILE_HINT}\n\n{text}", source=self.source, images=images or None)
             start = time.time()
+            last_pulse = 0
             while state["running"] and not result["sent"]:
                 try:
                     item = await asyncio.to_thread(dq.get, True, 1)
@@ -773,16 +715,21 @@ class FeishuApp(AgentChatMixin):
                 if item and "done" in item:
                     await asyncio.to_thread(_finish, item.get("done", ""))
                     break
+                if item and item.get("next"):
+                    elapsed = int(time.time() - start)
+                    if elapsed - last_pulse >= 15:
+                        await asyncio.to_thread(task_stream.pulse, f"⏳ 工作中 · {elapsed}s")
+                        last_pulse = elapsed
                 if time.time() - start > AGENT_TIMEOUT_SEC:
                     self.agent.abort()
-                    await asyncio.to_thread(card.fail, "任务超时")
+                    await asyncio.to_thread(task_stream.fail, "任务超时，已停止当前任务")
                     break
             if not state["running"] and not result["sent"]:
                 self.agent.abort()
-                await asyncio.to_thread(card.fail, "已停止")
+                await asyncio.to_thread(task_stream.cancel, "已停止当前任务")
         except Exception as e:
             traceback.print_exc()
-            await asyncio.to_thread(card.fail, f"错误: {e}")
+            await asyncio.to_thread(task_stream.fail, f"错误: {e}")
         finally:
             if getattr(self.agent, "_fs_active_task_id", None) == task_id:
                 try:

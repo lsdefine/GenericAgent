@@ -42,6 +42,13 @@ async function handleExtMessage(msg, sender) {
       }
     } catch (e) { return { ok: false, error: e.message }; }
   }
+  if (msg.cmd === 'tabs_create') {
+    // 后台静默打开新标签页，不抢前台焦点
+    try {
+      const tab = await chrome.tabs.create({ url: msg.url, active: false });
+      return { ok: true, tabId: tab.id, url: tab.url };
+    } catch (e) { return { ok: false, error: e.message }; }
+  }
   if (msg.cmd === 'management') {
     try {
       if (msg.method === 'list') {
@@ -315,6 +322,15 @@ async function handleWsExec(data) {
     // Grace period for async tab creation (e.g. link click with target=_blank)
     if (newTabIds.size === 0) await new Promise(r => setTimeout(r, 200));
     chrome.tabs.onCreated.removeListener(onCreated);
+    // Restore focus to original tab if any new tab stole it (silent background)
+    if (newTabIds.size > 0) {
+      try {
+        const [curActive] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (curActive && curActive.id !== tabId && newTabIds.has(curActive.id)) {
+          await chrome.tabs.update(tabId, { active: true });
+        }
+      } catch (_) {}
+    }
     // Get full info for captured new tabs
     const newTabs = [];
     for (const id of newTabIds) {

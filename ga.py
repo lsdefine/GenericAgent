@@ -305,6 +305,43 @@ class GenericAgentHandler(BaseHandler):
         next_prompt = self._get_anchor_prompt(skip=args.get('_index', 0) > 0)
         return StepOutcome(result, next_prompt=next_prompt)
     
+    def do_restart(self, args, response):
+        '''异步触发外部重启脚本，并立即退出当前GA会话，避免同步等待导致自杀式报错。'''
+        delay_sec = args.get("delay_sec", 1.0)
+        try: delay_sec = max(0.0, min(float(delay_sec), 10.0))
+        except Exception: delay_sec = 1.0
+        vbs_path = os.path.join(script_dir, 'restart_hidden.vbs')
+        yield f"[Action] Scheduling GA restart via: {vbs_path} (delay={delay_sec:.1f}s)\n"
+        if not os.path.isfile(vbs_path):
+            msg = f"restart script not found: {vbs_path}"
+            yield f"[Status] ❌ {msg}\n"
+            next_prompt = self._get_anchor_prompt(skip=args.get('_index', 0) > 0)
+            return StepOutcome({"status": "error", "msg": msg}, next_prompt=next_prompt)
+        helper_code = (
+            "import subprocess, time\\n"
+            f"time.sleep({delay_sec!r})\\n"
+            f"subprocess.Popen(['wscript', r'{vbs_path}'], creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000))\\n"
+        )
+        flags = 0
+        for name, value in [('CREATE_NO_WINDOW', 0x08000000), ('DETACHED_PROCESS', 0x00000008), ('CREATE_NEW_PROCESS_GROUP', 0x00000200)]:
+            flags |= getattr(subprocess, name, value)
+        subprocess.Popen(
+            [sys.executable, '-X', 'utf8', '-c', helper_code],
+            cwd=script_dir,
+            creationflags=flags,
+            close_fds=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        yield "[Status] ✅ Restart helper launched. Current session will exit before VBS begins.\n"
+        result = {
+            "status": "success",
+            "result": "restart_scheduled",
+            "delay_sec": delay_sec,
+            "script": vbs_path,
+        }
+        return StepOutcome(result, next_prompt="", should_exit=True)
+
     def do_ask_user(self, args, response):
         question = args.get("question", "请提供输入：")
         candidates = args.get("candidates", [])

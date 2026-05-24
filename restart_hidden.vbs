@@ -1,11 +1,13 @@
 Option Explicit
 
 Dim shell, wmi, processes
-Dim appDir, pythonwPath, launchPath, wechatPath
+Dim appDir, pythonPath, pythonwPath, tuiPath, schedPath, wechatPath
 
 appDir = "E:\Work\Python\GenericAgent"
+pythonPath = "C:\ProgramData\anaconda3\python.exe"
 pythonwPath = "C:\ProgramData\anaconda3\pythonw.exe"
-launchPath = appDir & "\launch.pyw"
+tuiPath = appDir & "\frontends\tuiapp_v2.py"
+schedPath = appDir & "\agentmain.py"
 wechatPath = appDir & "\frontends\wechatapp.py"
 
 Set shell = CreateObject("WScript.Shell")
@@ -13,6 +15,8 @@ Set wmi = GetObject("winmgmts:\\.\root\cimv2")
 
 TerminateMatches Array( _
     "E:\Work\Python\GenericAgent\launch.pyw", _
+    "E:\Work\Python\GenericAgent\frontends\tuiapp_v2.py", _
+    "E:\Work\Python\GenericAgent\frontends\tuiapp.py", _
     "E:\Work\Python\GenericAgent\frontends\stapp.py", _
     "E:\Work\Python\GenericAgent\frontends\wechatapp.py", _
     "webview-exe-name=pythonw.exe", _
@@ -21,7 +25,8 @@ TerminateMatches Array( _
 WScript.Sleep 2000
 
 shell.CurrentDirectory = appDir
-shell.Run """" & pythonwPath & """ """ & launchPath & """ --sched", 0, False
+shell.Run """" & pythonPath & """ """ & tuiPath & """", 1, False
+shell.Run """" & pythonwPath & """ """ & schedPath & """ --reflect """ & appDir & "\reflect\scheduler.py""", 0, False
 shell.Run """" & pythonwPath & """ """ & wechatPath & """", 0, False
 
 Sub TerminateMatches(patterns)

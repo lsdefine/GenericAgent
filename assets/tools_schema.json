@@ -60,6 +60,12 @@
       "related_sop": {"type": "string", "description": "Related SOP names, tips for further re-read"}}}
   }},
   {"type": "function", "function": {
+    "name": "restart",
+    "description": "Schedule GenericAgent restart via external VBS helper. Launches asynchronously, then exits current GA session immediately to avoid self-kill/wscript wait issues",
+    "parameters": {"type": "object", "properties": {
+      "delay_sec": {"type": "number", "description": "Optional delay before the external VBS begins, default 1.0s", "default": 1.0}}}
+  }},
+  {"type": "function", "function": {
     "name": "ask_user",
     "description": "Interrupt task to ask user when needing decisions, extra info, or facing unresolvable blockers",
     "parameters": {"type": "object", "properties": {

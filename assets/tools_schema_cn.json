@@ -60,6 +60,12 @@
       "related_sop": {"type": "string", "description": "相关sop名称，可以多个，必要时需要再读"}}}
   }},
   {"type": "function", "function": {
+    "name": "restart",
+    "description": "通过外部VBS helper安排 GenericAgent 重启。异步启动后立刻退出当前GA会话，避免同步等待wscript或自杀式报错",
+    "parameters": {"type": "object", "properties": {
+      "delay_sec": {"type": "number", "description": "外部VBS开始前的可选延迟秒数，默认1.0秒", "default": 1.0}}}
+  }},
+  {"type": "function", "function": {
     "name": "ask_user",
     "description": "当需要用户决策、提供额外信息或遇到无法自动解决的阻碍时，调用此工具中断任务并提问",
     "parameters": {"type": "object", "properties": {

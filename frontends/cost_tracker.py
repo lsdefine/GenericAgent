@@ -8,6 +8,7 @@ runs its agent on `ga-tui-agent-<id>`, so `/cost` is a thread lookup.
 Subagent processes are out-of-process, so `scan_subagent_logs` parses the
 same `[Cache]` / `[Output]` print lines from `temp/*/stdout.log`.
 """
+from __future__ import annotations
 import glob, os, re, threading, time
 from dataclasses import dataclass, field
 

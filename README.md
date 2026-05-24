@@ -388,6 +388,7 @@ Thanks to the **LinuxDo** community for the support!
 
 - [chilishark27/ga-manager](https://github.com/chilishark27/ga-manager)
 - [wangjc683/galley](https://github.com/wangjc683/galley)
+- [cymylive/ga-model-manager](https://github.com/cymylive/ga-model-manager) — Discover models from API endpoints and auto-configure mykey.py
 
 ---
 
@@ -758,6 +759,7 @@ GenericAgent 通过 **分层记忆 × 最小工具集 × 自主执行循环** �
 - [chilishark27/ga-manager](https://github.com/chilishark27/ga-manager)
 - [wangjc683/galley](https://github.com/wangjc683/galley)
 - https://github.com/FroStorM/A3Agent/tree/workbench
+- [cymylive/ga-model-manager](https://github.com/cymylive/ga-model-manager) — 从 API 端点自动发现模型并一键写入 mykey.py 配置
 
 ---
 

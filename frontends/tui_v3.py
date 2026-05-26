@@ -4374,9 +4374,6 @@ class SB:
             if time.time() - self._cc_t < 1:      # idle: arm-to-quit; second press
                 return False                       # within the window actually exits
             with self._lk:
-                if self.buf:                      # v2: first press clears the draft
-                    self._snap()
-                    self.buf = ''; self.pos = 0; self._sel = None
                 self._cc_t = time.time()          # arm: second press quits + shows hint
                 self._render_live()
             return True

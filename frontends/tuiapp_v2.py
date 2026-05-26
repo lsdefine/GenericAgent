@@ -2170,17 +2170,18 @@ class GenericAgentTUI(App[None]):
         self._refresh_all()
 
     def copy_to_clipboard(self, text: str) -> None:
-        """Override Textual's OSC 52 clipboard (broken on macOS Terminal.app).
-        Use pbcopy on macOS, fall back to OSC 52 on other platforms."""
-        import sys, subprocess as _sp
-        if sys.platform == "darwin":
+        """Copy locally on macOS, and use OSC 52 when the UI may be remote."""
+        import subprocess as _sp
+        prefer_osc52 = os.environ.get("GA_TUI_CLIPBOARD", "").lower() in {"osc52", "terminal"}
+        remote_tty = any(os.environ.get(k) for k in ("SSH_TTY", "SSH_CONNECTION", "SSH_CLIENT", "TMUX"))
+        if sys.platform == "darwin" and not prefer_osc52:
             try:
                 _sp.Popen(["pbcopy"], stdin=_sp.PIPE, stdout=_sp.DEVNULL, stderr=_sp.DEVNULL).communicate(text.encode("utf-8"))
                 self._clipboard = text
-                return
+                if not remote_tty:
+                    return
             except Exception:
                 pass
-        # Non-macOS or pbcopy failed: fall back to Textual default (OSC 52)
         super().copy_to_clipboard(text)
 
     def action_handle_ctrl_c(self) -> None:

@@ -97,6 +97,10 @@ _TIPS = {
         "Tip: /update auto-runs git pull and audits the impact; /autorun seeds an autonomous run.",
         "Tip: /morphling <target> absorbs an external skill.",
         "Tip: /goal <goal> enters Goal mode (will ask for budget / worker cap); /hive <target> for multi-worker.",
+        "Tip: /conductor <task> hands the task to frontends/conductor.py for multi-subagent orchestration.",
+        "Tip: /update runs a dual-branch upstream sync — previews the diff before fast-forwarding either side.",
+        "Tip: /scheduler is live — untick a running row to stop it; tick again to relaunch.",
+        "Tip: Ctrl+S stashes your draft input — it's waiting for you next time you open a picker.",
         "Tip: /scheduler lists reflect tasks and starts them via `/scheduler start a,b,c`.",
     ],
     'zh': [
@@ -111,6 +115,10 @@ _TIPS = {
         "Tip: /new [name] 新建会话；/language 切换界面语言。",
         "Tip: /export clip 把最后回复复制到系统剪贴板；/export all 打印日志路径。",
         "Tip: Ctrl+O 折叠 / 展开所有已完成的工具 chip —— 每个 chip 折叠成一行。",
+        "Tip: /conductor <任务> 直接交给 frontends/conductor.py 做多 subagent 编排。",
+        "Tip: /update 是双分支 upstream 同步 —— 先 diff 预演，再分别快进。",
+        "Tip: /scheduler 里再点一下已勾选的任务可以 stop —— 取消勾选 = 停止。",
+        "Tip: Ctrl+S 把当前输入 stash 起来，下次 / 打开 picker 时还在。",
     ],
 }
 
@@ -173,6 +181,19 @@ _I18N: dict[str, dict[str, str]] = {
         'cmd.rename.arg':       '<name>',
         'cmd.export.arg':       '[clip|file|all]',
         'cmd.language.arg':     '[code]',
+        'cmd.update.arg':       '[note]',
+        'cmd.update.desc':      'preview upstream commits & diff, then pull (no commit)',
+        'cmd.autorun.arg':      '[seed]',
+        'cmd.autorun.desc':     'enter autonomous operation mode',
+        'cmd.morphling.arg':    '[target]',
+        'cmd.morphling.desc':   'distill / absorb external skills',
+        'cmd.goal.arg':         '[goal]',
+        'cmd.goal.desc':        'enter Goal mode (needs condition)',
+        'cmd.hive.arg':         '[target]',
+        'cmd.hive.desc':        'enter Hive multi-worker mode',
+        'cmd.conductor.arg':    '[task]',
+        'cmd.conductor.desc':   'hand task to frontends/conductor.py for multi-subagent orchestration',
+        'cmd.scheduler.desc':   'multi-pick reflect tasks / show cron',
 
         # status line (one-liner above input box)
         'status.asking':        '◉ waiting · Esc cancel',
@@ -368,6 +389,19 @@ _I18N: dict[str, dict[str, str]] = {
         'cmd.rename.arg':       '<name>',
         'cmd.export.arg':       '[clip|file|all]',
         'cmd.language.arg':     '[code]',
+        'cmd.update.arg':       '[备注]',
+        'cmd.update.desc':      '预览 upstream 提交与 diff，再 git pull（不 commit）',
+        'cmd.autorun.arg':      '[seed]',
+        'cmd.autorun.desc':     '进入 autonomous_operation 自主模式',
+        'cmd.morphling.arg':    '[target]',
+        'cmd.morphling.desc':   '启用 Morphling 蒸馏 / 吞噬外部技能',
+        'cmd.goal.arg':         '[goal]',
+        'cmd.goal.desc':        '进入 Goal 模式（需 condition 约束）',
+        'cmd.hive.arg':         '[target]',
+        'cmd.hive.desc':        '进入 Hive 多 worker 协作模式',
+        'cmd.conductor.arg':    '[任务]',
+        'cmd.conductor.desc':   '调用 frontends/conductor.py 做多 subagent 编排',
+        'cmd.scheduler.desc':   '多选启动 reflect 任务 / 查看 cron',
 
         # status line
         'status.asking':        '◉ 待答 · Esc 撤回提问',
@@ -1312,9 +1346,12 @@ else:
     _DIM = '\x1b[2m'
     _ACCENT = '\x1b[38;2;94;106;210m'    # Linear lavender #5e6ad2
     _BORDER = '\x1b[38;5;146m'
-_INK_U = '\x1b[38;5;234m'                # user ink — near-black, strong (as requested)
-# Linear surface ladder: user gets its own panel; AI = plain white surface.
-_TILE_U = '\x1b[48;5;251m' + _INK_U      # user panel (near-black ink)
+_INK_U = '\x1b[38;5;234m'                # user ink — kept for legacy callers
+# User-prompt panel.  Claude-Code-style charcoal block (RGB 55,55,55) with
+# soft-white ink — full-row tile via _tile() means the band keeps its right
+# edge on every terminal regardless of wrap-width math.  Switched from xterm-
+# 256 inverse (which renders muddy on Win Terminal dark themes) to truecolor.
+_TILE_U = '\x1b[48;2;55;55;55m\x1b[38;2;230;230;230m'
 _MARK = _ACCENT + '❯' + _RST             # prompt mark — the single accent
 _BG_TOK = {str(n) for n in list(range(40, 48)) + [49] + list(range(100, 108))}
 _SGR_RE = re.compile(r'\x1b\[([0-9;]*)m')
@@ -1583,15 +1620,16 @@ def _cmds() -> list[tuple[str, str, str]]:
         ('/btw',      _t('cmd.btw.arg'),        _t('cmd.btw.desc')),
         ('/review',   _t('cmd.review.arg'),     _t('cmd.review.desc')),
         # ── slash_cmds bundle (same set as v2; descriptions kept inline
-        # rather than going through _t() so a missing translation key never
-        # blanks the row).  /scheduler stays as an interactive multi-pick
-        # menu; the rest fold into prompt-injection turns.
-        ('/update',    '[note]',           'git pull GA & report impact'),
-        ('/autorun',   '[seed]',           'enter autonomous operation mode'),
-        ('/morphling', '[target]',         'distill / absorb external skills'),
-        ('/goal',      '[goal]',           'enter Goal mode (needs condition)'),
-        ('/hive',      '[target]',         'enter Hive multi-worker mode'),
-        ('/scheduler', '',                 'multi-pick reflect tasks / show cron'),
+        # /scheduler stays an interactive multi-pick menu; the rest fold
+        # into prompt-injection turns.  All bundle rows now route through
+        # _t() so zh/en stay in sync.
+        ('/update',    _t('cmd.update.arg'),     _t('cmd.update.desc')),
+        ('/autorun',   _t('cmd.autorun.arg'),    _t('cmd.autorun.desc')),
+        ('/morphling', _t('cmd.morphling.arg'),  _t('cmd.morphling.desc')),
+        ('/goal',      _t('cmd.goal.arg'),       _t('cmd.goal.desc')),
+        ('/hive',      _t('cmd.hive.arg'),       _t('cmd.hive.desc')),
+        ('/conductor', _t('cmd.conductor.arg'),  _t('cmd.conductor.desc')),
+        ('/scheduler', '',                       _t('cmd.scheduler.desc')),
         ('/rewind',   _t('cmd.rewind.arg'),     _t('cmd.rewind.desc')),
         ('/continue', _t('cmd.continue.arg'),   _t('cmd.continue.desc')),
         ('/new',      _t('cmd.new.arg'),        _t('cmd.new.desc')),
@@ -1624,25 +1662,57 @@ def _gerund(el: float) -> str:
     return _GERUNDS[int(el // 6) % len(_GERUNDS)]
 
 
-# Pet faces, 4-frame cycle per heat tier so the face blinks/winks every ~1.6s
-# (frame ticks every 0.4s in _ticker). Mood escalates with patience burn:
-# happy → focused → sleepy → stressed.
-_PETS = (
+# Pet faces, 4-frame cycle per heat tier so the face blinks/winks every ~1s
+# (frame ticks every 0.1s in _ticker now — formerly 0.4s).  Mood escalates
+# with patience burn: happy → focused → sleepy → stressed.
+_PETS_UNICODE = (
     ('(•‿•)', '(•‿•)', '(•‿•)', '(-‿-)'),   # <20s   calm, occasional blink
     ('(•_•)', '(•_-)', '(•_•)', '(-_•)'),   # <60s   focused, alternating wink
     ('(˘_˘)', '(˘_˘)', '(-_-)', '(˘_˘)'),   # <180s  sleepy, half-closed
     ('(>_<)', '(@_@)', '(>_<)', '(T_T)'),   # ≥180s  stressed (concerned!)
 )
+# ASCII fallback — some Windows consoles render CJK punctuation as double-
+# width, making `(>_<)` look "fat" and shoving the heat counter sideways.
+# `/emoji ascii` switches to bracketed glyphs that stay single-width on
+# every terminal.  `/emoji off` hides the pet entirely.
+_PETS_ASCII = (
+    ('[:)] ', '[:)] ', '[:)] ', '[:|] '),
+    ('[:|] ', '[;|] ', '[:|] ', '[|:] '),
+    ('[-_-]', '[-_-]', '[---]', '[-_-]'),
+    ('[>_<]', '[@_@]', '[>_<]', '[T_T]'),
+)
+_PET_STYLES = {'unicode': _PETS_UNICODE, 'ascii': _PETS_ASCII}
+_pet_style = 'unicode'   # mutated by /emoji <style>; module global (single-process TUI)
 
 
 def _pet(el: float, frame: int) -> str:
+    if _pet_style == 'off':
+        return ''
     tier = 0 if el < 20 else 1 if el < 60 else 2 if el < 180 else 3
-    pool = _PETS[tier]
+    pool = _PET_STYLES.get(_pet_style, _PETS_UNICODE)[tier]
     return pool[frame % len(pool)]
 _BP_START = b'\x1b[200~'
 _BP_END = b'\x1b[201~'
 _SPIN = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
 _ROOT = os.path.realpath(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+# ── terminal window title (OSC 0) ────────────────────────────────────────
+# Win Terminal / xterm honour `\x1b]0;<text>\x07`; legacy cmd.exe ignores it
+# silently.  Cache the last value so the 10 Hz _ticker doesn't spam the
+# emulator with identical writes (xterm coalesces but tracers don't).
+_last_term_title: str = ''
+
+
+def _set_term_title(text: str) -> None:
+    global _last_term_title
+    if text == _last_term_title:
+        return
+    _last_term_title = text
+    try:
+        sys.stdout.write('\x1b]0;' + text + '\x07'); sys.stdout.flush()
+    except OSError:
+        pass   # detached stdout / non-tty — let-it-crash § 14 (best-effort)
 
 
 def _is_under_root(path: str) -> bool:
@@ -3591,6 +3661,7 @@ class SB:
             self._session_name = arg or ''
             if arg:
                 self._set_session_name(ag, arg)
+            _set_term_title(self._term_title())
             self.commit(Block('banner', ''))       # fresh banner shows the new name
             self.commit([_DIM + (_t('msg.new_session_named', name=arg) if arg
                                  else _t('msg.new_session')) + _RST])
@@ -3599,6 +3670,7 @@ class SB:
                 self.commit([_t('err.rename_usage')]); return
             self._session_name = arg
             self._set_session_name(ag, arg)
+            _set_term_title(self._term_title())
             self.commit([_DIM + _t('msg.renamed', name=arg) + _RST])
         # /switch /close /branch — 多会话后端尚未接入，命令未实现，先注释掉。
         # elif name in ('switch', 'close', 'branch'):
@@ -3717,7 +3789,7 @@ class SB:
                     self.commit(Block('assistant', text))   # markdown re-renders on resize
                 except queue.Empty:
                     self.commit([_t('msg.review_empty')])
-        elif name in ('update', 'autorun', 'morphling', 'goal', 'hive'):
+        elif name in ('update', 'autorun', 'morphling', 'goal', 'hive', 'conductor'):
             # slash_cmds bundle — build a long prompt and feed it back through
             # _submit so the agent sees an ordinary user turn.  Keeps the
             # frontend ignorant of SOP details; see frontends/slash_cmds.py.
@@ -3946,6 +4018,8 @@ class SB:
             self._verbose_view()
         elif name == 'language':
             self._cmd_language(arg)
+        elif name == 'emoji':
+            self._cmd_emoji(arg)
         elif name == 'help':
             self.commit([_t('help.title'),
                          _t('help.help'),
@@ -3988,6 +4062,25 @@ class SB:
         with self._lk:
             entry[1] = ans or f'> /btw {question}\n\n{_t("msg.btw_no_answer")}'
             self._render_live()
+
+    def _cmd_emoji(self, arg: str) -> None:
+        """`/emoji [unicode|ascii|off]` — switch the running-spinner pet face.
+
+        Win consoles render some CJK punctuation as double-width, making
+        glyphs like `(>_<)` look "fat" and shoving the heat counter
+        sideways.  `/emoji ascii` swaps in bracketed faces that stay
+        single-width everywhere; `/emoji off` hides the pet entirely.
+        Bare `/emoji` reports the current style and the valid choices.
+        """
+        global _pet_style
+        choice = (arg or '').strip().lower()
+        valid = ('unicode', 'ascii', 'off')
+        if choice not in valid:
+            self.commit([f'{_DIM}emoji style is `{_pet_style}` · '
+                         f'available: {", ".join(valid)}{_RST}'])
+            return
+        _pet_style = choice
+        self.commit([f'{_DIM}emoji style → `{choice}`{_RST}'])
 
     def _cmd_language(self, arg: str) -> None:
         """`/language` — arrow-key picker (like /llm); `/language <code>` — direct switch."""
@@ -4139,11 +4232,24 @@ class SB:
         threading.Thread(target=self._ticker, daemon=True).start()
 
     def _ticker(self) -> None:
+        # 0.1s cadence matches tui_v2's snappy "alive" feel; the 0.4s sleep
+        # that lived here previously made the spinner look stalled on long
+        # tool turns.  _render_live is cheap (it diffs by hash before
+        # touching the TTY).  Also drives the OSC 0 terminal-title spinner.
         while self._running:
-            time.sleep(0.4)
+            time.sleep(0.1)
             with self._lk:
                 if self._running:
                     self._spin += 1; self._render_live()
+                    _set_term_title(self._term_title())
+
+    def _term_title(self) -> str:
+        """Compose terminal-window title — `⠇ <session> · GenericAgent`.
+        Spinner glyph appears only while an agent run is in flight."""
+        name = (self._session_name or '').strip()
+        head = (_SPIN[self._spin % len(_SPIN)] + ' ') if self._running else ''
+        mid = (name + ' · ') if name else ''
+        return head + mid + 'GenericAgent'
 
     def _poll_ask(self, grace: float = 0.0) -> AskUserEvent | None:
         """Only pull a queued ask when none is currently being shown.
@@ -4175,7 +4281,15 @@ class SB:
                     return
                 continue
             if isinstance(ev, DoneEvent):
-                ae = self._poll_ask(grace=0.4)  # ask hook may land around turn end
+                # ga.ask_user() emits its "Waiting for your answer …" marker
+                # to the stream *just before* it pushes the AskUserEvent onto
+                # ask_user_queue.  When the agent then short-circuits with
+                # should_exit=True a DoneEvent can land here before the
+                # AskUserEvent.put() returns — so we wait generously when the
+                # marker is in the stream.  Plain replies keep the snappy
+                # 0.4s grace so cleanup stays tight.
+                grace = 2.0 if 'Waiting for your answer' in self._stream else 0.4
+                ae = self._poll_ask(grace=grace)  # ask hook may land around turn end
                 with self._lk:
                     self._enter_ask(ae) if ae else self._finalize(ev.text)
                 break
@@ -4829,7 +4943,11 @@ class SB:
                 pass
 
     def run(self) -> None:
-        return self._run_prompt_toolkit()
+        _set_term_title(self._term_title())
+        try:
+            return self._run_prompt_toolkit()
+        finally:
+            _set_term_title('GenericAgent')   # restore on quit (no spinner / session)
 
 
 # sb.py's original `main()` and __main__ guard intentionally dropped — the

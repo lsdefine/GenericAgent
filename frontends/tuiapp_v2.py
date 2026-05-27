@@ -765,7 +765,21 @@ _DEFAULT_PALETTE: dict[str, str] = {
     "chip_time":   "#7ec27e",  # clock        — same muted green as the sidebar's active-session marker
 }
 
-_THEME_CYCLE = ["ga-default", "nord", "gruvbox", "dracula", "tokyo-night", "textual-light"]
+# Cursor IDE light theme — clean white background with subtle borders,
+# Cursor-blue accents, and warm amber/purple chips for topbar variety.
+_CURSOR_LIGHT_PALETTE: dict[str, str] = {
+    "fg": "#1e1e1e", "muted": "#6e6e6e", "dim": "#a0a0a0",
+    "bg": "#ffffff", "alt_bg": "#f3f3f3", "sel_bg": "#e8e8e8",
+    "border": "#d4d4d4", "border_hi": "#b0b0b0",
+    "green": "#388a34", "blue": "#0078d4", "purple": "#6b6bb7",
+    "chip_name":   "#0078d4",   # session name — cursor blue
+    "chip_model":  "#795e26",   # model id     — warm amber
+    "chip_effort": "#c45100",   # effort       — orange (heat)
+    "chip_tasks":  "#6b6bb7",   # task count   — purple
+    "chip_time":   "#388a34",   # clock        — green
+}
+
+_THEME_CYCLE = ["ga-default", "cursor-light", "nord", "gruvbox", "dracula", "tokyo-night", "textual-light"]
 
 
 # ---------- persisted settings ----------
@@ -2492,6 +2506,13 @@ class GenericAgentTUI(App[None]):
             foreground=p["fg"],
             primary=p["green"], secondary=p["blue"], accent=p["purple"],
         ))
+        cl = _CURSOR_LIGHT_PALETTE
+        self.register_theme(_TxTheme(
+            name="cursor-light", dark=False,
+            background=cl["bg"], surface=cl["alt_bg"], panel=cl["sel_bg"],
+            foreground=cl["fg"],
+            primary=cl["green"], secondary=cl["blue"], accent=cl["purple"],
+        ))
         saved = _load_settings().get("theme")
         self.theme = saved if saved in _THEME_CYCLE else "ga-default"
         self._spinner_frame: int = 0
@@ -2899,6 +2920,8 @@ class GenericAgentTUI(App[None]):
         theme = self.current_theme
         if theme is not None and theme.name == "ga-default":
             return dict(_DEFAULT_PALETTE)
+        if theme is not None and theme.name == "cursor-light":
+            return dict(_CURSOR_LIGHT_PALETTE)
         base = super().get_css_variables()
         dark = bool(getattr(theme, "dark", True)) if theme is not None else True
         return _palette_from_resolved_vars(base, dark)

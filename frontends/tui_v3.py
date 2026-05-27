@@ -4362,7 +4362,6 @@ class SB:
             if r:                                 # (preserves abort/exit semantics
                 with self._lk:                    #  when there is nothing selected)
                     clip.copy(self.buf[r[0]:r[1]])
-                    self._sel = None
                     self._render_live()
                 return True
             if self._running and self._bridge:    # running task → abort (single press)

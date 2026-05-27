@@ -1334,9 +1334,12 @@ else:
     _DIM = '\x1b[2m'
     _ACCENT = '\x1b[38;2;94;106;210m'    # Linear lavender #5e6ad2
     _BORDER = '\x1b[38;5;146m'
-_INK_U = '\x1b[38;5;234m'                # user ink — near-black, strong (as requested)
-# Linear surface ladder: user gets its own panel; AI = plain white surface.
-_TILE_U = '\x1b[48;5;251m' + _INK_U      # user panel (near-black ink)
+_INK_U = '\x1b[38;5;234m'                # user ink — kept for legacy callers
+# User-prompt panel.  Claude-Code-style charcoal block (RGB 55,55,55) with
+# soft-white ink — full-row tile via _tile() means the band keeps its right
+# edge on every terminal regardless of wrap-width math.  Switched from xterm-
+# 256 inverse (which renders muddy on Win Terminal dark themes) to truecolor.
+_TILE_U = '\x1b[48;2;55;55;55m\x1b[38;2;230;230;230m'
 _MARK = _ACCENT + '❯' + _RST             # prompt mark — the single accent
 _BG_TOK = {str(n) for n in list(range(40, 48)) + [49] + list(range(100, 108))}
 _SGR_RE = re.compile(r'\x1b\[([0-9;]*)m')
@@ -1646,25 +1649,57 @@ def _gerund(el: float) -> str:
     return _GERUNDS[int(el // 6) % len(_GERUNDS)]
 
 
-# Pet faces, 4-frame cycle per heat tier so the face blinks/winks every ~1.6s
-# (frame ticks every 0.4s in _ticker). Mood escalates with patience burn:
-# happy → focused → sleepy → stressed.
-_PETS = (
+# Pet faces, 4-frame cycle per heat tier so the face blinks/winks every ~1s
+# (frame ticks every 0.1s in _ticker now — formerly 0.4s).  Mood escalates
+# with patience burn: happy → focused → sleepy → stressed.
+_PETS_UNICODE = (
     ('(•‿•)', '(•‿•)', '(•‿•)', '(-‿-)'),   # <20s   calm, occasional blink
     ('(•_•)', '(•_-)', '(•_•)', '(-_•)'),   # <60s   focused, alternating wink
     ('(˘_˘)', '(˘_˘)', '(-_-)', '(˘_˘)'),   # <180s  sleepy, half-closed
     ('(>_<)', '(@_@)', '(>_<)', '(T_T)'),   # ≥180s  stressed (concerned!)
 )
+# ASCII fallback — some Windows consoles render CJK punctuation as double-
+# width, making `(>_<)` look "fat" and shoving the heat counter sideways.
+# `/emoji ascii` switches to bracketed glyphs that stay single-width on
+# every terminal.  `/emoji off` hides the pet entirely.
+_PETS_ASCII = (
+    ('[:)] ', '[:)] ', '[:)] ', '[:|] '),
+    ('[:|] ', '[;|] ', '[:|] ', '[|:] '),
+    ('[-_-]', '[-_-]', '[---]', '[-_-]'),
+    ('[>_<]', '[@_@]', '[>_<]', '[T_T]'),
+)
+_PET_STYLES = {'unicode': _PETS_UNICODE, 'ascii': _PETS_ASCII}
+_pet_style = 'unicode'   # mutated by /emoji <style>; module global (single-process TUI)
 
 
 def _pet(el: float, frame: int) -> str:
+    if _pet_style == 'off':
+        return ''
     tier = 0 if el < 20 else 1 if el < 60 else 2 if el < 180 else 3
-    pool = _PETS[tier]
+    pool = _PET_STYLES.get(_pet_style, _PETS_UNICODE)[tier]
     return pool[frame % len(pool)]
 _BP_START = b'\x1b[200~'
 _BP_END = b'\x1b[201~'
 _SPIN = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
 _ROOT = os.path.realpath(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+# ── terminal window title (OSC 0) ────────────────────────────────────────
+# Win Terminal / xterm honour `\x1b]0;<text>\x07`; legacy cmd.exe ignores it
+# silently.  Cache the last value so the 10 Hz _ticker doesn't spam the
+# emulator with identical writes (xterm coalesces but tracers don't).
+_last_term_title: str = ''
+
+
+def _set_term_title(text: str) -> None:
+    global _last_term_title
+    if text == _last_term_title:
+        return
+    _last_term_title = text
+    try:
+        sys.stdout.write('\x1b]0;' + text + '\x07'); sys.stdout.flush()
+    except OSError:
+        pass   # detached stdout / non-tty — let-it-crash § 14 (best-effort)
 
 
 def _is_under_root(path: str) -> bool:
@@ -3613,6 +3648,7 @@ class SB:
             self._session_name = arg or ''
             if arg:
                 self._set_session_name(ag, arg)
+            _set_term_title(self._term_title())
             self.commit(Block('banner', ''))       # fresh banner shows the new name
             self.commit([_DIM + (_t('msg.new_session_named', name=arg) if arg
                                  else _t('msg.new_session')) + _RST])
@@ -3621,6 +3657,7 @@ class SB:
                 self.commit([_t('err.rename_usage')]); return
             self._session_name = arg
             self._set_session_name(ag, arg)
+            _set_term_title(self._term_title())
             self.commit([_DIM + _t('msg.renamed', name=arg) + _RST])
         # /switch /close /branch — 多会话后端尚未接入，命令未实现，先注释掉。
         # elif name in ('switch', 'close', 'branch'):
@@ -3968,6 +4005,8 @@ class SB:
             self._verbose_view()
         elif name == 'language':
             self._cmd_language(arg)
+        elif name == 'emoji':
+            self._cmd_emoji(arg)
         elif name == 'help':
             self.commit([_t('help.title'),
                          _t('help.help'),
@@ -4010,6 +4049,25 @@ class SB:
         with self._lk:
             entry[1] = ans or f'> /btw {question}\n\n{_t("msg.btw_no_answer")}'
             self._render_live()
+
+    def _cmd_emoji(self, arg: str) -> None:
+        """`/emoji [unicode|ascii|off]` — switch the running-spinner pet face.
+
+        Win consoles render some CJK punctuation as double-width, making
+        glyphs like `(>_<)` look "fat" and shoving the heat counter
+        sideways.  `/emoji ascii` swaps in bracketed faces that stay
+        single-width everywhere; `/emoji off` hides the pet entirely.
+        Bare `/emoji` reports the current style and the valid choices.
+        """
+        global _pet_style
+        choice = (arg or '').strip().lower()
+        valid = ('unicode', 'ascii', 'off')
+        if choice not in valid:
+            self.commit([f'{_DIM}emoji style is `{_pet_style}` · '
+                         f'available: {", ".join(valid)}{_RST}'])
+            return
+        _pet_style = choice
+        self.commit([f'{_DIM}emoji style → `{choice}`{_RST}'])
 
     def _cmd_language(self, arg: str) -> None:
         """`/language` — arrow-key picker (like /llm); `/language <code>` — direct switch."""
@@ -4161,11 +4219,24 @@ class SB:
         threading.Thread(target=self._ticker, daemon=True).start()
 
     def _ticker(self) -> None:
+        # 0.1s cadence matches tui_v2's snappy "alive" feel; the 0.4s sleep
+        # that lived here previously made the spinner look stalled on long
+        # tool turns.  _render_live is cheap (it diffs by hash before
+        # touching the TTY).  Also drives the OSC 0 terminal-title spinner.
         while self._running:
-            time.sleep(0.4)
+            time.sleep(0.1)
             with self._lk:
                 if self._running:
                     self._spin += 1; self._render_live()
+                    _set_term_title(self._term_title())
+
+    def _term_title(self) -> str:
+        """Compose terminal-window title — `⠇ <session> · GenericAgent`.
+        Spinner glyph appears only while an agent run is in flight."""
+        name = (self._session_name or '').strip()
+        head = (_SPIN[self._spin % len(_SPIN)] + ' ') if self._running else ''
+        mid = (name + ' · ') if name else ''
+        return head + mid + 'GenericAgent'
 
     def _poll_ask(self, grace: float = 0.0) -> AskUserEvent | None:
         """Only pull a queued ask when none is currently being shown.
@@ -4197,7 +4268,15 @@ class SB:
                     return
                 continue
             if isinstance(ev, DoneEvent):
-                ae = self._poll_ask(grace=0.4)  # ask hook may land around turn end
+                # ga.ask_user() emits its "Waiting for your answer …" marker
+                # to the stream *just before* it pushes the AskUserEvent onto
+                # ask_user_queue.  When the agent then short-circuits with
+                # should_exit=True a DoneEvent can land here before the
+                # AskUserEvent.put() returns — so we wait generously when the
+                # marker is in the stream.  Plain replies keep the snappy
+                # 0.4s grace so cleanup stays tight.
+                grace = 2.0 if 'Waiting for your answer' in self._stream else 0.4
+                ae = self._poll_ask(grace=grace)  # ask hook may land around turn end
                 with self._lk:
                     self._enter_ask(ae) if ae else self._finalize(ev.text)
                 break
@@ -4851,7 +4930,11 @@ class SB:
                 pass
 
     def run(self) -> None:
-        return self._run_prompt_toolkit()
+        _set_term_title(self._term_title())
+        try:
+            return self._run_prompt_toolkit()
+        finally:
+            _set_term_title('GenericAgent')   # restore on quit (no spinner / session)
 
 
 # sb.py's original `main()` and __main__ guard intentionally dropped — the

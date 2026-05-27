@@ -169,6 +169,23 @@ def build_hive_prompt(args_text: str = "") -> str:
     )
 
 
+def build_conductor_prompt(args_text: str = "") -> str:
+    """`/conductor <task>` → run `frontends/conductor.py` on the task.
+
+    Upstream `memory/` ships no conductor SOP, so we deliberately keep the
+    prompt short: name the entrypoint and forward the task verbatim.  The
+    agent is expected to know how to drive `conductor.py` (or consult a
+    local SOP if one happens to be installed).
+    """
+    args_text = (args_text or "").strip()
+    if args_text:
+        return f"请调用 frontends/conductor.py 执行：{args_text}"
+    return (
+        "请调用 frontends/conductor.py，根据后续指令完成多 subagent 编排。"
+        "若任务描述缺失，先 ask_user 一次性补齐。"
+    )
+
+
 # ----- /scheduler reflect-task discovery + launch -------------------------
 
 def list_reflect_tasks() -> list[dict]:
@@ -485,6 +502,7 @@ PALETTE_ENTRIES: list[tuple[str, str, str]] = [
     ("/morphling", "[target]",  "启用 Morphling 蒸馏 / 吞噬外部技能"),
     ("/goal",      "[goal]",    "进入 Goal 模式（需 condition 约束）"),
     ("/hive",      "[target]",  "进入 Hive 多 worker 协作模式"),
+    ("/conductor", "[task]",    "调用 frontends/conductor.py 多 subagent 编排"),
     ("/scheduler", "",          "多选启动 reflect 任务 / 查看 cron"),
 ]
 
@@ -503,6 +521,7 @@ def prompt_for(cmd: str, args_text: str) -> Optional[str]:
         "/morphling": build_morphling_prompt,
         "/goal":      build_goal_prompt,
         "/hive":      build_hive_prompt,
+        "/conductor": build_conductor_prompt,
     }
     fn = table.get(cmd)
     return fn(args_text) if fn else None

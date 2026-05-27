@@ -97,6 +97,10 @@ _TIPS = {
         "Tip: /update auto-runs git pull and audits the impact; /autorun seeds an autonomous run.",
         "Tip: /morphling <target> absorbs an external skill.",
         "Tip: /goal <goal> enters Goal mode (will ask for budget / worker cap); /hive <target> for multi-worker.",
+        "Tip: /conductor <task> hands the task to frontends/conductor.py for multi-subagent orchestration.",
+        "Tip: /update runs a dual-branch upstream sync — previews the diff before fast-forwarding either side.",
+        "Tip: /scheduler is live — untick a running row to stop it; tick again to relaunch.",
+        "Tip: Ctrl+S stashes your draft input — it's waiting for you next time you open a picker.",
         "Tip: /scheduler lists reflect tasks and starts them via `/scheduler start a,b,c`.",
     ],
     'zh': [
@@ -111,6 +115,10 @@ _TIPS = {
         "Tip: /new [name] 新建会话；/language 切换界面语言。",
         "Tip: /export clip 把最后回复复制到系统剪贴板；/export all 打印日志路径。",
         "Tip: Ctrl+O 折叠 / 展开所有已完成的工具 chip —— 每个 chip 折叠成一行。",
+        "Tip: /conductor <任务> 直接交给 frontends/conductor.py 做多 subagent 编排。",
+        "Tip: /update 是双分支 upstream 同步 —— 先 diff 预演，再分别快进。",
+        "Tip: /scheduler 里再点一下已勾选的任务可以 stop —— 取消勾选 = 停止。",
+        "Tip: Ctrl+S 把当前输入 stash 起来，下次 / 打开 picker 时还在。",
     ],
 }
 
@@ -183,6 +191,8 @@ _I18N: dict[str, dict[str, str]] = {
         'cmd.goal.desc':        'enter Goal mode (needs condition)',
         'cmd.hive.arg':         '[target]',
         'cmd.hive.desc':        'enter Hive multi-worker mode',
+        'cmd.conductor.arg':    '[task]',
+        'cmd.conductor.desc':   'hand task to frontends/conductor.py for multi-subagent orchestration',
         'cmd.scheduler.desc':   'multi-pick reflect tasks / show cron',
 
         # status line (one-liner above input box)
@@ -389,6 +399,8 @@ _I18N: dict[str, dict[str, str]] = {
         'cmd.goal.desc':        '进入 Goal 模式（需 condition 约束）',
         'cmd.hive.arg':         '[target]',
         'cmd.hive.desc':        '进入 Hive 多 worker 协作模式',
+        'cmd.conductor.arg':    '[任务]',
+        'cmd.conductor.desc':   '调用 frontends/conductor.py 做多 subagent 编排',
         'cmd.scheduler.desc':   '多选启动 reflect 任务 / 查看 cron',
 
         # status line
@@ -1613,6 +1625,7 @@ def _cmds() -> list[tuple[str, str, str]]:
         ('/morphling', _t('cmd.morphling.arg'),  _t('cmd.morphling.desc')),
         ('/goal',      _t('cmd.goal.arg'),       _t('cmd.goal.desc')),
         ('/hive',      _t('cmd.hive.arg'),       _t('cmd.hive.desc')),
+        ('/conductor', _t('cmd.conductor.arg'),  _t('cmd.conductor.desc')),
         ('/scheduler', '',                       _t('cmd.scheduler.desc')),
         ('/rewind',   _t('cmd.rewind.arg'),     _t('cmd.rewind.desc')),
         ('/continue', _t('cmd.continue.arg'),   _t('cmd.continue.desc')),
@@ -3739,7 +3752,7 @@ class SB:
                     self.commit(Block('assistant', text))   # markdown re-renders on resize
                 except queue.Empty:
                     self.commit([_t('msg.review_empty')])
-        elif name in ('update', 'autorun', 'morphling', 'goal', 'hive'):
+        elif name in ('update', 'autorun', 'morphling', 'goal', 'hive', 'conductor'):
             # slash_cmds bundle — build a long prompt and feed it back through
             # _submit so the agent sees an ordinary user turn.  Keeps the
             # frontend ignorant of SOP details; see frontends/slash_cmds.py.

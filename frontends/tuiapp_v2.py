@@ -147,6 +147,10 @@ _TIPS = (
     "Tip: /morphling <目标> 启用蒸馏吞噬外部技能。",
     "Tip: /goal <目标> 进入 Goal 模式（缺 condition 时会回头问你预算 / worker 上限）。",
     "Tip: /hive <目标> 进入 Hive 多 worker 协作；/scheduler 调出 reflect 任务多选启动器。",
+    "Tip: /conductor <任务> 直接交给 frontends/conductor.py 做多 subagent 编排。",
+    "Tip: /update 是双分支 upstream 同步 —— 先 diff 预演，再分别快进。",
+    "Tip: /scheduler 里再点一下已勾选的任务可以 stop —— 取消勾选 = 停止。",
+    "Tip: Ctrl+S 把当前输入 stash 起来，下次 / 打开 picker 时还在。",
 )
 
 
@@ -1210,6 +1214,7 @@ COMMANDS = [
     ("/morphling", "[target]",         "启用 Morphling 蒸馏 / 吞噬外部技能"),
     ("/goal",      "[goal]",           "进入 Goal 模式（需 condition 约束）"),
     ("/hive",      "[target]",         "进入 Hive 多 worker 协作模式"),
+    ("/conductor", "[task]",           "调用 frontends/conductor.py 多 subagent 编排"),
     ("/scheduler", "",                 "多选启动 reflect 任务 / 查看 cron"),
     ("/continue", "[n|name]",         "列出 / 恢复历史会话"),
     ("/cost",     "[all]",            "显示当前会话 token 用量（all = 所有会话）"),
@@ -2515,7 +2520,7 @@ class GenericAgentTUI(App[None]):
             # so the agent processes them as ordinary turns.
             "update": self._cmd_slash_inject, "autorun": self._cmd_slash_inject,
             "morphling": self._cmd_slash_inject, "goal": self._cmd_slash_inject,
-            "hive": self._cmd_slash_inject,
+            "hive": self._cmd_slash_inject, "conductor": self._cmd_slash_inject,
             "scheduler": self._cmd_scheduler,
             "quit": self._cmd_quit, "exit": self._cmd_quit,
         }
@@ -4020,7 +4025,7 @@ class GenericAgentTUI(App[None]):
 
     # ---------------- slash_cmds bundle ----------------
     def _cmd_slash_inject(self, args, raw):
-        """`/update /autorun /morphling /goal /hive` → prompt
+        """`/update /autorun /morphling /goal /hive /conductor` → prompt
         injection.  We strip the leading slash command from `raw`, hand the
         tail to `slash_cmds.prompt_for`, and re-enter `submit_user_message`
         so the agent sees it as a normal user turn (display bubble still

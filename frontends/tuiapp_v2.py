@@ -126,6 +126,67 @@ _META_TAG_RE = re.compile(
     re.DOTALL | re.IGNORECASE | re.MULTILINE,
 )
 
+# Streaming Markdown is rendered incrementally: stable blocks go through the
+# normal renderer/cache, while only this bounded tail is reparsed per chunk.
+_STREAM_MD_TAIL_MAX_CHARS = 4000
+_STREAM_MD_TAIL_MAX_LINES = 24
+_STREAM_MD_MIN_INTERVAL_SEC = 0.06
+_STREAM_FENCE_RE = re.compile(r"^[ ]{0,3}(`{3,}|~{3,})([^\n]*)$", re.MULTILINE)
+
+
+def _stream_open_fence(text: str) -> Optional[tuple[str, int]]:
+    """Return (closing_marker, start_offset) for an unclosed fenced block."""
+    open_char = ""
+    open_len = 0
+    open_start = -1
+    for match in _STREAM_FENCE_RE.finditer(text):
+        fence = match.group(1)
+        suffix = match.group(2) or ""
+        ch = fence[0]
+        if not open_char:
+            open_char = ch
+            open_len = len(fence)
+            open_start = match.start()
+        elif ch == open_char and len(fence) >= open_len and not suffix.strip():
+            open_char = ""
+            open_len = 0
+            open_start = -1
+    if not open_char:
+        return None
+    return open_char * open_len, open_start
+
+
+def _split_streaming_markdown(text: str) -> tuple[str, str]:
+    """Split growing Markdown into stable prefix and active tail."""
+    if not text:
+        return "", ""
+    open_fence = _stream_open_fence(text)
+    if open_fence is not None:
+        _marker, start = open_fence
+        return text[:start], text[start:]
+
+    idx = text.rfind("\n\n")
+    if idx >= 0:
+        return text[:idx + 2], text[idx + 2:]
+
+    if len(text) <= _STREAM_MD_TAIL_MAX_CHARS:
+        return "", text
+
+    lines = text.splitlines(keepends=True)
+    if len(lines) > _STREAM_MD_TAIL_MAX_LINES:
+        return "".join(lines[:-_STREAM_MD_TAIL_MAX_LINES]), "".join(lines[-_STREAM_MD_TAIL_MAX_LINES:])
+    return "", text
+
+
+def _provisional_stream_markdown(text: str) -> tuple[str, bool]:
+    """Temporarily close an open fence so Rich can style live code blocks."""
+    open_fence = _stream_open_fence(text)
+    if open_fence is None:
+        return text, False
+    marker, _start = open_fence
+    sep = "" if text.endswith("\n") else "\n"
+    return f"{text}{sep}{marker}\n", True
+
 
 # Rotating usage tips, picked once per launch.
 _TIPS = (
@@ -1147,6 +1208,13 @@ class ChatMessage:
     _stop_summary: Optional[tuple] = field(default=None, repr=False)
     # Per-(seg_hash, width) Text cache; survives fold-toggle re-mounts.
     _seg_render_cache: dict = field(default_factory=dict, repr=False)
+    # Live Markdown tail cache: avoids reparsing the active streaming tail on
+    # duplicate refreshes and enforces a small parse throttle under fast chunks.
+    _stream_md_tail_key: tuple = field(default=(), repr=False)
+    _stream_md_tail_render: Any = field(default=None, repr=False)
+    _stream_md_tail_render_at: float = field(default=0.0, repr=False)
+    _stream_md_stable_key: tuple = field(default=(), repr=False)
+    _stream_md_stable_render: Any = field(default=None, repr=False)
 
 
 @dataclass
@@ -4912,6 +4980,75 @@ class GenericAgentTUI(App[None]):
             return _MdRender(text=fallback, source=text,
                              line_starts=[0], line_indents=[0], line_lengths=[len(text)])
 
+    def _raw_stream_render(self, text: str) -> "_MdRender":
+        rendered = Text.from_ansi(text, style=C_FG)
+        source, starts, indents, lens = _build_passthrough_source(rendered.plain)
+        return _MdRender(text=rendered, source=source,
+                         line_starts=starts, line_indents=indents, line_lengths=lens)
+
+    def _cached_md_render(self, m: ChatMessage, content: str, width: int) -> "_MdRender":
+        k = (hash(content), width)
+        v = m._seg_render_cache.get(k)
+        if v is None:
+            v = self._render_md(content, width)
+            m._seg_render_cache[k] = v
+        return v
+
+    def _join_stream_renders(self, parts: list["_MdRender"]) -> "_MdRender":
+        parts = [p for p in parts if p is not None and p.text.plain]
+        if not parts:
+            return self._raw_stream_render("")
+        if len(parts) == 1:
+            return parts[0]
+        combined = Text()
+        for part in parts:
+            if combined.plain and not combined.plain.endswith("\n"):
+                combined.append("\n")
+            combined.append_text(part.text)
+        # Streaming joins stable+tail renders that were parsed separately; use
+        # a safe visual-source map now and let done=True restore clean copy.
+        source, starts, indents, lens = _build_passthrough_source(combined.plain)
+        return _MdRender(text=combined, source=source,
+                         line_starts=starts, line_indents=indents, line_lengths=lens)
+
+    def _render_stream_tail_md(self, tail: str, width: int, m: ChatMessage) -> "_MdRender":
+        key = (hash(tail), width)
+        now = time.time()
+        cached = m._stream_md_tail_render
+        cached_width = m._stream_md_tail_key[1] if len(m._stream_md_tail_key) > 1 else None
+        if cached is not None and cached_width == width:
+            if m._stream_md_tail_key == key:
+                return cached
+            if now - m._stream_md_tail_render_at < _STREAM_MD_MIN_INTERVAL_SEC:
+                return cached
+        if len(tail) > _STREAM_MD_TAIL_MAX_CHARS:
+            rendered = self._raw_stream_render(tail)
+        else:
+            try:
+                render_text, _synthetic_fence = _provisional_stream_markdown(tail)
+                rendered = self._render_md(render_text, width)
+            except Exception:
+                rendered = self._raw_stream_render(tail)
+        m._stream_md_tail_key = key
+        m._stream_md_tail_render = rendered
+        m._stream_md_tail_render_at = now
+        return rendered
+
+    def _render_streaming_md(self, content: str, width: int, m: ChatMessage) -> "_MdRender":
+        if m._seg_render_cache and any(k[1] != width for k in m._seg_render_cache):
+            m._seg_render_cache.clear()
+        stable, tail = _split_streaming_markdown(content)
+        parts = []
+        if stable:
+            stable_key = (hash(stable), width)
+            if m._stream_md_stable_key != stable_key or m._stream_md_stable_render is None:
+                m._stream_md_stable_render = self._cached_md_render(m, stable, width)
+                m._stream_md_stable_key = stable_key
+            parts.append(m._stream_md_stable_render)
+        if tail:
+            parts.append(self._render_stream_tail_md(tail, width, m))
+        return self._join_stream_renders(parts)
+
     def _assistant_segments(self, m: ChatMessage, width: int) -> list[tuple]:
         """Return [(kind, body, fold_idx_or_None)]. kind ∈ {'text','fold-header','fold-body'}.
         fold_idx is the position in fold_turns() output — stable across streaming since
@@ -4933,12 +5070,7 @@ class GenericAgentTUI(App[None]):
             m._seg_render_cache.clear()
 
         def cached_render(content: str) -> "_MdRender":
-            k = (hash(content), width)
-            v = m._seg_render_cache.get(k)
-            if v is None:
-                v = self._render_md(content, width)
-                m._seg_render_cache[k] = v
-            return v
+            return self._cached_md_render(m, content, width)
 
         out: list[tuple] = []
         last_i = len(raw_segs) - 1
@@ -4955,14 +5087,10 @@ class GenericAgentTUI(App[None]):
                     out.append(("fold-body", cached_render(seg.get("content", "")), i))
             else:
                 content = _TURN_MARKER_RE.sub("", seg.get("content", ""), count=1)
-                # While streaming, the tail text segment grows every chunk — Markdown
-                # parsing it per chunk is the streaming-lag root cause. Render via
-                # Text.from_ansi during streaming (O(n) scan, no reflow) so SGR codes
-                # in the chunk become styles instead of literal `[31m` glyphs;
-                # _stream_update_assistant swaps in the real Markdown render once
-                # m.done flips True.
+                # While streaming, render Markdown incrementally: stable blocks
+                # are cached, and only the bounded active tail is reparsed.
                 if i == last_i and not m.done:
-                    out.append(("text", Text.from_ansi(content, style=C_FG), None))
+                    out.append(("text", self._render_streaming_md(content, width, m), None))
                 else:
                     out.append(("text", cached_render(content), None))
         if m.done:
@@ -5341,23 +5469,16 @@ class GenericAgentTUI(App[None]):
             last_seg = fold_turns(cleaned)[-1]
             last_text = _TURN_MARKER_RE.sub("", last_seg.get("content", ""), count=1)
             last_widget = m._segment_widgets[-1]
-            # During streaming use Text.from_ansi — Markdown parse per chunk is
-            # O(chunks × turn_len), but raw Text() would render upstream SGR codes
-            # as literal `[31m` glyphs (visible as ANSI garbage until done flips
-            # True or a resize forces remount). from_ansi is O(n) and resolves
-            # the codes into Rich styles. On the terminal `done` chunk we render
-            # Markdown once and swap, restoring code blocks / lists / inline
-            # styling and clean-copy.
             if m.done:
                 rendered = self._render_md(last_text, width)
-                if isinstance(rendered, _MdRender):
-                    last_widget._ga_render = rendered
-                    last_widget.update(rendered.text)
-                else:
-                    last_widget.update(rendered)
+            else:
+                rendered = self._render_streaming_md(last_text, width, m)
+            if isinstance(rendered, _MdRender):
+                last_widget._ga_render = rendered
+                last_widget.update(rendered.text)
             else:
                 last_widget._ga_render = None
-                last_widget.update(Text.from_ansi(last_text, style=C_FG))
+                last_widget.update(rendered)
             if m.done and m._spinner_widget is not None:
                 # Convert the live spinner into the post-turn ⠿ card in place.
                 self._capture_done_summary(m)

@@ -48,6 +48,7 @@ memory/*
 !memory/L4_raw_sessions/
 memory/L4_raw_sessions/*
 !memory/L4_raw_sessions/compress_session.py
+!memory/L4_raw_sessions/salient_mining_sop.md
 
 # ljqCtrl related tools
 !memory/ljqCtrl.py
@@ -64,7 +65,10 @@ memory/L4_raw_sessions/*
 !memory/vue3_component_sop.md
 
 # Subagent SOP
-!memory/subagent_sop.md
+!memory/subagent.md
+
+# Incubator SOP
+!memory/incubator_sop.md
 
 # Supervisor SOP
 !memory/supervisor_sop.md

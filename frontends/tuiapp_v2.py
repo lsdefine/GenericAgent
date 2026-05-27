@@ -55,7 +55,7 @@ try:
     from textual.containers import Horizontal, Vertical, VerticalScroll
     from textual.message import Message
     from textual.screen import ModalScreen
-    from textual.widgets import OptionList, SelectionList, Static, TextArea
+    from textual.widgets import Input, OptionList, SelectionList, Static, TextArea
     from textual.widgets.option_list import Option
     from textual.widgets.selection_list import Selection
 except ModuleNotFoundError as exc:
@@ -143,6 +143,10 @@ _TIPS = (
     "Tip: /branch [name] 从当前历史分裂出新会话，互不污染。",
     "Tip: ask_user 题目里写 [多选] 自动切到 SelectionList；任何 picker 都有 \"Type something\" 走自由输入。",
     "Tip: plan 模式下的 todo 会渲染在消息区与输入框之间的 📋 Plan 卡片，完成后自动消失。",
+    "Tip: /update 让主 agent 自动 git pull 并核查影响面；/autorun 进入 autonomous 自主模式。",
+    "Tip: /morphling <目标> 启用蒸馏吞噬外部技能。",
+    "Tip: /goal <目标> 进入 Goal 模式（缺 condition 时会回头问你预算 / worker 上限）。",
+    "Tip: /hive <目标> 进入 Hive 多 worker 协作；/scheduler 调出 reflect 任务多选启动器。",
 )
 
 
@@ -300,17 +304,23 @@ def _patch_markdown_table_overflow():
     from rich import box as _rich_box
 
     def _table_render(self, console, options):
+        # `markdown.table.border` / `markdown.table.header` were Rich default
+        # styles in older releases but have been dropped from DEFAULT_STYLES;
+        # resolving the bare names now raises MissingStyle. Resolve with a
+        # fallback so a table never aborts the whole Markdown render — which
+        # would drop the entire message to raw, unrendered text.
         table = _RichTable(
             box=_rich_box.SIMPLE,
             pad_edge=False,
-            style="markdown.table.border",
+            style=console.get_style("markdown.table.border", default="none"),
             show_edge=True,
             collapse_padding=True,
         )
         if self.header is not None and self.header.row is not None:
+            header_style = console.get_style("markdown.table.header", default="bold")
             for column in self.header.row.cells:
                 heading = column.content.copy()
-                heading.stylize("markdown.table.header")
+                heading.stylize(header_style)
                 table.add_column(heading, overflow="fold")
         if self.body is not None:
             for row in self.body.rows:
@@ -512,6 +522,58 @@ def _strip_quote_deco(s: str) -> tuple:
     return rest, 1
 
 
+def _md_line_has_box_drawing(line: str) -> bool:
+    """Return True for Rich table / box-art glyphs, not for normal dashes.
+
+    The previous table workaround keyed on the literal `─` at the whole-widget
+    level.  That was too broad: one table anywhere in a message made ordinary
+    paragraphs copy from the wrapped/narrow render, reintroducing visual
+    newlines.  Use the Unicode Box Drawing block so SIMPLE/ROUNDED/HEAVY/etc.
+    table styles are covered while em-dashes (`—`) and ASCII/Unicode hyphens are
+    not mistaken for tables.
+    """
+    return any("\u2500" <= ch <= "\u257f" for ch in line)
+
+
+def _md_run_has_box_drawing(lines: list[str]) -> bool:
+    return any(_md_line_has_box_drawing(line) for line in lines)
+
+
+def _build_passthrough_source(narrow_plain: str):
+    """Fallback aligner: treat narrow render as the copy source verbatim.
+
+    Used when the wide/narrow line-by-line correspondence assumed by
+    `_align_md_renders` breaks down — most notably for Rich tables, where
+    the wide render keeps each logical row on one line with `│` separators
+    while the narrow render lays cells vertically. In that case we can't
+    map (y, x) selection coordinates back to the wide source, so we just
+    copy whatever is visually on screen and accept the cosmetic cost of
+    leaving the table's `─`/`│` box characters in the clipboard output.
+
+    Returns the same 4-tuple shape as `_align_md_renders`:
+        (source, line_starts, line_indents, line_lengths)
+    """
+    lines = narrow_plain.split("\n")
+    line_starts = [0] * len(lines)
+    line_indents = [0] * len(lines)
+    line_lengths = [0] * len(lines)
+    parts = []
+    pos = 0
+    for i, raw in enumerate(lines):
+        # Strip the `▌` user-message side bar the same way the aligner does,
+        # so selections inside user echoes still copy clean text.
+        body, deco = _strip_quote_deco(raw)
+        line_starts[i] = pos
+        line_indents[i] = deco
+        line_lengths[i] = len(body)
+        parts.append(body)
+        pos += len(body)
+        if i != len(lines) - 1:
+            parts.append("\n")
+            pos += 1
+    return "".join(parts), line_starts, line_indents, line_lengths
+
+
 def _align_md_renders(narrow_raw: str, wide_raw: str):
     """Walk narrow + wide line-by-line; return (source, line_starts, line_indents, line_lengths)."""
     narrow = [l.rstrip() for l in narrow_raw.split("\n")]
@@ -537,12 +599,20 @@ def _align_md_renders(narrow_raw: str, wide_raw: str):
         wide_lines = wide[wide_start:wi]
 
         K, W = len(run_lines), len(wide_lines)
-        if W == 0:
+        if _md_run_has_box_drawing(run_lines):
+            # Rich tables are inherently two-dimensional: a single logical row in
+            # the wide render may become several visual rows in the narrow render.
+            # Treat only this *run* as visual/passthrough.  Do not poison the
+            # rest of the widget, otherwise paragraphs before/after the table
+            # start copying their wrapped visual newlines again.
             for k in range(K):
-                wrap_groups.append(((run_start + k, run_start + k + 1), run_lines[k]))
+                wrap_groups.append(((run_start + k, run_start + k + 1), run_lines[k], True))
+        elif W == 0:
+            for k in range(K):
+                wrap_groups.append(((run_start + k, run_start + k + 1), run_lines[k], False))
         elif K == W:
             for k in range(K):
-                wrap_groups.append(((run_start + k, run_start + k + 1), wide_lines[k]))
+                wrap_groups.append(((run_start + k, run_start + k + 1), wide_lines[k], False))
         else:
             j = 0
             for w_idx, w_line in enumerate(wide_lines):
@@ -564,7 +634,7 @@ def _align_md_renders(narrow_raw: str, wide_raw: str):
                     consumed = j - (g_start - run_start)
                     if not is_last and accumulated + max(0, consumed - 1) >= target:
                         break
-                wrap_groups.append(((g_start, run_start + j), w_line))
+                wrap_groups.append(((g_start, run_start + j), w_line, False))
 
     source_parts: list = []
     line_starts = [0] * len(narrow)
@@ -597,7 +667,7 @@ def _align_md_renders(narrow_raw: str, wide_raw: str):
             last_was_content = True
             continue
 
-        (g_start, g_end), wide_line = wrap_groups[group_idx]
+        (g_start, g_end), wide_line, passthrough = wrap_groups[group_idx]
         single_line = (g_end - g_start == 1)
 
         nt0 = narrow[g_start]
@@ -616,7 +686,17 @@ def _align_md_renders(narrow_raw: str, wide_raw: str):
             source_parts.append("\n")
             src_pos += 1
 
-        if is_centered:
+        if passthrough:
+            # Visual/source mapping for table rows: keep exactly what the user
+            # sees on this line (minus quote decoration) so x offsets remain
+            # valid.  Each table visual line is its own group, so no wrapped
+            # paragraph outside the table inherits this behavior.
+            body, deco = _strip_quote_deco(narrow[g_start])
+            source_parts.append(body)
+            line_starts[g_start] = src_pos
+            line_indents[g_start] = deco
+            src_pos += len(body)
+        elif is_centered:
             content = wide_line.lstrip()
             source_parts.append(content)
             line_starts[g_start] = src_pos
@@ -773,6 +853,8 @@ def _markdown_rich_theme(p: dict[str, str], minimal: bool = False):
             "markdown.strong":      f"bold {fg}",
             "markdown.em":          f"italic {fg}",
             "markdown.s":           f"strike {dim}",
+            "markdown.table.border": border,
+            "markdown.table.header": f"bold {fg}",
         })
     return _RichTheme({
         "markdown.h1":          f"bold {p['green']}",
@@ -794,6 +876,8 @@ def _markdown_rich_theme(p: dict[str, str], minimal: bool = False):
         "markdown.strong":      f"bold {p['fg']}",
         "markdown.em":          f"italic {p['fg']}",
         "markdown.s":           f"strike {p['dim']}",
+        "markdown.table.border": p["border"],
+        "markdown.table.header": f"bold {p['fg']}",
     })
 
 
@@ -887,7 +971,7 @@ Screen { background: $ga-bg; color: $ga-fg; }
 #tipbar {
     height: 1;
     background: $ga-bg;
-    padding: 0 2;
+    padding: 0;
     color: $ga-dim;
 }
 
@@ -916,6 +1000,22 @@ SelectionList.picker > .selection-list--button { color: $ga-dim; }
 SelectionList.picker > .selection-list--button-selected { color: $ga-green; }
 SelectionList.picker > .selection-list--button-highlighted { background: transparent; }
 
+/* Searchable `/continue` picker wrapper. Textual's Vertical container defaults
+   to a flex-like height in this scroll layout; if left implicit, scroll_end can
+   align only the wrapper's tail and leave the search box / options hidden under
+   the composer. Keep the wrapper content-sized; the inner OptionList.picker
+   remains the only scrollable/clamped part (12 rows). */
+SearchableChoiceList.picker {
+    height: auto;
+    margin: 0 0 1 0;
+}
+
+/* `/continue` search box: one-row gap above (to separate the input from the
+   "选择要恢复的会话 …" prompt header) and one-row gap below (to separate it
+   from the result list), so the input is visually distinct on both sides
+   (user feedback 2026-05-27). */
+#continue-search { margin: 1 0 1 0; }
+
 .role {
     height: 1;
     margin-top: 1;
@@ -926,7 +1026,10 @@ SelectionList.picker > .selection-list--button-highlighted { background: transpa
     margin-bottom: 0;
 }
 .fold-header:hover { background: $ga-sel-bg; }
-.spinner { height: 1; }
+.spinner {
+    height: 1;
+    margin-top: 1;
+}
 
 #palette {
     height: auto;
@@ -993,7 +1096,28 @@ class ChatMessage:
     kind: str = "text"   # "text" | "choice"
     choices: list = field(default_factory=list)   # [(label, value), ...]
     on_select: Optional[Callable] = field(default=None, repr=False)
+    # Optional Esc/cancel hook for choice cards. When set, _cancel_choice
+    # invokes this *after* removing the card (used by /scheduler's submit-
+    # confirm card to re-show the picker, mirroring ask_user's free-text
+    # "Esc rolls back to the previous picker" UX).
+    on_cancel: Optional[Callable] = field(default=None, repr=False)
     selected_label: Optional[str] = None
+    # Indices into `choices` that should render pre-ticked when the card first
+    # mounts (multi_choice only). Used by /scheduler so already-running
+    # services show up checked, making "untick = stop" discoverable (bug#4).
+    preselected_indices: list[int] = field(default_factory=list)
+    # Optional lazy-render hints for choice pickers with huge option counts
+    # (e.g. /continue across thousands of sessions). Default is empty / 0,
+    # so every existing call site keeps the eager-mount behavior bit-for-bit.
+    lazy_choice_items: Optional[list] = field(default=None, repr=False)
+    lazy_choice_batch: int = 0
+    # `/continue` picker opt-in: when True, _mount_message wraps the picker
+    # with an Input filter; `all_choices` is the unfiltered baseline so empty
+    # queries restore the full list. Other call sites keep searchable=False
+    # (default) and the existing eager/lazy paths run untouched.
+    searchable: bool = False
+    search_query: str = ""
+    all_choices: Optional[list] = field(default=None, repr=False)
     image_paths: list[str] = field(default_factory=list)
     _role_widget: Any = field(default=None, repr=False)
     _hint_widget: Any = field(default=None, repr=False)
@@ -1075,6 +1199,14 @@ COMMANDS = [
     ("/llm",      "[n]",              "查看 / 切换模型"),
     ("/btw",      "<question>",       "side question — 不打断主 agent"),
     ("/review",   "[request]",         "in-session 代码审查（直接输出报告）"),
+    # ── slash_cmds bundle (prompt-injection + /scheduler picker).  Kept in
+    # the same table so /-completion + the palette pick them up for free.
+    ("/update",    "[note]",           "git pull 更新 GA 仓库并报告影响面"),
+    ("/autorun",   "[seed]",           "进入 autonomous_operation 自主模式"),
+    ("/morphling", "[target]",         "启用 Morphling 蒸馏 / 吞噬外部技能"),
+    ("/goal",      "[goal]",           "进入 Goal 模式（需 condition 约束）"),
+    ("/hive",      "[target]",         "进入 Hive 多 worker 协作模式"),
+    ("/scheduler", "",                 "多选启动 reflect 任务 / 查看 cron"),
     ("/continue", "[n|name]",         "列出 / 恢复历史会话"),
     ("/cost",     "[all]",            "显示当前会话 token 用量（all = 所有会话）"),
     ("/export",   "clip|<file>|all",  "导出最后回复"),
@@ -1108,6 +1240,360 @@ class ChoiceList(OptionList):
             self.app._cancel_choice(self.msg)
         except Exception:
             pass
+
+
+class LazyChoiceList(ChoiceList):
+    """ChoiceList that materializes options in bounded batches.
+
+    Why: `/continue` can list thousands of historical sessions; mounting every
+    `Option` up-front stalls Textual's render pipeline for ~hundreds of ms and
+    inflates the row cache. We mount the first `batch` rows immediately so the
+    picker is interactive on first paint, then extend the mounted set as the
+    cursor approaches the loaded tail (Down/PageDown/End) or as the user asks
+    for the last row from the top via Up — see `action_cursor_up`.
+
+    Back-end contract: ChoiceList already accepts whatever the picker's
+    `highlighted` Option's prompt is — the consumer code uses the index via
+    `msg.choices`. Lazy only changes *when* rows enter the DOM, not the value
+    contract. Falls back to eager super() behaviour for empty / tiny lists.
+    """
+
+    def __init__(self, msg: "ChatMessage", labels: list, batch: int = 50, **kwargs):
+        self._lazy_labels = list(labels or [])
+        self._lazy_loaded = 0
+        self._lazy_batch = max(1, int(batch or 50))
+        super().__init__(msg, **kwargs)
+        # Mount the first batch synchronously so the picker is usable on the
+        # very first frame; remaining rows stream in on demand.
+        self._load_more(self._lazy_batch)
+
+    @property
+    def _has_more(self) -> bool:
+        return self._lazy_loaded < len(self._lazy_labels)
+
+    def _load_more(self, count: Optional[int] = None) -> bool:
+        if not self._has_more:
+            return False
+        take = (len(self._lazy_labels) - self._lazy_loaded) if count is None else max(1, int(count))
+        end = min(len(self._lazy_labels), self._lazy_loaded + take)
+        try:
+            self.add_options([Option(self._lazy_labels[i]) for i in range(self._lazy_loaded, end)])
+        except Exception:
+            # If the list isn't mounted yet (very early call), fall back to
+            # buffering via _options if available; otherwise silently bail so
+            # the eager half still works.
+            return False
+        self._lazy_loaded = end
+        return True
+
+    def _ensure_window(self) -> None:
+        """Extend the loaded window when the cursor nears the tail."""
+        hi = self.highlighted
+        if hi is None or not self._has_more:
+            return
+        if hi >= max(0, self._lazy_loaded - 5):
+            self._load_more(self._lazy_batch)
+
+    def action_cursor_down(self) -> None:
+        before = self.highlighted
+        super().action_cursor_down()
+        # If Down had no effect (cursor was at the last loaded row), extend.
+        if self.highlighted == before and self._has_more:
+            if self._load_more(self._lazy_batch):
+                super().action_cursor_down()
+        self._ensure_window()
+
+    def action_page_down(self) -> None:
+        # PageDown can leap ~10 rows at once; pre-extend by a full batch so the
+        # visible window doesn't get capped by the load horizon.
+        if self._has_more:
+            self._load_more(self._lazy_batch)
+        super().action_page_down()
+        self._ensure_window()
+
+    def action_last(self) -> None:
+        # End/Last must reveal the genuine last session, not the last *loaded*
+        # row. Load everything (one-shot, no batching loop) then defer to super.
+        if self._has_more:
+            self._load_more(None)
+        super().action_last()
+
+    def action_cursor_up(self) -> None:
+        # OptionList wraps Up-at-row-0 to the last *mounted* row. With lazy
+        # loading that would land on row 99, not on the actual most-recent
+        # session. Detect the wrap intent and redirect to the real tail.
+        cur = self.highlighted
+        if (cur in (None, 0)) and self._has_more:
+            self._load_more(None)
+            try:
+                self.highlighted = len(self._lazy_labels) - 1
+                return
+            except Exception:
+                pass
+        super().action_cursor_up()
+
+
+def _filter_choices(all_choices: list, query: str) -> list:
+    """Case-insensitive multi-term filter for `/continue` style pickers.
+
+    `all_choices` is `[(label, value), ...]`. Each whitespace-separated token
+    in `query` must hit somewhere in either:
+      * the label text (cheap, always tried first), or
+      * the basename of `value` when it looks like a path, or
+      * the **content** of the session file at `value` (first ~1MB), so users
+        who remember a phrase from inside a session ("Conductor", "subB diff",
+        a file path they pasted) can find it back.
+
+    Empty/whitespace query short-circuits to the full list. Lives at module
+    scope so the smoke test can exercise it without booting the TUI.
+    """
+    q = (query or "").strip().lower()
+    if not q:
+        return list(all_choices or [])
+    terms = [t for t in q.split() if t]
+    if not terms:
+        return list(all_choices or [])
+
+    # Lazy import: continue_cmd already lives next to this module and provides
+    # the bounded-window file grep. We keep the import inside the function so
+    # other (non-/continue) pickers don't pay for it on app startup.
+    try:
+        from . import continue_cmd as _cc
+    except Exception:
+        try:
+            import continue_cmd as _cc  # type: ignore
+        except Exception:
+            _cc = None
+
+    out = []
+    for item in (all_choices or []):
+        try:
+            label, value = item[0], item[1]
+        except (TypeError, IndexError):
+            continue
+        meta = str(label).lower()
+        if isinstance(value, str) and value:
+            meta = meta + "\n" + os.path.basename(value).lower()
+        if all(t in meta for t in terms):
+            out.append(item)
+            continue
+        # Fall back to session-file content grep so phrases that only appear
+        # inside the conversation (not in the one-line preview label) still
+        # surface. Path-shaped string values only — non-path values skip.
+        if (
+            _cc is not None
+            and isinstance(value, str)
+            and value
+            and os.path.isfile(value)
+            and _cc.file_contains_all(value, terms)
+        ):
+            out.append(item)
+    return out
+
+
+class SearchableChoiceList(Vertical):
+    """Picker wrapper: an Input filter on top of an inner ChoiceList.
+
+    Only used when `ChatMessage.searchable=True` (today: `/continue`). Other
+    pickers keep mounting `ChoiceList` / `LazyChoiceList` / `MultiChoiceList`
+    directly so this code path has zero blast radius outside `/continue`.
+
+    The inner picker is rebuilt on every query change because OptionList
+    doesn't expose a stable "replace all options" primitive that plays nice
+    with the lazy-loading subclass. Rebuilds are cheap relative to the user's
+    typing cadence and use the same eager/lazy threshold as the original
+    `_mount_message` (≤50 eager, >50 lazy).
+    """
+
+    LAZY_THRESHOLD = 50
+
+    def __init__(self, msg: "ChatMessage", initial_picker: Optional[OptionList] = None, **kwargs):
+        super().__init__(**kwargs)
+        self.msg = msg
+        self._search_input: Optional[Input] = None
+        # `initial_picker` is the eager/lazy widget that `_mount_message`
+        # already built from the unfiltered choices. We reuse it on first
+        # mount so the eager/lazy decision stays in one place.
+        self.picker: Optional[OptionList] = initial_picker
+
+    def compose(self):
+        self._search_input = Input(
+            value=self.msg.search_query or "",
+            placeholder="Search sessions: type to filter, Esc to cancel",
+            id="continue-search",
+        )
+        yield self._search_input
+        if self.picker is None:
+            self.picker = self._build_picker(self.msg.choices)
+        yield self.picker
+
+    def on_mount(self) -> None:
+        # First paint: the inner picker was just yielded from compose, but a
+        # LazyChoiceList populates its rows across later refresh passes. Defer
+        # a scroll so we pin the *settled* wrapper height into view rather than
+        # racing the lazy fill (see _rescroll_into_view).
+        self._rescroll_into_view()
+
+    def _rescroll_into_view(self) -> None:
+        """Pin this picker into the viewport after its inner list (re)mounts.
+
+        The inner LazyChoiceList fills its option rows across refresh passes,
+        so the wrapper's final height isn't known until after the next layout.
+        Scrolling synchronously here — or relying solely on the single
+        deferred scroll_end in `_mount_message` — can fire before those rows
+        land, leaving the options below the fold (the `/continue` bug seen
+        with a populated history). Deferring our own `scroll_visible()` to
+        after the next refresh guarantees we scroll against the settled
+        height. Covers both first mount and every query rebuild. Guarded: a
+        harmless no-op if the widget is already detached.
+        """
+        def _do():
+            try:
+                self.scroll_visible(animate=False)
+            except Exception:
+                pass
+        try:
+            self.call_after_refresh(_do)
+        except Exception:
+            _do()
+
+    def _build_picker(self, choices: list) -> ChoiceList:
+        labels = [lbl for lbl, _ in choices]
+        # `classes="picker"` is what lets the OptionList.picker CSS rule
+        # (`max-height: 12`) clamp the inner list's physical height. Without
+        # it the inner ChoiceList falls back to OptionList's default
+        # `max-height: 100%`, which — combined with this wrapper being a
+        # plain Vertical (height: 1fr inside a VerticalScroll → content-sized)
+        # — lets the picker grow to ≈50 rows and push the head / role / search
+        # input above the viewport fold on `/continue`. The outer wrapper
+        # already carries `classes="picker"` from `_mount_message`, but that
+        # selector is type-qualified (`OptionList.picker, SelectionList.picker`)
+        # so it does NOT match the Vertical wrapper — only the inner list it
+        # builds can claim the height cap. (Root-cause fix 2026-05-27.)
+        if len(choices) > self.LAZY_THRESHOLD:
+            return LazyChoiceList(self.msg, labels, batch=self.LAZY_THRESHOLD, classes="picker")
+        return ChoiceList(self.msg, *labels, classes="picker")
+
+    # Debounce window for incremental filtering. Content-grep across ~270
+    # session files costs ~0.2s; running it per keystroke makes the Input
+    # feel laggy. Wait until the user pauses for this many seconds before
+    # rebuilding the picker. Empty query still applies immediately so a
+    # Ctrl+U / backspace-to-empty restores the full list with no perceptible
+    # delay. Tuned 2026-05-27 on user feedback ("每输入一个 char 都会立马搜索").
+    DEBOUNCE_SEC = 0.22
+
+    def on_input_changed(self, event) -> None:
+        if event.input is not self._search_input:
+            return
+        query = event.value or ""
+        self.msg.search_query = query
+        # Cancel any pending rebuild from a previous keystroke — last input
+        # wins, so we never grep for an intermediate prefix the user has
+        # already moved past.
+        prev = getattr(self, "_debounce_timer", None)
+        if prev is not None:
+            try:
+                prev.stop()
+            except Exception:
+                pass
+            self._debounce_timer = None
+        # Empty query: clearing the box should feel instant, no debounce.
+        if not query.strip():
+            self._apply_filter(query)
+            return
+        # Otherwise schedule a single deferred rebuild.
+        try:
+            self._debounce_timer = self.set_timer(
+                self.DEBOUNCE_SEC,
+                lambda q=query: self._apply_filter(q),
+            )
+        except Exception:
+            # Fallback: if set_timer is unavailable for any reason, apply
+            # synchronously so search at least still works.
+            self._apply_filter(query)
+
+    def _apply_filter(self, query: str) -> None:
+        """Rebuild the picker for `query`. Called from the debounce timer or
+        directly for the empty-query fast path. Safe to call after the widget
+        has been unmounted (guards every DOM op)."""
+        self._debounce_timer = None
+        # If the input value has moved on while we were waiting, skip this
+        # stale rebuild — a fresher timer will land shortly with the latest
+        # text. This keeps fast typing snappy without queueing grep work.
+        try:
+            current = self._search_input.value if self._search_input else query
+        except Exception:
+            current = query
+        if (current or "") != (query or ""):
+            return
+        filtered = _filter_choices(self.msg.all_choices or [], query)
+        self.msg.choices = filtered
+        # Remove the old picker before mounting a new one. `remove()` is sync
+        # enough for our needs — Textual flushes the DOM before the next paint.
+        if self.picker is not None:
+            try:
+                self.picker.remove()
+            except Exception:
+                pass
+            self.picker = None
+        if not filtered:
+            # Show a disabled hint row so Enter on an empty result set is a
+            # no-op rather than a crash inside _collapse_choice.
+            empty = ChoiceList(self.msg, "(no matches)", classes="picker")
+            try:
+                empty.disabled = True
+            except Exception:
+                pass
+            self.picker = empty
+        else:
+            self.picker = self._build_picker(filtered)
+        try:
+            self.mount(self.picker)
+        except Exception:
+            # Widget likely unmounted between the timer firing and now (e.g.
+            # user pressed Esc). Drop silently — nothing to render into.
+            return
+        # A rebuilt result set changes the wrapper height; re-pin it into view
+        # so a query that shrinks/grows the list never leaves the picker (or
+        # the search Input) stranded below the fold. Same deferred-scroll
+        # rationale as first mount.
+        self._rescroll_into_view()
+
+    def on_key(self, event) -> None:
+        # While the Input has focus, redirect navigation keys to the picker so
+        # the user can keep typing yet still drive selection. Enter/Right on
+        # the Input commits the current highlight.
+        if self._search_input is None or self.picker is None:
+            return
+        if not self._search_input.has_focus:
+            return
+        key = event.key
+        if key in ("down", "up", "pageup", "pagedown", "home", "end"):
+            try:
+                self.picker.focus()
+                # Replay one step so the very first arrow doesn't get swallowed
+                # by the focus change. Subsequent arrows go straight to the picker.
+                action = {
+                    "down": self.picker.action_cursor_down,
+                    "up": self.picker.action_cursor_up,
+                    "pagedown": getattr(self.picker, "action_page_down", None),
+                    "pageup": getattr(self.picker, "action_page_up", None),
+                    "home": getattr(self.picker, "action_first", None),
+                    "end": getattr(self.picker, "action_last", None),
+                }.get(key)
+                if action is not None:
+                    action()
+            except Exception:
+                pass
+            event.stop(); event.prevent_default()
+            return
+        if key in ("enter", "right"):
+            try:
+                self.picker.action_select()
+            except Exception:
+                pass
+            event.stop(); event.prevent_default()
+            return
 
 
 class MultiChoiceList(SelectionList):
@@ -1282,10 +1768,60 @@ class InputArea(TextArea):
         Binding("cmd+v",       "paste", "Paste", show=False),
         # Ctrl+U: readline-style kill-line, repurposed here to clear the whole input.
         Binding("ctrl+u",      "clear_input", "ClearInput", show=False),
+        # Ctrl+S: toggle-stash the current draft (Claude Code muscle-memory).
+        # First press → stash text + clear input; second press on an empty
+        # input → restore the stashed draft. Independent of Up/Down history
+        # so a queued draft survives sending the previous one.
+        # NOTE: must use `self.reset()` (not `self.text = ""`) — assigning
+        # `.text` on a TextArea rebuilds the document + wrapped_document and
+        # blocks the UI for seconds on long pastes (cf. PR#479, user report
+        # 2026-05-27 "ctrl+s 完全卡死"). `reset()` clears in-place.
+        Binding("ctrl+s",      "stash", "Stash", show=False),
+        Binding("cmd+s",       "stash", "Stash", show=False),
     ]
 
     def action_noop(self) -> None:
         pass
+
+    def action_stash(self) -> None:
+        """Stash/restore the input draft.
+
+        - Non-empty input → save into `_draft_stash`, then `reset()` the
+          TextArea. `reset()` is O(1)-ish vs the multi-second relayout
+          that `self.text = ""` triggers on large drafts.
+        - Empty input + a previous stash → put the saved text back so the
+          user can keep typing where they left off.
+        - Empty input + no stash → no-op (accidental presses harmless).
+        """
+        current = self.text
+        if current:
+            self._draft_stash = current
+            self.reset()
+            self._history_index = -1
+            self._history_stash = ""
+            try: self.app._hide_palette()
+            except Exception: pass
+            try: self.app._resize_input(self)
+            except Exception: pass
+        elif self._draft_stash:
+            stashed = self._draft_stash
+            self._draft_stash = ""
+            self._history_index = -1
+            self._history_stash = ""
+            # Suppress palette popup during the bulk insert — restoring
+            # a slash-command draft should not re-trigger the command picker.
+            try: self._suppress_palette_next_change()
+            except Exception: pass
+            self.text = stashed
+            try:
+                # `cursor_location = document.end` is multi-line safe;
+                # `move_cursor((0, len(stashed)))` clamps to row 0 and
+                # would mis-position the caret on multi-line drafts.
+                self.cursor_location = self.document.end
+            except Exception:
+                pass
+            try: self.app._resize_input(self)
+            except Exception: pass
 
     def action_clear_input(self) -> None:
         self.reset()
@@ -1398,6 +1934,9 @@ class InputArea(TextArea):
         self._input_history: list[str] = []
         self._history_index: int = -1         # -1 means not browsing
         self._history_stash: str = ""
+        # Ctrl+S scratch draft (PR#479 semantics). Distinct from
+        # `_history_stash`, which is the Up/Down-arrow working buffer.
+        self._draft_stash: str = ""
         self._HISTORY_MAX = 200
 
     def expand_placeholders(self, text: str) -> str:
@@ -1966,6 +2505,14 @@ class GenericAgentTUI(App[None]):
             "restore": self._cmd_restore, "btw": self._cmd_btw, "review": self._cmd_review,
             "continue": self._cmd_continue, "cost": self._cmd_cost,
             "reload-keys": self._cmd_reload_keys,
+            # slash_cmds bundle — see frontends/slash_cmds.py for the prompt
+            # bodies + reflect/scheduler discovery.  All but /scheduler are
+            # thin shims that build a prompt and re-enter submit_user_message,
+            # so the agent processes them as ordinary turns.
+            "update": self._cmd_slash_inject, "autorun": self._cmd_slash_inject,
+            "morphling": self._cmd_slash_inject, "goal": self._cmd_slash_inject,
+            "hive": self._cmd_slash_inject,
+            "scheduler": self._cmd_scheduler,
             "quit": self._cmd_quit, "exit": self._cmd_quit,
         }
         try:
@@ -2582,7 +3129,19 @@ class GenericAgentTUI(App[None]):
             lines = inp.wrapped_document.height or inp.document.line_count
         except Exception:
             lines = inp.document.line_count
-        inp.styles.height = min(max(lines, 1), 3) + 2  # +2 for padding 1 2 top/bottom
+        target = min(max(lines, 1), 3) + 2  # +2 for padding 1 2 top/bottom
+        # No-op guard: assigning `styles.height` re-triggers a screen-wide,
+        # O(mounted-widgets) relayout in Textual even when the value is
+        # unchanged. With 100+ messages on screen each call costs hundreds of
+        # ms, which makes typing laggy and makes Ctrl+S/stash feel frozen
+        # (this method is called on every keystroke and twice per stash/submit).
+        # `_resize_input` is the only writer of the input height, so caching the
+        # last value we applied is an authoritative, API-stable way to skip the
+        # redundant relayouts. A genuine height change still relayouts once.
+        if getattr(inp, "_ga_last_height", None) == target:
+            return
+        inp._ga_last_height = target
+        inp.styles.height = target
 
     def on_input_area_submitted(self, event: "InputArea.Submitted") -> None:
         inp = event.input_area
@@ -2665,6 +3224,13 @@ class GenericAgentTUI(App[None]):
         for m in reversed(self.current.messages):
             if m.kind == "choice" and m.selected_label is None:
                 w = m._body_widget
+                # SearchableChoiceList wraps a ChoiceList; expose the inner
+                # picker so all the existing keyboard / selected_label code
+                # (action_select, page_up/down, etc.) works untouched.
+                if isinstance(w, SearchableChoiceList):
+                    if isinstance(w.picker, ChoiceList):
+                        return w.picker
+                    return None
                 if isinstance(w, ChoiceList):
                     return w
         return None
@@ -2684,14 +3250,28 @@ class GenericAgentTUI(App[None]):
             self.query_one("#input", InputArea).focus()
         except Exception:
             pass
+        # ask_user-style rollback hook: if the card declared an on_cancel
+        # callable (e.g. /scheduler submit-confirm wants Esc to re-show the
+        # picker), fire it after the card is gone.
+        cb = getattr(msg, "on_cancel", None)
+        if cb is not None:
+            try: cb()
+            except Exception as e:
+                self._system(f"on_cancel 异常: {type(e).__name__}: {e}")
 
     def _finalize_multi_choice(self, msg: ChatMessage, indices: list[int]) -> None:
         """User pressed Enter on a MultiChoiceList.
 
         - If any picked entry is the free-text sentinel, switch the whole
           message into free-text mode (the user wants to type instead).
-        - Otherwise post a `Ready to submit your answers?` confirmation
-          card (Submit / Edit answer) before the agent sees it.
+        - If `msg.on_select` is set, *the picker owner* consumes the picked
+          values directly (used by `/scheduler`'s multi-pick reflect launcher).
+          We still collapse the picker into a "Selected: ..." breadcrumb so the
+          scrollback shows what happened, but skip the `Submit answers?`
+          confirmation card — the caller handles follow-up actions itself.
+        - Otherwise (default `ask_user` multi-mode) post a `Ready to submit
+          your answers?` confirmation card (Submit / Edit answer) before the
+          agent sees it.
 
         Indices are SelectionList values (set = list index in _mount_message)."""
         picked = [msg.choices[i] for i in indices if 0 <= i < len(msg.choices)]
@@ -2699,8 +3279,14 @@ class GenericAgentTUI(App[None]):
             self._enter_free_text_mode(msg)
             return
         labels = [lbl for lbl, _ in picked]
-        joined = "; ".join(labels)
-        if not labels: return  # nothing selected → keep the picker up
+        values = [val for _, val in picked]
+        # Empty selection: for default ask_user multi-mode this means "nothing
+        # picked yet" → keep the picker up.  But a picker *owner* (on_select set,
+        # e.g. /scheduler) treats an empty set as a deliberate action — namely
+        # "stop everything that was preselected" — so we must let it through.
+        if not labels and msg.on_select is None:
+            return  # nothing selected → keep the picker up
+        joined = "; ".join(labels) if labels else "（无 / none）"
         question = msg.content.split("    ")[0].rstrip() if "    " in msg.content else msg.content
         msg.selected_label = f"{question} → {joined}"
         msg.content = msg.selected_label
@@ -2715,6 +3301,14 @@ class GenericAgentTUI(App[None]):
         if msg._hint_widget is not None: msg._hint_widget.remove(); msg._hint_widget = None
         if msg._body_widget is not None: msg._body_widget.remove()
         msg._body_widget = new_widget
+        # Picker-owner short-circuit: caller wants the raw list of picked
+        # values, no confirm card.  Try labels too so callers can pick either.
+        if msg.on_select is not None:
+            try:
+                msg.on_select(values)
+            except Exception as e:
+                self._system(f"multi_choice on_select 异常: {type(e).__name__}: {e}")
+            return
         sess = self.sessions.get(self.current_id)
         if sess is None: return
         confirm = ChatMessage(
@@ -2759,10 +3353,22 @@ class GenericAgentTUI(App[None]):
         body.append("✓ ", style=C_GREEN)
         body.append(display, style=C_FG)
         new_widget = SelectableStatic(body, classes="msg")
-        anchor = msg._hint_widget or msg._body_widget
-        if anchor is not None:
-            container.mount(new_widget, after=anchor)
-        else:
+        # Prefer hint anchor; fall back to body; finally append at the bottom.
+        # `getattr(..., "is_mounted", False)` guards against a hint that was
+        # already removed by a concurrent re-render path (Textual raises
+        # NoWidget when mounting after a detached widget).
+        anchor = msg._hint_widget if getattr(msg._hint_widget, "is_mounted", False) else None
+        if anchor is None and getattr(msg._body_widget, "is_mounted", False):
+            anchor = msg._body_widget
+        try:
+            if anchor is not None:
+                container.mount(new_widget, after=anchor)
+            else:
+                container.mount(new_widget)
+        except Exception:
+            # Last-resort: append at the end so the user still sees the choice
+            # they made. The selectable widget itself is correct; only its
+            # placement degrades.
             container.mount(new_widget)
         if msg._hint_widget is not None:
             msg._hint_widget.remove()
@@ -3129,11 +3735,24 @@ class GenericAgentTUI(App[None]):
             nm = _sn.name_for(path) if _sn else ""
             tag = f"{nm} · " if nm else ""
             choices.append((f"{_short_age(mtime)} · {tag}{n}轮 · {preview}", path))
-        head = f"选择要恢复的会话 ({len(sessions)} 条 · ↑/↓ 移动，→/Enter 确认，Esc 取消)"
+        head = f"选择要恢复的会话 ({len(sessions)} 条 · 输入关键字过滤 · ↑/↓ 移动，→/Enter 确认，Esc 取消)"
         msg = ChatMessage(
             role="system", content=head, kind="choice", choices=choices,
             on_select=lambda v: self._do_continue_restore(v),
         )
+        # `/continue` is the only place that opts into the searchable picker
+        # (per task B 2026-05-27). `all_choices` is the unfiltered baseline so
+        # clearing the query restores the full list; `searchable=True` flips
+        # the `_mount_message` branch to wrap the picker with an Input filter.
+        msg.searchable = True
+        msg.all_choices = list(choices)
+        # Threshold chosen empirically (user-preferred 2026-05-27): mounting 50
+        # rows fits typical viewport with no perceptible cost, so the eager
+        # path stays for ≤50 entries; larger lists stream via LazyChoiceList
+        # with the same 50-row first batch.
+        if len(choices) > 50:
+            msg.lazy_choice_items = [label for label, _ in choices]
+            msg.lazy_choice_batch = 50
         sess.messages.append(msg)
         self._refresh_messages()
 
@@ -3393,6 +4012,195 @@ class GenericAgentTUI(App[None]):
     def _cmd_quit(self, args, raw):
         self._reset_terminal_title()
         self.exit()
+
+    # ---------------- slash_cmds bundle ----------------
+    def _cmd_slash_inject(self, args, raw):
+        """`/update /autorun /morphling /goal /hive` → prompt
+        injection.  We strip the leading slash command from `raw`, hand the
+        tail to `slash_cmds.prompt_for`, and re-enter `submit_user_message`
+        so the agent sees it as a normal user turn (display bubble still
+        shows the original `/cmd ...` for clarity).
+        """
+        from frontends import slash_cmds
+        text = (raw or "").strip()
+        # Pull just the leading token to look up the prompt builder.
+        head = text.split(None, 1)[0] if text else ""
+        if not head.startswith("/"):
+            self._system("❌ /slash 命令解析失败"); return
+        tail = text[len(head):].strip()
+        prompt = slash_cmds.prompt_for(head, tail)
+        if prompt is None:
+            self._system(f"❌ 未知命令 {head}"); return
+        sess = self.current
+        if sess.status == "running":
+            self._system(f"#{sess.agent_id} 正在跑，/stop 后再发。")
+            return
+        # Keep the user's original `/cmd ...` as the visible bubble so the
+        # transcript stays self-explanatory; the agent sees the long prompt.
+        self.submit_user_message(prompt, display_text=text or head)
+
+    def _cmd_scheduler(self, args, raw):
+        """`/scheduler` lists reflect/*.py + sche_tasks/*.json and starts the
+        chosen reflect task(s).  Usage:
+          /scheduler                — interactive multi-select picker
+                                      (Space toggles, Enter launches every
+                                      checked task in one batch)
+          /scheduler start <name>   — start one reflect task by stem (CLI)
+          /scheduler start a,b,c    — start several at once (CSV, CLI)
+        Cron-style sche_tasks/*.json are read-only here; the launch.pyw
+        scheduler daemon already owns them.
+        """
+        from frontends import slash_cmds
+        body = " ".join(args).strip()
+        parts = body.split(None, 1)
+        head = parts[0].lower() if parts else ""
+        if head in ("start", "run"):
+            names = (parts[1] if len(parts) > 1 else "").replace(",", " ").split()
+            if not names:
+                self._system("Usage: /scheduler start <reflect_name>[,<name2>...]"); return
+            self._launch_service_batch(names)
+            return
+        # Default: surface a MultiChoiceList picker for reflect/*.py so the
+        # user can tick several tasks at once (Space toggle, Enter submit).
+        # sche_tasks/*.json are read-only — shown below as a system advisory
+        # so the user still has visibility, but they can't be launched here.
+        services = slash_cmds.list_launchable_services()
+        if not services:
+            self._system("📋 没有可启动的服务（reflect/*.py 与 frontends/*app*.py 均为空）"); return
+        # bug#4: query what's actually alive *now* (psutil cmdline scan) so the
+        # picker can (a) pre-tick running services and (b) tag them visibly.
+        # Unticking a pre-ticked row therefore reads as "stop this service".
+        try:
+            running = slash_cmds.running_services()  # {name: pid}
+        except Exception:
+            running = {}
+        # Mirror hub.pyw: reflect tasks + frontend apps, grouped by kind so the
+        # picker reads like the GUI launcher.  Picker value = hub-style path.
+        choices = []
+        preselected = []   # indices into `choices` that are running right now
+        for kind in ("reflect", "frontend"):
+            for s in (svc for svc in services if svc["kind"] == kind):
+                doc = f"  — {s['doc']}" if s["doc"] else ""
+                tag = "  ● running" if s["name"] in running else ""
+                if s["name"] in running:
+                    preselected.append(len(choices))
+                choices.append((f"{s['name']}{doc}{tag}", s["name"]))
+        sess = self.current
+        hint = ("📋 选择要启动的服务（与 hub.pyw 一致：reflect 任务 + frontend 应用）"
+                "    Space 勾选 · Enter 提交 · Esc 取消 — 提交后还需二次确认")
+        if running:
+            hint += f"\n   ● = 正在运行（已勾选）；取消勾选即停止该服务（共 {len(running)} 个在运行）"
+        msg = ChatMessage(
+            role="system",
+            content=hint,
+            kind="multi_choice",
+            choices=choices,
+            preselected_indices=preselected,
+            on_select=lambda names, base=dict(running): self._scheduler_confirm(names, base),
+        )
+        sess.messages.append(msg)
+        self._refresh_messages()
+
+    def _scheduler_diff(self, selected: list[str], running: dict) -> tuple[list[str], list[str]]:
+        """Translate the picker's *final tick state* into actions relative to
+        the running baseline (bug#4):
+          starts = ticked but not currently running
+          stops  = currently running but unticked
+        Order is preserved from `selected`/`running` for stable summaries."""
+        sel = list(dict.fromkeys(selected))  # dedupe, keep order
+        run_names = list(running.keys())
+        starts = [n for n in sel if n not in running]
+        stops = [n for n in run_names if n not in sel]
+        return starts, stops
+
+    def _scheduler_confirm(self, names: list[str], running: dict | None = None) -> None:
+        """Picker submitted → ask one more ask_user-style submit-confirm card
+        before actually launching/stopping anything (user-requested safety).
+
+        UX mirrors `ask_user`'s `Ready to submit your answer?` confirmation:
+          - No ✅ glyph on the choice labels (style consistency).
+          - ←/→ Enter Esc hint in the title.
+          - Esc / "Edit selection" → re-open the picker (rollback to previous
+            screen) just like Esc rolls back free-text typing to the picker.
+        bug#4: the card now spells out the *diff* (start X / stop Y) so the
+        consequence of unticking a running service is explicit before commit.
+        """
+        running = running or {}
+        starts, stops = self._scheduler_diff(names, running)
+        if not starts and not stops:
+            self._system("（选择无变化 — 没有要启动或停止的服务）"); return
+        sess = self.current
+        if sess is None: return
+        lines = []
+        if starts:
+            lines.append(f"▶ 启动 {len(starts)} 个: " + "、".join(starts))
+        if stops:
+            lines.append(f"■ 停止 {len(stops)} 个: " + "、".join(stops))
+        detail = "\n".join("   " + ln for ln in lines)
+        confirm = ChatMessage(
+            role="system",
+            content=(f"Ready to submit your selection?\n{detail}"
+                     "\n    ←/→ 选择 · Enter 确认 · Esc 回退"),
+            kind="choice",
+            choices=[("Submit", "__SCHED_GO__"), ("Edit selection", "__SCHED_EDIT__")],
+            on_select=lambda v, st=list(starts), sp=list(stops): self._scheduler_commit(v, st, sp),
+            # Esc on the confirm card → roll back to the picker (ask_user style).
+            on_cancel=lambda: self._cmd_scheduler([], ""),
+        )
+        sess.messages.append(confirm)
+        self._refresh_messages()
+
+    def _scheduler_commit(self, value: str, starts: list[str], stops: list[str]) -> str:
+        """on_select for the submit-confirm card; returns the breadcrumb text
+        shown after the card collapses (see _collapse_choice).
+
+        - Submit (__SCHED_GO__) → apply the start/stop diff.
+        - Edit selection (__SCHED_EDIT__) → re-open the picker (rollback).
+        """
+        if value == "__SCHED_EDIT__":
+            # Re-show the picker on the next tick so the breadcrumb settles
+            # first; using call_after_refresh keeps message order stable.
+            try:
+                self.call_after_refresh(self._cmd_scheduler, [], "")
+            except Exception:
+                self._cmd_scheduler([], "")
+            return "已回到选择界面"
+        if value != "__SCHED_GO__":
+            return "已取消，未改动任何服务"
+        self._apply_scheduler_diff(starts, stops)
+        bits = []
+        if starts: bits.append(f"启动 {len(starts)}")
+        if stops: bits.append(f"停止 {len(stops)}")
+        return "已确认 — " + "、".join(bits) if bits else "已确认（无改动）"
+
+    def _apply_scheduler_diff(self, starts: list[str], stops: list[str]) -> None:
+        """Run the start/stop actions and print one ✅/❌ summary block.
+        Stops run first so a restart (stop+start of the same name) can't race
+        the cmdline scan — though the diff never produces such a pair."""
+        from frontends import slash_cmds
+        lines = []
+        for name in stops:
+            ok, detail = slash_cmds.stop_service(name)
+            lines.append(("■ " if ok else "❌ ") + detail)
+        for name in starts:
+            ok, detail = slash_cmds.start_service(name)
+            lines.append(("▶ " if ok else "❌ ") + detail)
+        if not lines:
+            lines = ["（无改动）"]
+        self._system("调度变更结果:\n" + "\n".join(lines))
+
+    def _launch_service_batch(self, names: list[str]) -> None:
+        """Shared by `/scheduler start ...` (CLI) and the confirmed picker.
+        Launches every requested service via slash_cmds.start_service and
+        prints a single ✅/❌ summary block."""
+        from frontends import slash_cmds
+        if not names:
+            self._system("（未选择任何服务）"); return
+        lines = [f"🚀 批量启动 {len(names)} 个服务："]
+        for n in names:
+            ok, msg = slash_cmds.start_service(n)
+            lines.append(("  ✅ " if ok else "  ❌ ") + msg)
+        self._system("\n".join(lines))
 
     def _reset_terminal_title(self) -> None:
         # Send via sys.__stdout__ — see _update_terminal_title for why.
@@ -4001,7 +4809,15 @@ class GenericAgentTUI(App[None]):
             if m._role_widget is None:
                 self._mount_message(container, m)
         if was_at_bottom:
-            container.scroll_end(animate=False)
+            # Defer the scroll until AFTER Textual has laid out any freshly
+            # mounted widgets (e.g. a SearchableChoiceList picker). Calling
+            # scroll_end() synchronously here races the layout pass: the new
+            # widget still reports a stale/zero height, so we scroll to a
+            # too-short virtual size and land on the message head, then the
+            # picker expands below the fold (the "title visible, options
+            # hidden" bug). call_after_refresh runs post-layout, so the final
+            # height is known and scroll_end pins the true bottom.
+            self.call_after_refresh(lambda: container.scroll_end(animate=False))
 
     def _messages_width(self) -> int:
         try:
@@ -4039,6 +4855,11 @@ class GenericAgentTUI(App[None]):
                     legacy_windows=False).print(HardBreakMarkdown(text), end="")
             wide_raw = wide_buf.getvalue().rstrip("\n")
             narrow_plain = _ANSI_SGR_RE.sub("", narrow_raw)
+            # `_align_md_renders` handles Rich table/box-drawing runs at run
+            # granularity: only the table block is copied visually, while normal
+            # paragraphs in the same widget still use the wrap-stripping wide
+            # source.  A whole-widget table bypass regressed mixed
+            # paragraph+table messages by copying visual wrap newlines.
             source, starts, indents, lens = _align_md_renders(narrow_plain, wide_raw)
             return _MdRender(text=t, source=source, line_starts=starts,
                              line_indents=indents, line_lengths=lens)
@@ -4290,15 +5111,47 @@ class GenericAgentTUI(App[None]):
                 # Index into m.choices is preserved as the Selection value, so
                 # the submit handler can recover labels — including the free-
                 # text option, treated as a "drop everything and type" trigger.
-                widget = MultiChoiceList(m, *(Selection(cl, idx) for idx, (cl, _) in enumerate(m.choices)),
+                # `initial_state=True` for indices already running (bug#4) so
+                # the card opens with them ticked → unticking == "stop this".
+                _pre = set(m.preselected_indices or [])
+                widget = MultiChoiceList(m, *(Selection(cl, idx, idx in _pre)
+                                              for idx, (cl, _) in enumerate(m.choices)),
                                          classes="picker")
             else:
-                widget = ChoiceList(m, classes="picker")
-                for cl, _ in m.choices:
-                    widget.add_option(Option(cl))
+                if m.lazy_choice_items:
+                    # Lazy path: mount only the first batch, stream the rest.
+                    # `lazy_choice_items` holds the label list mirrored from
+                    # m.choices so we never mutate the canonical choices array.
+                    widget = LazyChoiceList(
+                        m, m.lazy_choice_items,
+                        batch=m.lazy_choice_batch or 50,
+                        classes="picker",
+                    )
+                else:
+                    widget = ChoiceList(m, classes="picker")
+                    for cl, _ in m.choices:
+                        widget.add_option(Option(cl))
+                # `searchable` wraps the freshly-built picker in a Vertical
+                # container with an Input filter on top. The original picker
+                # is preserved as `.picker` so `_active_choice`, key routing
+                # and `_collapse_choice` all keep working unchanged.
+                if m.searchable:
+                    widget = SearchableChoiceList(m, widget, classes="picker")
             m._body_widget = widget
             container.mount(widget)
-            self.call_after_refresh(widget.focus)
+            # For searchable pickers we focus the Input so the user can start
+            # typing immediately; for plain pickers we focus the OptionList as
+            # before so arrow keys work out of the box.
+            if isinstance(widget, SearchableChoiceList):
+                def _focus_input(w=widget):
+                    inp = getattr(w, "_search_input", None)
+                    try:
+                        (inp or w).focus()
+                    except Exception:
+                        pass
+                self.call_after_refresh(_focus_input)
+            else:
+                self.call_after_refresh(widget.focus)
             return
 
         if m.kind in ("choice", "multi_choice"):  # selected_label is not None

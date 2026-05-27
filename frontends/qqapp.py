@@ -75,7 +75,11 @@ class QQApp(AgentChatMixin):
         api = self.client.api.post_group_message if is_group else self.client.api.post_c2c_message
         key = "group_openid" if is_group else "openid"
         for part in split_text(content, self.split_limit):
-            await api(**{key: chat_id, "msg_type": 0, "content": part, "msg_id": msg_id, "msg_seq": _next_msg_seq()})
+            seq = _next_msg_seq()
+            try:
+                await api(**{key: chat_id, "msg_type": 2, "markdown": {"content": part}, "msg_id": msg_id, "msg_seq": seq})
+            except Exception:
+                await api(**{key: chat_id, "msg_type": 0, "content": part, "msg_id": msg_id, "msg_seq": seq})
 
     async def on_message(self, data, is_group=False):
         try:

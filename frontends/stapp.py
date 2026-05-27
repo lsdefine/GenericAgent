@@ -94,6 +94,9 @@ def render_sidebar():
         st.toast("Desktop pet started")
     
     if LANG == 'zh':
+        if st.button('🎯 给我找点事做'):
+            st.session_state['_inject_prompt'] = '按照自主行动的规划部分，充分分析我的情况，给我生成一批TODO，务必让我感兴趣'
+            st.rerun(scope="app")
         st.divider()
         if st.button("开始空闲自主行动"):
             st.session_state.last_reply_time = int(time.time()) - 1800
@@ -257,7 +260,9 @@ _js_ime_fix = ("" if os.name == 'nt' else
     "f();new MutationObserver(f).observe(d.body,{childList:1,subtree:1})}()")
 _embed_html(f'<script>{_js_scroll_fix};{_js_ime_fix}</script>', height=0)
 
-if prompt := st.chat_input("any task?"):
+_injected = st.session_state.pop('_inject_prompt', None)
+prompt = st.chat_input("any task?") or _injected
+if prompt:
     ts = time.strftime("%Y-%m-%d %H:%M:%S")
     cmd = (prompt or "").strip()
     def _reset_and_rerun():

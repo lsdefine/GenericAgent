@@ -807,7 +807,12 @@ def _ptk_keypress_to_bytes(kp) -> bytes:
         return any(n in a for a in aliases for n in needles)
 
     # Enter submits; Ctrl+J / Shift+Enter insert newline when PTK can distinguish.
+    # Windows terminals send \r for both Enter/Shift+Enter — detect Shift physically.
     if has('controlm', 'c-m') or key_s in ('\r', '\n'):
+        if _IS_WINDOWS:
+            import ctypes
+            if ctypes.windll.user32.GetAsyncKeyState(0x10) & 0x8000:
+                return b'\n'
         return b'\r'
     if has('controlj', 'c-j', 's-enter', 'shift-enter'):
         return b'\n'

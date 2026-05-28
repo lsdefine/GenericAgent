@@ -2256,16 +2256,13 @@ class SB:
         self._quit = False
         self._cc_t = 0.0                # last bare-Ctrl+C time (arm-to-quit window)
         self._last_esc_t = 0.0          # last bare-Esc time (Esc Esc → /clear)
-        # Pending user inputs queued while the agent was busy (codex-style).
-        # Drained as ONE combined prompt 5 s after the LAST pending arrived
-        # (cooldown resets on each new queue entry).  During the cooldown
-        # the user can Esc-cancel or Up-amend.  When the timer lapses we
-        # try mid-turn injection via `_intervene` first (agent picks it up
-        # at the next turn boundary); fall back to put_task if the agent
-        # is idle.
+        # Hard 3 s deadline from the FIRST queued entry — additional submits
+        # within the window don't extend it, so the inject lands while the
+        # agent is still mid-turn (avoids the "user kept typing → drain fired
+        # too late → fell back to a new task" failure).
         self._pending: list[str] = []
         self._pending_drain_t: float = 0.0
-        self._pending_cooldown: float = 5.0
+        self._pending_cooldown: float = 3.0
         self._epend = b''               # held trailing ESC (split-read disambiguation)
         self._undo: list[tuple[str, int]] = []   # buffer-edit history for Ctrl+Z
         self._redo: list[tuple[str, int]] = []   # cleared on any new edit
@@ -3960,13 +3957,9 @@ class SB:
                 (int(m.group(1)) for m in _IMG_PH_RE.finditer(raw)) if i in self._imgs]
         expanded = self._expand(raw)
         if self._running:
-            # Queue rather than reject — frees the user from /stop just to
-            # tack on a follow-up.  The pending preview block above the
-            # input shows what's waiting; Up amends the last entry, Esc
-            # clears.  Each new entry resets the 5 s cooldown so a burst
-            # of quick edits coalesces into one inject.
             self._pending.append(expanded)
-            self._pending_drain_t = time.time() + self._pending_cooldown
+            if self._pending_drain_t == 0.0:
+                self._pending_drain_t = time.time() + self._pending_cooldown
             self._commit_user(_t('pending.queued_marker', text=expanded))
             self._pstore.clear(); self._fstore.clear(); self._imgs.clear()
             self._render_live()

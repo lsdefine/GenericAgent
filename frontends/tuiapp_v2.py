@@ -4497,13 +4497,13 @@ class GenericAgentTUI(App[None]):
             pass
 
     # ---------------- agent task + stream ----------------
-    # 5 s cooldown after the LAST user submit (cooldown resets per entry).
-    # Drain path:
-    #   running → write to <task_dir>/_intervene; ga.turn_end_callback
-    #             (ga.py:576) prepends it to next_prompt at the next
-    #             turn boundary — message lands mid-run.
-    #   idle    → fall back to put_task for a fresh turn.
-    _PENDING_COOLDOWN_SEC = 5.0
+    # Hard 3 s deadline from the FIRST queued entry — additional submits
+    # within the window don't extend it, so the inject lands while the
+    # agent is still mid-turn (avoids "user kept typing → drain fired too
+    # late → fell back to a new task" failure).  Drain path: running →
+    # <task_dir>/_intervene (ga.turn_end_callback prepends to next_prompt);
+    # idle → put_task for a fresh turn.
+    _PENDING_COOLDOWN_SEC = 3.0
 
     def _session_intervene_path(self, sess: AgentSession) -> Optional[str]:
         td = getattr(sess.agent, 'task_dir', None)
@@ -4544,12 +4544,10 @@ class GenericAgentTUI(App[None]):
         if self._maybe_intercept_free_text(sess, text):
             return -1
         if sess.status == "running":
-            # Codex-style: don't reject, queue.  Cooldown resets per entry
-            # so a burst of edits coalesces into one inject.  Drain fires
-            # `_inject_intervene` (mid-turn) or `put_task` (idle).
             visible = text if display_text is None else display_text
             sess.pending.append(text)
-            sess.pending_drain_at = time.time() + self._PENDING_COOLDOWN_SEC
+            if sess.pending_drain_at == 0.0:
+                sess.pending_drain_at = time.time() + self._PENDING_COOLDOWN_SEC
             sess.messages.append(ChatMessage(
                 "system",
                 f"[queued #{len(sess.pending)}] {visible}",

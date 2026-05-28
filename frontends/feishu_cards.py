@@ -1,8 +1,3 @@
-"""飞书交互卡片的展示层工具。
-
-这里故意只处理呈现，不改变 agent 的决策流程。目标是让长任务更好读。
-"""
-
 from __future__ import annotations
 
 import json
@@ -160,7 +155,6 @@ def build_task_workspace_card(
     max_steps: int = 8,
     title: str = "任务工作台",
 ) -> str:
-    """生成一张持续更新的任务工作台卡片，每轮进展默认折叠。"""
     steps = list(steps or [])
     visible_steps = steps[-max_steps:] if max_steps > 0 else steps
     hidden = max(0, len(steps) - len(visible_steps))

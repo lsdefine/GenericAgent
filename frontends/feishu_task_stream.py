@@ -53,15 +53,18 @@ def split_message(text, limit=7000):
 
 
 def natural_group_final(text):
-    """去掉群聊结论里偏机器感的标题壳。"""
     text = str(text or "").strip()
-    text = re.sub(r"^\s*(?:\*\*)?(?:✅\s*)?(?:结论|最终结论|完成|已完成)(?:\*\*)?\s*[:：]?\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(
+        r"^\s*(?:\*\*)?(?:✅\s*)?(?:结论|最终结论|完成|已完成)(?:\*\*)?\s*[:：]?\s*",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
     text = re.sub(r"^\s*[-=]{3,}\s*", "", text)
     return text.strip() or "_(无文本输出)_"
 
 
 def should_send_plain_final(text, *, turn_count=0, group_compact=False):
-    """判断最终回复是否应该保持普通文本气泡。"""
     raw = str(text or "").strip()
     visible = natural_group_final(raw)
     if not visible or len(visible) > _CASUAL_FINAL_MAX_CHARS:
@@ -74,7 +77,6 @@ def should_send_plain_final(text, *, turn_count=0, group_compact=False):
         return False
     if group_compact:
         return True
-    # 单聊里的短回复也不要强行卡片化，这样更像正常对话。
     return "\n" not in visible
 
 
@@ -163,7 +165,9 @@ def _human_tool_result(result):
         if line.startswith("[Action]") or line.startswith("[Status]") or line.startswith("[Warn]"):
             useful.append(_clip_line(line, limit=360))
             continue
-        if len(line) < 220 or any(token in line for token in ("已", "完成", "失败", "错误", "保存", "路径", "写入", "读取")):
+        if len(line) < 220 or any(
+            token in line for token in ("已", "完成", "失败", "错误", "保存", "路径", "写入", "读取")
+        ):
             useful.append(_clip_line(line, limit=360))
         if len(useful) >= 3:
             break
@@ -175,10 +179,6 @@ def _strip_list_prefix(text):
 
 
 def build_visible_self_talk(summary, tool_calls=None, tool_results=None, content=""):
-    """生成给用户看的单轮小结。
-
-    这不是原始思维链，而是说明本轮做了什么、留下了什么证据、下一步怎么走。
-    """
     summary = _clip_line(summary, limit=180)
     actions = [_human_tool_action(tc) for tc in (tool_calls or [])[:2]]
     result_lines = []
@@ -195,22 +195,14 @@ def build_visible_self_talk(summary, tool_calls=None, tool_results=None, content
         if len(result_lines) >= 2:
             break
     visible_content = _clip_line(content, limit=220)
-
-    finished = summary or "整理当前信息"
-    result = ""
-    if actions:
-        finished = "；".join(actions)
-
-    if result_lines:
-        result = "；".join(result_lines)
-    elif visible_content and visible_content != "...":
-        result = visible_content
-    else:
-        result = "本轮暂无可见产物，已更新阶段判断。"
-
+    has_visible = visible_content and visible_content != "..."
+    finished = "；".join(actions) if actions else summary or "整理当前信息"
+    result = "；".join(result_lines)
+    if not result:
+        result = visible_content if has_visible else "本轮暂无可见产物，已更新阶段判断。"
     if actions:
         next_step = "基于这些结果继续推进下一轮。"
-    elif visible_content and visible_content != "...":
+    elif has_visible:
         next_step = "等待用户反馈或按当前输出继续展开。"
     else:
         next_step = "继续补齐证据后再给结论。"
@@ -244,10 +236,6 @@ def humanize_step_summary(summary, tool_calls=None):
 
 
 def build_step_detail(resp, tool_calls, display_text, *, tool_results=None, include_raw_thinking=False, detail_limit=6000):
-    """生成一轮可见进展。
-
-    默认不展示原始思维链。可见的“思考流”只保留操作痕迹：本轮摘要、动作、产物和用户可见输出。
-    """
     parts = []
     thinking = (getattr(resp, "thinking", "") or "").strip() if resp else ""
     content = display_text((getattr(resp, "content", "") or "")).strip() if resp else ""
@@ -283,7 +271,6 @@ def build_step_detail(resp, tool_calls, display_text, *, tool_results=None, incl
         parts.append("### 产物/证据\n" + "\n".join(result_lines))
     if content and content != "...":
         parts.append(f"### 可见输出\n{content}")
-    # 小结是本轮收口，放在动作、产物和可见输出之后更自然。
     parts.append(turn_summary)
     detail = "\n\n".join(parts).strip() or "_(无可见输出)_"
     if len(detail) > detail_limit:
@@ -292,12 +279,6 @@ def build_step_detail(resp, tool_calls, display_text, *, tool_results=None, incl
 
 
 class FeishuTaskStream:
-    """飞书长任务流。
-
-    长任务应该像一个持续更新的工作台，而不是散落一地的进度消息。
-    默认只更新同一张卡片，每轮过程折叠；短群聊回复仍然走自然文本。
-    """
-
     def __init__(
         self,
         receive_id,
@@ -474,7 +455,6 @@ class FeishuTaskStream:
             self.steps.append((self.turn_count, summary, str(detail or "_(无输出)_")))
 
             if self.quiet:
-                # 群聊里先安静工作，最后给结论，避免刷屏。
                 return
             if self.workspace_card:
                 if self._should_show_workspace():
@@ -503,7 +483,6 @@ class FeishuTaskStream:
                     )
                 return
 
-            # 单聊完整模式
             detail = str(detail or "_(无输出)_")
             if len(detail) > self.detail_limit:
                 detail = detail[:self.detail_limit] + f"\n\n...(已截断, 共 {len(detail)} 字符)"

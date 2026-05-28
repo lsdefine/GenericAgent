@@ -1,5 +1,3 @@
-"""飞书富文本消息工具。"""
-
 from __future__ import annotations
 
 import json
@@ -43,7 +41,6 @@ def _strip_markdown(text: str) -> str:
 
 
 def derive_post_title(text: str, fallback: str = "GA 回复") -> str:
-    """从第一行有意义的内容里取一个稳定标题。"""
     for line in str(text or "").splitlines():
         title = _strip_markdown(line)
         if not title:
@@ -55,7 +52,6 @@ def derive_post_title(text: str, fallback: str = "GA 回复") -> str:
 
 
 def should_send_post(text: str, *, force: bool = False) -> bool:
-    """判断回复是否更适合用富文本消息发送。"""
     text = str(text or "").strip()
     if not text:
         return False
@@ -70,7 +66,6 @@ def should_send_post(text: str, *, force: bool = False) -> bool:
 
 
 def should_send_operational_card(text: str) -> bool:
-    """判断短状态/短报告是否适合用卡片呈现。"""
     if not _OPERATIONAL_CARD_ENABLED:
         return False
     text = str(text or "").strip()
@@ -147,7 +142,6 @@ def _content_rows(text: str) -> list[list[dict[str, Any]]]:
 
 
 def build_post_payload(text: str, *, title: str | None = None) -> str:
-    """把普通文本或轻量 Markdown 转成飞书 post 消息。"""
     text = str(text or "").strip()
     post_title = title or derive_post_title(text)
     lines = text.splitlines()

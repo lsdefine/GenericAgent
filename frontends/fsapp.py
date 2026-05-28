@@ -624,12 +624,10 @@ def _fmt_tool_call(tc):
 
 
 def _build_step_detail(resp, tool_calls):
-    """从 LLM response + tool_calls 组装用户可读的单步详情。"""
     return build_stream_step_detail(resp, tool_calls or [], _display_text)
 
 
 def _make_task_hook(task_stream, task_id, on_final):
-    """飞书任务 hook：每轮更新同一个任务工作台；结束后处理附件。"""
     def hook(ctx):
         try:
             parent = getattr(ctx.get("self"), "parent", None)

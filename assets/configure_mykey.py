@@ -300,6 +300,21 @@ LLM_PROVIDERS = [
         'model_choices': ['anthropic/claude-opus-4-7', 'openai/gpt-5.5'],
     },
     {
+        'id': 'commonstack',
+        'name': 'CommonStack (统一网关)',
+        'desc': '一个 Key 通吃 Claude/GPT/Gemini/DeepSeek/MiniMax/Zhipu/xAI 等',
+        'type': 'native_oai',
+        'template': {
+            'name': 'commonstack', 'apikey': 'sk-<your-commonstack-key>',
+            'apibase': 'https://api.commonstack.ai/v1',
+            'model': 'anthropic/claude-opus-4-7',
+            'api_mode': 'chat_completions',
+            'max_retries': 3, 'connect_timeout': 10, 'read_timeout': 120,
+        },
+        'key_hint': '在 https://commonstack.ai 注册后从 Dashboard 获取 API Key',
+        'model_choices': ['anthropic/claude-opus-4-7', 'openai/gpt-5.5'],
+    },
+    {
         'id': 'crs',
         'name': 'CRS 反代 (Claude Max 多通道)',
         'desc': 'CRS 协议的反代服务，支持 Claude Max / Gemini Ultra 通道',

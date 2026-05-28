@@ -4784,11 +4784,6 @@ class SB:
                 elif isinstance(ev, (SystemEvent, ErrorEvent)):
                     self._finalize(getattr(ev, 'text', None) or getattr(ev, 'message', '')); break
         self._running = False
-        # Note: pending-drain timer is armed on each user submit (resets
-        # every time they add another), not on turn end — that matches
-        # the "5 s cooldown since LAST keystroke" intent.  Maintenance
-        # loop fires _drain_pending when the deadline lapses regardless
-        # of running state.
         # _ticker stops as soon as _running goes False so the title would
         # freeze on the last spinner frame.  Repaint it now to drop the
         # glyph and reveal a clean idle title.

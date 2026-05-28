@@ -4607,11 +4607,6 @@ class GenericAgentTUI(App[None]):
         if done:
             s.status = "idle"
             s.current_display_queue = None
-            # NOTE: cooldown timer is armed on each user submit (see
-            # submit_user_message), NOT here on turn end.  This matches
-            # "5 s since LAST keystroke" semantics: if turn ends within
-            # the cooldown the timer keeps counting, drain fires whenever
-            # the deadline lapses (mid-turn → intervene; idle → put_task).
         self._update_assistant(agent_id, text, task_id=task_id, done=done, refresh_chrome=True)
         # End-of-turn re-parse only; mid-stream `[...]` fragments would flash.
         if done:

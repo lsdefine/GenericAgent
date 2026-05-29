@@ -88,7 +88,7 @@ class AgentManager:
 
     @property
     def mykey_path(self) -> str:
-        return str(Path(self.ga_root) / "mykey.txt")
+        return str(Path(self.ga_root) / "mykey.py")
 
     def ensure_ga_import_path(self) -> Path:
         root = Path(self.ga_root).resolve()

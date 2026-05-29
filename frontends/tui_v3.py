@@ -6,8 +6,11 @@ Run: `python -m frontends.tui_v3` or `python frontends/tui_v3.py`.
 """
 from __future__ import annotations
 
-import atexit, json, logging, os, queue, re, select, shutil, signal, subprocess
-import sys, tempfile, termios, threading, time, tty
+import asyncio, atexit, json, locale, logging, os, queue, random, re, select, shutil, signal, subprocess
+import sys, tempfile, threading, time
+
+_IS_WINDOWS = os.name == 'nt'
+
 
 # Make `frontends/` parent (project root) importable so `from agentmain import …`
 # works whether this file is run as `python -m frontends.tui_v3` or directly
@@ -30,6 +33,710 @@ from rich.text import Text
 from rich.theme import Theme
 from typing import Callable
 
+# ════════════════════════════════════════════════════════════════════════════
+# i18n — minimal dict-based zh/en translation layer (inlined; was tui_v3_i18n.py)
+#
+# - Single nested dict `_I18N[lang][key]` → format string.
+# - `t(key, **fmt)` returns the formatted string for the current language;
+#   falls back to English, then to the key itself (so missing keys are visible).
+# - Language detection: persisted user choice > system locale > 'en'.
+# - Persistence: temp/tui_v3_settings.json (workspace-local, matches v2 pattern).
+#
+# Strings that intentionally stay single-language (English):
+# - Spinner gerunds (Pondering/Brewing/...) — ported from v2.
+# - Tech jargon embedded in zh strings: 'tokens', 'ctx', 'model', 'session', …
+# ════════════════════════════════════════════════════════════════════════════
+
+_SETTINGS_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "temp", "tui_v3_settings.json"
+)
+
+_SUPPORTED = ('zh', 'en')
+_DEFAULT = 'en'
+
+_LANG: str = _DEFAULT
+
+
+# ---------------- spinner gerunds (English only, from v2) ----------------
+
+SPINNER_GERUNDS = (
+    "Pondering", "Reticulating", "Sleuthing", "Hatching", "Pouncing",
+    "Brewing", "Sharpening", "Untangling", "Compiling", "Unraveling",
+    "Distilling", "Calibrating", "Marinating", "Conjuring", "Foraging",
+    "Spelunking", "Synthesizing", "Refactoring thoughts", "Tracing breadcrumbs",
+    "Following the rabbit hole",
+    "Routing", "Threading", "Polling", "Spinning", "Hooking",
+    "Patching", "Caching", "Yielding", "Hydrating", "Folding",
+    "Streaming", "Resolving", "Reaping", "Tuning",
+)
+
+
+# Language display names (always shown in their own script — never translated,
+# so users always see them in a form they recognize).
+LANG_LABELS = {
+    'zh': '简体中文',
+    'en': 'English',
+}
+
+
+# Rotating usage tips — one picked per launch, shown in the banner (v2 _TIPS).
+# Only covers features v3 has actually adapted; the en/zh lists run parallel.
+_TIPS = {
+    'en': [
+        "Tip: press / to open the command palette — arrow keys to pick, Enter drops it into the input box.",
+        "Tip: pasted images / files fold into [Image #N] / [File #N] placeholders; backspace deletes the whole block.",
+        "Tip: /btw <question> lets a side-agent answer without interrupting the main task.",
+        "Tip: /rewind [n] rewinds the last n turns; /stop aborts the current task.",
+        "Tip: /continue lists past sessions — arrow keys to pick, Enter to restore.",
+        "Tip: Ctrl+J / Shift+Enter inserts a newline in multi-line input; Enter sends.",
+        "Tip: put [multi-select] in an ask_user prompt to switch to a multi-pick picker.",
+        "Tip: /cost shows token usage; /llm views / switches the model.",
+        "Tip: /new [name] starts a fresh session; /language switches the interface language.",
+        "Tip: /export clip copies the last reply to your system clipboard; /export all prints the log path.",
+        "Tip: Ctrl+O folds / unfolds all completed tool chips — each fold collapses to one line.",
+        "Tip: /update auto-runs git pull and audits the impact; /autorun seeds an autonomous run.",
+        "Tip: /morphling <target> absorbs an external skill.",
+        "Tip: /goal <goal> enters Goal mode (will ask for budget / worker cap); /hive <target> for multi-worker.",
+        "Tip: /conductor <task> hands the task to frontends/conductor.py for multi-subagent orchestration.",
+        "Tip: /update runs a dual-branch upstream sync — previews the diff before fast-forwarding either side.",
+        "Tip: /scheduler is live — untick a running row to stop it; tick again to relaunch.",
+        "Tip: Ctrl+S stashes your draft input — it's waiting for you next time you open a picker.",
+        "Tip: /scheduler lists reflect tasks and starts them via `/scheduler start a,b,c`.",
+        "Tip: prefix `!` runs the rest as a host shell command — output is folded into LLM history.",
+        "Tip: /resume lists recent sessions you can pick from to restore prior context.",
+    ],
+    'zh': [
+        "Tip: 按 / 唤起命令面板 —— 方向键选择，Enter 落入输入框。",
+        "Tip: 粘贴图片 / 文件会折叠成 [Image #N] / [File #N] 占位符，退格可整块删除。",
+        "Tip: /btw <问题> 让 side-agent 回答而不打断主任务。",
+        "Tip: /rewind [n] 回退最近 n 轮对话；/stop 中止当前任务。",
+        "Tip: /continue 列出历史会话 —— 方向键选择，Enter 恢复。",
+        "Tip: 多行输入用 Ctrl+J / Shift+Enter 换行；Enter 直接发送。",
+        "Tip: ask_user 题目里写 [多选] 会自动切到多选 picker。",
+        "Tip: /cost 查看 token 用量；/llm 查看 / 切换模型。",
+        "Tip: /new [name] 新建会话；/language 切换界面语言。",
+        "Tip: /export clip 把最后回复复制到系统剪贴板；/export all 打印日志路径。",
+        "Tip: Ctrl+O 折叠 / 展开所有已完成的工具 chip —— 每个 chip 折叠成一行。",
+        "Tip: /conductor <任务> 直接交给 frontends/conductor.py 做多 subagent 编排。",
+        "Tip: /update 是双分支 upstream 同步 —— 先 diff 预演，再分别快进。",
+        "Tip: /scheduler 里再点一下已勾选的任务可以 stop —— 取消勾选 = 停止。",
+        "Tip: Ctrl+S 把当前输入 stash 起来，下次 / 打开 picker 时还在。",
+        "Tip: 以 `!` 开头直接跑 shell —— 命令与输出都会进入 LLM 历史，agent 可以引用。",
+        "Tip: /resume 列出最近会话，可挑选一个恢复之前的上下文。",
+    ],
+}
+
+
+# ---------------- translations ----------------
+# Keys are dot-namespaced. Format placeholders use {name}.
+
+_I18N: dict[str, dict[str, str]] = {
+    'en': {
+        # /help intro & rows — phrasing mirrors v2's COMMANDS table.
+        'help.title':           'Commands:',
+        'help.help':            '  /help                Show help',
+        'help.status':          '  /status              View session status',
+        'help.sessions':        '  /sessions            List all sessions',
+        'help.llm':             '  /llm [n]             View / switch model',
+        'help.btw':             '  /btw <question>      Side question — does not interrupt main agent',
+        'help.review':          '  /review [request]    In-session code review (report inline)',
+        'help.rewind':          '  /rewind [n]          Rewind the last n rounds',
+        'help.continue':        '  /continue [n|name]   List / restore historical sessions',
+        'help.new':             '  /new [name]          Start a new session (clears the current one)',
+        'help.rename':          '  /rename <name>       Rename the current session',
+        'help.clear':           '  /clear               Clear display (does not touch LLM history)',
+        'help.cost':            '  /cost                Token usage for the current session',
+        'help.verbose':         '  /verbose             Tool-call audit (↑↓ select · Enter switch · c copy · q quit)',
+        'help.export':          '  /export [sub]        Export last reply: clip / file [name] / all',
+        'help.stop':            '  /stop                Abort current task',
+        'help.language':        '  /language [code]     View / switch interface language',
+        'help.update':          '  /update [note]       Preview upstream commits & diff, then pull (no commit)',
+        'help.autorun':         '  /autorun [seed]      Enter autonomous-operation mode',
+        'help.morphling':       '  /morphling [target]  Distill / absorb an external skill',
+        'help.goal':            '  /goal [goal]         Enter Goal mode (asks for budget / worker cap)',
+        'help.hive':            '  /hive [target]       Enter Hive multi-worker mode',
+        'help.conductor':       '  /conductor [task]    Hand task to conductor.py for multi-subagent run',
+        'help.scheduler':       '  /scheduler           Multi-pick reflect tasks / view cron',
+        'help.emoji':           '  /emoji [style]       Pick the spinner pet face (picker / direct switch)',
+        'help.quit':            '  /quit                Quit',
+        'help.esc':             '  Esc                  Cancel ask · clear draft · stop task (no exit)',
+        'help.cc':              '  Ctrl+C × 2           Quit (when idle; only aborts the task while running)',
+        'help.cl':              '  Ctrl+L               Force repaint (recover from sleep/wake)',
+        'help.cz':              '  Ctrl+Z / Ctrl+Y      Undo / redo input edits',
+        'help.shift_arrow':     '  Shift+←→↑↓           Select text (Ctrl+C copy / Ctrl+X cut / Ctrl+A all)',
+
+        # _CMDS palette entries — same wording as /help, condensed for one-line hint.
+        'cmd.help.desc':        'Show help',
+        'cmd.status.desc':      'View session status',
+        'cmd.llm.desc':         'View / switch model',
+        'cmd.btw.desc':         'Side question — does not interrupt main agent',
+        'cmd.review.desc':      'In-session code review',
+        'cmd.rewind.desc':      'Rewind the last n rounds',
+        'cmd.continue.desc':    'List / restore historical sessions',
+        'cmd.new.desc':         'Start a new session',
+        'cmd.rename.desc':      'Rename the current session',
+        'cmd.clear.desc':       'Clear display (LLM history untouched)',
+        'cmd.cost.desc':        'Token usage for the current session',
+        'cmd.verbose.desc':     'Tool-call audit',
+        'cmd.export.desc':      'Export the last reply (clip/file/all)',
+        'cmd.stop.desc':        'Abort current task',
+        'cmd.language.desc':    'View / switch interface language',
+        'cmd.quit.desc':        'Quit',
+
+        # _CMDS arg hints — mirror v2 (lowercase n, full word "question").
+        'cmd.llm.arg':          '[n]',
+        'cmd.btw.arg':          '<question>',
+        'cmd.review.arg':       '[request]',
+        'cmd.rewind.arg':       '[n]',
+        'cmd.continue.arg':     '[n|name]',
+        'cmd.new.arg':          '[name]',
+        'cmd.rename.arg':       '<name>',
+        'cmd.export.arg':       '[clip|file|all]',
+        'cmd.language.arg':     '[code]',
+        'cmd.update.arg':       '[note]',
+        'cmd.update.desc':      'preview upstream commits & diff, then pull (no commit)',
+        'cmd.autorun.arg':      '[seed]',
+        'cmd.autorun.desc':     'enter autonomous operation mode',
+        'cmd.morphling.arg':    '[target]',
+        'cmd.morphling.desc':   'distill / absorb external skills',
+        'cmd.goal.arg':         '[goal]',
+        'cmd.goal.desc':        'enter Goal mode (needs condition)',
+        'cmd.hive.arg':         '[target]',
+        'cmd.hive.desc':        'enter Hive multi-worker mode',
+        'cmd.conductor.arg':    '[task]',
+        'cmd.conductor.desc':   'hand task to frontends/conductor.py for multi-subagent orchestration',
+        'cmd.scheduler.desc':   'multi-pick start/stop reflect tasks (cron is driven by reflect/scheduler.py)',
+        'cmd.emoji.arg':        '[style]',
+        'cmd.emoji.desc':       'pick the spinner pet face — opens picker; arg switches directly',
+
+        # status line (one-liner above input box)
+        'status.asking':        '◉ waiting · Esc cancel',
+        'status.running.tail':  ' · Esc stop',
+        'status.tps':           ' · {rate:.0f} tok/s',
+        'status.cc_confirm':    'Press Ctrl+C again to quit',
+        'status.ready':         '○ ready',
+
+        # /status output rows
+        'status.title':         '  Session status',
+        'status.label.model':   'model:',
+        'status.label.state':   'state:',
+        'status.label.rounds':  'rounds:',
+        'status.label.context': 'context:',
+        'status.label.cwd':     'cwd:',
+        'status.state.running': 'running · {verb} {elapsed}',
+        'status.state.waiting': 'waiting · ask_user pending',
+        'status.state.idle':    'idle',
+        'status.ctx.unknown':   'n/a',
+        'status.ctx.fmt':       '{used:,} / {cap:,} ctx',
+
+        # banner
+        'banner.label.model':       'model:',
+        'banner.label.directory':   'directory:',
+        'banner.label.session':     'session:',
+        'banner.session.single':    'single · scrollback',
+        'banner.llm_hint':          '/llm switch',
+
+        # messages — success / status
+        'msg.ask_cancelled':    '✗ ask cancelled · type freely or ask again',
+        'msg.abort_requested':  '⏹ abort requested · Esc',
+        'msg.abort_done':       '⏹ abort requested',
+        'msg.idle_no_task':     '(idle, no task)',
+        'msg.cleared':          'new conversation · context cleared',
+        'msg.new_session':      'new session · previous conversation cleared',
+        'msg.new_session_named': 'new session "{name}" · previous conversation cleared',
+        'msg.renamed':          '✎ session renamed to "{name}"',
+        'msg.rewind':           '↩ rewound {n} turn(s) (removed {removed} history entries; scrollback is not editable)',
+        'msg.no_rewindable':    'no rewindable turns',
+        'msg.continue_loading': '┄┄ loaded {name}, full context above ┄┄',
+        'msg.continue_ready':   '┄┄ {msg} · continue typing ┄┄',
+        'msg.llm_switched':     'LLM → {name}',
+        'msg.export_done':      'exported: {path}',
+        'msg.export_clipped':   'copied to clipboard ({n} chars)',
+        'msg.export_clip_failed': '❌ copy failed: no clipboard tool found',
+        'msg.export_all':       'full log:\n{path}',
+        'msg.export_all_missing': 'no log file yet',
+        'msg.review_empty':     '(review produced no output)',
+        'msg.no_export':        '(no reply to export)',
+        'msg.no_tracker':       '(no stats yet)',
+        'msg.no_history':       '  no restorable historical sessions',
+        'msg.no_llms':          '(no LLMs available)',
+        'msg.no_tools':         '  (no tool-call records)',
+        'msg.lang_current':     'Current language: {label} ({code})',
+        'msg.lang_switched':    'Language → {label}',
+        'msg.btw_no_answer':    '(no answer)',
+        'btw.title':            'side-questions · Esc to clear',
+        'btw.querying':         '  ⋯ querying…',
+
+        # plan card
+        'plan.header':          'Plan ({done}/{total})',
+        'plan.complete':        '✓ Plan complete ({n}/{n})',
+        'plan.placeholder':     'Plan mode activated',
+        'plan.waiting':         'waiting for {path} …',
+        'plan.overflow':        '+{n} more',
+
+        # errors
+        'err.running_blocked':  'busy — /stop before using this command',
+        'err.continue_usage':   'usage: /continue or /continue N',
+        'err.index_oob':        '❌ index out of range (valid: 1-{max})',
+        'err.btw_usage':        'usage: /btw <question> (does not pollute main context)',
+        'err.rewind_usage':     'usage: /rewind <n>',
+        'err.rename_usage':     'usage: /rename <name>',
+        'err.rewind_range':     '❌ rewind failed: n must be 1-{max}',
+        'err.lang_usage':       'usage: /language [code]   (codes: {available})',
+        'err.lang_unknown':     'unknown language code: {code}  (available: {available})',
+        'err.unknown_cmd':      'unknown command /{name} — /help to list',
+        'err.multi_session':    '/{name}: multi-session backend not wired yet; command reserved',
+        'err.menu_cb':          '❌ menu callback failed: {err}',
+        'err.no_llm':           'No LLM configured — check mykey.py',
+        'err.no_tty':           'tui_v3: needs a real TTY (run it in iTerm directly)',
+        'err.dep_missing':      'Error: {name} is not installed.',
+        'err.dep_install':      'Install with: pip install rich prompt_toolkit',
+
+        # menu / picker / palette
+        'menu.default_title':   'Pick',
+        'menu.hint':            '↑↓ pick · Enter confirm · Esc cancel',
+        'ask.default_q':        'answer:',
+        'ask.title':            '◉ answer',
+        'ask.pending':          '  +{n} pending',
+        'ask.hint.multi':       '↳ ↑↓ move · Space toggle · Enter submit · Esc cancel',
+        'ask.hint.single':      '↳ ↑↓ navigate (options ⇄ input) · Enter confirm · Esc cancel',
+        'ask.hint.freetext':    '↳ ↑↓ back to options · type to input · Enter submit · Esc cancel',
+
+        # continue picker
+        'continue.title':       'Restore historical session',
+        'continue.row.fmt':     '{rel:>4}  {rounds:>3}r  {preview}',
+        'continue.unit.round':  'r',
+
+        # llm picker
+        'llm.title':            'Switch LLM',
+
+        # emoji picker (pet style)
+        'emoji.title':          'Pick spinner pet style',
+        'emoji.switched':       'pet style → `{style}`',
+        'emoji.unknown':        'unknown style `{choice}` — valid: {valid}',
+        'emoji.row.current':    '● {name:<8} {sample}',
+        'emoji.row.other':      '  {name:<8} {sample}',
+        'emoji.row.off':        '(hide pet)',
+
+        # /scheduler picker (multi-pick reflect tasks / frontends)
+        'scheduler.pick.title':   'Pick services — checked = running (untick to stop)',
+        'scheduler.pick.hint':    'Space toggle · ↑↓ move · Enter next · Esc cancel · or /scheduler start a,b,c',
+        'scheduler.cron.active':  'cron: {n} task(s) in sche_tasks/*.json · active (reflect/scheduler.py running)',
+        'scheduler.cron.inactive': 'cron: {n} task(s) in sche_tasks/*.json · inactive (start reflect/scheduler.py to schedule)',
+        'scheduler.empty':        '(no startable services: both reflect/*.py and frontends/*app*.py are empty)',
+        'scheduler.no_pick':      '(no service picked)',
+        'scheduler.no_change':    '(no change vs running set)',
+        'scheduler.running_tag':  '  · running',
+        'scheduler.confirm.title':   'Ready to submit your answer?',
+        'scheduler.confirm.hint':    '←/→ pick · Enter confirm · Esc go back',
+        'scheduler.confirm.submit':  'Submit  ({n} service: {names})',
+        'scheduler.confirm.edit':    'Edit selection',
+        'scheduler.diff.start':      '▶ start {n}: {names}',
+        'scheduler.diff.stop':       '■ stop {n}: {names}',
+        'scheduler.cancelled':       'Cancelled — no change applied',
+        'scheduler.back_to_pick':    'Back to the picker',
+        'scheduler.usage_start':     'Usage: /scheduler start <service>[,<service2>...]',
+
+        # export picker
+        'export.title':         'Export the last reply',
+        'export.opt.clip':      'Copy to clipboard',
+        'export.opt.file':      'Save to file (temp/)',
+        'export.opt.all':       'Show full log path',
+
+        # rewind picker
+        'rewind.title':         'Rewind to which turn',
+        'rewind.option':        'rewind {n} turn(s) · {preview}',
+
+        # language picker
+        'lang.title':           'Switch interface language',
+
+        # verbose
+        'verbose.title':        '  Tool Trace',
+        'verbose.hint':         '   ↑↓ pick · PgUp/Dn scroll · Enter switch[{field}] · c copy · e export · q quit',
+        'verbose.empty':        '(empty)',
+
+        # answer prefix when committing user reply to ask_user
+        'msg.answer_prefix':    '[ans] {text}',
+
+        # pending input preview (queued while agent is busy)
+        'pending.head_running':  'queued {n} · injecting at next turn boundary · Esc to clear',
+        'pending.cleared':       'cleared {n} pending message(s)',
+        'pending.queued_marker': '[queued] {text}',
+        # Wrap user steers with explicit "finish current task first"
+        # phrasing so the `[MASTER]` envelope (ga.py:578) reads as
+        # supplementary, not as a directive override that drops the
+        # original task.
+        'pending.inject_wrap':   ('The user sent a new message while you '
+                                  'were working:\n{text}\n\nIMPORTANT: After '
+                                  'completing your current task, you MUST '
+                                  'address the user\'s message above. Do '
+                                  'not ignore it.'),
+
+        # shell-mode magic (`!` prefix)
+        'shell.hint':           '! for shell mode',
+        'shell.timeout':        '[shell: timeout {sec}s]',
+        'shell.error':          '[shell error: {err}]',
+        'shell.empty':          '(no output)',
+        'shell.history':        '[!shell {sh}] {cmd}\n```\n{out}\n```\n(exit {rc})',
+
+        # /resume
+        'cmd.resume.desc':      'list recent sessions and pick one to recover',
+        'help.resume':          '  /resume              List recent sessions and recover one',
+    },
+
+    'zh': {
+        # /help intro & rows — 措辞与 v2 COMMANDS 表对齐。
+        'help.title':           '命令:',
+        'help.help':            '  /help                显示帮助',
+        'help.status':          '  /status              查看会话状态',
+        'help.sessions':        '  /sessions            列出所有会话',
+        'help.llm':             '  /llm [n]             查看 / 切换模型',
+        'help.btw':             '  /btw <question>      旁问 — 不打断主 agent',
+        'help.review':          '  /review [request]    in-session 代码审查（直接输出报告）',
+        'help.rewind':          '  /rewind [n]          回退最近 n 轮',
+        'help.continue':        '  /continue [n|name]   列出 / 恢复历史会话',
+        'help.new':             '  /new [name]          新建会话（清空当前会话）',
+        'help.rename':          '  /rename <name>       重命名当前会话',
+        'help.clear':           '  /clear               清空显示（不动 LLM 历史）',
+        'help.cost':            '  /cost                显示当前会话 token 用量',
+        'help.verbose':         '  /verbose             工具调用审计（↑↓ 选 · Enter 切换 · c 复制 · q 退）',
+        'help.export':          '  /export [sub]        导出最后回复：clip / file [name] / all',
+        'help.stop':            '  /stop                中止当前任务',
+        'help.language':        '  /language [code]     查看 / 切换界面语言',
+        'help.update':          '  /update [备注]       预览 upstream 提交与 diff，再 git pull（不 commit）',
+        'help.autorun':         '  /autorun [seed]      进入 autonomous_operation 自主模式',
+        'help.morphling':       '  /morphling [target]  启用 Morphling 蒸馏 / 吞噬外部技能',
+        'help.goal':            '  /goal [goal]         进入 Goal 模式（需 condition 约束）',
+        'help.hive':            '  /hive [target]       进入 Hive 多 worker 协作模式',
+        'help.conductor':       '  /conductor [task]    交给 conductor.py 做多 subagent 编排',
+        'help.scheduler':       '  /scheduler           多选启动 reflect 任务 / 查看 cron',
+        'help.emoji':           '  /emoji [style]       切换 spinner 宠物样式（picker / 直接传参）',
+        'help.quit':            '  /quit                退出',
+        'help.esc':             '  Esc                  撤回提问 · 清草稿 · 停任务（不退出）',
+        'help.cc':              '  Ctrl+C × 2           退出（空闲时；运行中只 abort 任务）',
+        'help.cl':              '  Ctrl+L               强制重画（睡眠唤醒后修复）',
+        'help.cz':              '  Ctrl+Z / Ctrl+Y      撤销 / 重做 输入框编辑',
+        'help.shift_arrow':     '  Shift+←→↑↓           选中文字（Ctrl+C 复制 / Ctrl+X 剪切 / Ctrl+A 全选）',
+
+        # _CMDS palette entries — 与 /help 同源，命令面板单行显示。
+        'cmd.help.desc':        '显示帮助',
+        'cmd.status.desc':      '查看会话状态',
+        'cmd.llm.desc':         '查看 / 切换模型',
+        'cmd.btw.desc':         '旁问 — 不打断主 agent',
+        'cmd.review.desc':      'in-session 代码审查',
+        'cmd.rewind.desc':      '回退最近 n 轮',
+        'cmd.continue.desc':    '列出 / 恢复历史会话',
+        'cmd.new.desc':         '新建会话',
+        'cmd.rename.desc':      '重命名当前会话',
+        'cmd.clear.desc':       '清空显示（不动 LLM 历史）',
+        'cmd.cost.desc':        '显示当前会话 token 用量',
+        'cmd.verbose.desc':     '工具调用审计',
+        'cmd.export.desc':      '导出最后回复（剪贴板/文件/日志路径）',
+        'cmd.stop.desc':        '中止当前任务',
+        'cmd.language.desc':    '查看 / 切换界面语言',
+        'cmd.quit.desc':        '退出',
+
+        # arg hints — 与 v2 对齐：小写 n、完整的 question 等。
+        'cmd.llm.arg':          '[n]',
+        'cmd.btw.arg':          '<question>',
+        'cmd.review.arg':       '[request]',
+        'cmd.rewind.arg':       '[n]',
+        'cmd.continue.arg':     '[n|name]',
+        'cmd.new.arg':          '[name]',
+        'cmd.rename.arg':       '<name>',
+        'cmd.export.arg':       '[clip|file|all]',
+        'cmd.language.arg':     '[code]',
+        'cmd.update.arg':       '[备注]',
+        'cmd.update.desc':      '预览 upstream 提交与 diff，再 git pull（不 commit）',
+        'cmd.autorun.arg':      '[seed]',
+        'cmd.autorun.desc':     '进入 autonomous_operation 自主模式',
+        'cmd.morphling.arg':    '[target]',
+        'cmd.morphling.desc':   '启用 Morphling 蒸馏 / 吞噬外部技能',
+        'cmd.goal.arg':         '[goal]',
+        'cmd.goal.desc':        '进入 Goal 模式（需 condition 约束）',
+        'cmd.hive.arg':         '[target]',
+        'cmd.hive.desc':        '进入 Hive 多 worker 协作模式',
+        'cmd.conductor.arg':    '[任务]',
+        'cmd.conductor.desc':   '调用 frontends/conductor.py 做多 subagent 编排',
+        'cmd.scheduler.desc':   '多选启动/停止 reflect 任务（cron 由 reflect/scheduler.py 驱动）',
+        'cmd.emoji.arg':        '[样式]',
+        'cmd.emoji.desc':       '切换 spinner 宠物表情 — 打开 picker；带参数则直接切换',
+
+        # status line
+        'status.asking':        '◉ 待答 · Esc 撤回提问',
+        'status.running.tail':  ' · Esc 停',
+        'status.tps':           ' · {rate:.0f} tok/s',
+        'status.cc_confirm':    '再按 Ctrl+C 退出',
+        'status.ready':         '○ 就绪',
+
+        # /status
+        'status.title':         '  会话状态',
+        'status.label.model':   'model:',
+        'status.label.state':   'state:',
+        'status.label.rounds':  'rounds:',
+        'status.label.context': 'context:',
+        'status.label.cwd':     'cwd:',
+        'status.state.running': 'running · {verb} {elapsed}',
+        'status.state.waiting': 'waiting · ask_user pending',
+        'status.state.idle':    'idle',
+        'status.ctx.unknown':   'n/a',
+        'status.ctx.fmt':       '{used:,} / {cap:,} ctx',
+
+        # banner
+        'banner.label.model':       'model:',
+        'banner.label.directory':   'directory:',
+        'banner.label.session':     'session:',
+        'banner.session.single':    '单会话 · scrollback',
+        'banner.llm_hint':          '/llm 切换',
+
+        # messages
+        'msg.ask_cancelled':    '✗ 已撤回提问 · 可直接输入或重新发问',
+        'msg.abort_requested':  '⏹ 已请求中止 · Esc',
+        'msg.abort_done':       '⏹ 已请求中止',
+        'msg.idle_no_task':     '（空闲，无任务）',
+        'msg.cleared':          '新对话 · 上下文已清空',
+        'msg.new_session':      '新会话 · 上一段对话已清空',
+        'msg.new_session_named': '新会话「{name}」· 上一段对话已清空',
+        'msg.renamed':          '✎ 会话已重命名为「{name}」',
+        'msg.rewind':           '↩ 回退 {n} 轮（移除 {removed} 条历史；scrollback 不可改，以此为界）',
+        'msg.no_rewindable':    '没有可回退的轮次',
+        'msg.continue_loading': '┄┄ 载入 {name}，以下为完整上文 ┄┄',
+        'msg.continue_ready':   '┄┄ {msg} · 接着说即可 ┄┄',
+        'msg.llm_switched':     'LLM → {name}',
+        'msg.export_done':      '已导出: {path}',
+        'msg.export_clipped':   '已复制到剪贴板（{n} 字符）',
+        'msg.export_clip_failed': '❌ 复制失败：未找到剪贴板工具',
+        'msg.export_all':       '完整日志:\n{path}',
+        'msg.export_all_missing': '尚无日志文件',
+        'msg.review_empty':     '(review 无输出)',
+        'msg.no_export':        '（没有可导出的回答）',
+        'msg.no_tracker':       '（暂无统计）',
+        'msg.no_history':       '  没有可恢复的历史会话',
+        'msg.no_llms':          '(无可用 LLM)',
+        'msg.no_tools':         '  (暂无工具调用记录)',
+        'msg.lang_current':     '当前界面语言：{label}（{code}）',
+        'msg.lang_switched':    '界面语言 → {label}',
+        'msg.btw_no_answer':    '(无回答)',
+        'btw.title':            '旁问 · Esc 清空',
+        'btw.querying':         '  ⋯ 查询中…',
+
+        # plan card
+        'plan.header':          '计划 ({done}/{total})',
+        'plan.complete':        '✓ 计划完成 ({n}/{n})',
+        'plan.placeholder':     '计划模式已激活',
+        'plan.waiting':         '等待写入 {path} …',
+        'plan.overflow':        '还有 {n} 项',
+
+        # errors
+        'err.running_blocked':  '运行中，先 /stop 再用该命令',
+        'err.continue_usage':   '用法: /continue 或 /continue N',
+        'err.index_oob':        '❌ 索引越界（有效 1-{max}）',
+        'err.btw_usage':        '用法: /btw <旁问>（不污染主上下文）',
+        'err.rewind_usage':     '用法：/rewind <n>',
+        'err.rename_usage':     '用法：/rename <name>',
+        'err.rewind_range':     '❌ 回退失败：n 应在 1-{max}',
+        'err.lang_usage':       '用法：/language [code]   （可选 code：{available}）',
+        'err.lang_unknown':     '未知语言代码：{code}  （可选：{available}）',
+        'err.unknown_cmd':      '未知命令 /{name} — /help 看可用命令',
+        'err.multi_session':    '/{name}：多会话后端尚未接入，命令已预留但暂未实现',
+        'err.menu_cb':          '❌ 菜单回调失败: {err}',
+        'err.no_llm':           'No LLM configured — check mykey.py',
+        'err.no_tty':           'tui_v3: needs a real TTY (run it in iTerm directly)',
+        'err.dep_missing':      'Error: {name} is not installed.',
+        'err.dep_install':      'Install with: pip install rich prompt_toolkit',
+
+        # menu / picker / palette
+        'menu.default_title':   '选择',
+        'menu.hint':            '↑↓ 选 · Enter 确认 · Esc 取消',
+        'ask.default_q':        '请回答:',
+        'ask.title':            '◉ 请回答',
+        'ask.pending':          '  +{n} 待答',
+        'ask.hint.multi':       '↳ ↑↓ 移动 · Space 标记 · Enter 提交 · Esc 撤回',
+        'ask.hint.single':      '↳ ↑↓ 切换（选项 ⇄ 输入框）· Enter 确认 · Esc 撤回',
+        'ask.hint.freetext':    '↳ ↑↓ 回到选项 · 输字符输入 · Enter 提交 · Esc 撤回',
+
+        # continue picker
+        'continue.title':       '恢复历史会话',
+        'continue.row.fmt':     '{rel:>4}  {rounds:>3}轮  {preview}',
+        'continue.unit.round':  '轮',
+
+        # llm picker
+        'llm.title':            '切换 LLM',
+
+        # emoji picker
+        'emoji.title':          '选择 spinner 宠物样式',
+        'emoji.switched':       '宠物样式 → `{style}`',
+        'emoji.unknown':        '未知样式 `{choice}` — 可选：{valid}',
+        'emoji.row.current':    '● {name:<8} {sample}',
+        'emoji.row.other':      '  {name:<8} {sample}',
+        'emoji.row.off':        '（隐藏 pet）',
+
+        # /scheduler picker (multi-pick reflect tasks / frontends)
+        'scheduler.pick.title':   '挑选要启动的服务（已勾选 = 运行中，取消勾选即停止）',
+        'scheduler.pick.hint':    'Space 勾选 · ↑↓ 移动 · Enter 下一步 · Esc 取消 · 或 /scheduler start a,b,c',
+        'scheduler.cron.active':  'cron：sche_tasks/*.json 共 {n} 个任务 · 已激活（reflect/scheduler.py 在运行）',
+        'scheduler.cron.inactive': 'cron：sche_tasks/*.json 共 {n} 个任务 · 未激活（启动 reflect/scheduler.py 才会调度）',
+        'scheduler.empty':        '（没有可启动的服务：reflect/*.py 与 frontends/*app*.py 均为空）',
+        'scheduler.no_pick':      '（未选择任何服务）',
+        'scheduler.no_change':    '（与当前运行集合相比无变化）',
+        'scheduler.running_tag':  '  · 运行中',
+        'scheduler.confirm.title':   '确认提交本次改动？',
+        'scheduler.confirm.hint':    '←/→ 选择 · Enter 确认 · Esc 回退',
+        'scheduler.confirm.submit':  '提交（{n} 个服务：{names}）',
+        'scheduler.confirm.edit':    '回去修改选择',
+        'scheduler.diff.start':      '▶ 启动 {n}：{names}',
+        'scheduler.diff.stop':       '■ 停止 {n}：{names}',
+        'scheduler.cancelled':       '已取消，未变更任何服务',
+        'scheduler.back_to_pick':    '已回到选择界面',
+        'scheduler.usage_start':     '用法：/scheduler start <服务名>[,<服务名2>...]',
+
+        # export picker
+        'export.title':         '导出最后回复',
+        'export.opt.clip':      '复制到剪贴板',
+        'export.opt.file':      '保存到文件（temp/）',
+        'export.opt.all':       '显示完整日志路径',
+
+        # rewind picker
+        'rewind.title':         '选择回退到的轮次',
+        'rewind.option':        '回退 {n} 轮 · {preview}',
+
+        # language picker
+        'lang.title':           '切换界面语言',
+
+        # verbose
+        'verbose.title':        '  Tool Trace',
+        'verbose.hint':         '   ↑↓ 选 · PgUp/Dn 滚 · Enter 切换[{field}] · c 复制 · e 导出 · q 退',
+        'verbose.empty':        '(空)',
+
+        # answer prefix
+        'msg.answer_prefix':    '[答] {text}',
+
+        # pending input preview
+        'pending.head_running':  '已排队 {n} 条 · 下个 turn 边界注入 · Esc 清空',
+        'pending.cleared':       '已清空 {n} 条待发送消息',
+        'pending.queued_marker': '[排队] {text}',
+        'pending.inject_wrap':   ('用户在你工作时发来了一条新消息：\n{text}\n\n'
+                                  '重要：完成当前任务后，你必须处理上面的用户消息。'
+                                  '不要忽略它。'),
+
+        # shell-mode magic (`!` prefix)
+        'shell.hint':           '! 进入 shell 模式',
+        'shell.timeout':        '[shell：{sec}s 超时]',
+        'shell.error':          '[shell 错误：{err}]',
+        'shell.empty':          '（无输出）',
+        'shell.history':        '[!shell {sh}] {cmd}\n```\n{out}\n```\n（退出码 {rc}）',
+
+        # /resume
+        'cmd.resume.desc':      '列出最近会话并恢复其中一个',
+        'help.resume':          '  /resume              列出最近会话并恢复其中一个',
+    },
+}
+
+
+def t(key: str, **fmt) -> str:
+    """Translate `key` to current language; fall back to en then to key itself.
+    Missing format fields raise KeyError — caller bug, not i18n bug."""
+    val = _I18N.get(_LANG, {}).get(key)
+    if val is None and _LANG != 'en':
+        val = _I18N.get('en', {}).get(key)
+    if val is None:
+        val = key                                       # visible breadcrumb for missing keys
+    if fmt:
+        try:
+            return val.format(**fmt)
+        except (KeyError, IndexError, ValueError):
+            return val
+    return val
+
+
+def tip_count() -> int:
+    """Number of rotating banner tips (same for every language)."""
+    return len(_TIPS['en'])
+
+
+def tip(idx: int) -> str:
+    """Banner tip at `idx`, resolved in the current language so a /language
+    switch relabels it on the next banner repaint."""
+    pool = _TIPS.get(_LANG) or _TIPS['en']
+    return pool[idx % len(pool)] if pool else ''
+
+
+def get_lang() -> str:
+    return _LANG
+
+
+def set_lang(code: str) -> bool:
+    """Switch active language and persist. Returns True on success."""
+    global _LANG
+    if code not in _SUPPORTED:
+        return False
+    _LANG = code
+    _save_settings({'lang': code})
+    return True
+
+
+def supported() -> tuple[str, ...]:
+    return _SUPPORTED
+
+
+def _detect_system_lang() -> str:
+    """System language: check LC_ALL → LC_MESSAGES → LANG → locale.getlocale().
+    Prefix `zh` → 'zh', else 'en'."""
+    for env in ('LC_ALL', 'LC_MESSAGES', 'LANG'):
+        v = os.environ.get(env)
+        if v:
+            if v.lower().startswith('zh'):
+                return 'zh'
+            return 'en'
+    try:
+        loc = locale.getlocale()[0] or ''
+        if loc.lower().startswith('zh'):
+            return 'zh'
+    except Exception:
+        pass
+    return _DEFAULT
+
+
+def _load_settings() -> dict:
+    try:
+        with open(_SETTINGS_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_settings(patch: dict) -> None:
+    cur = _load_settings()
+    cur.update(patch)
+    try:
+        os.makedirs(os.path.dirname(_SETTINGS_PATH), exist_ok=True)
+        with open(_SETTINGS_PATH, 'w', encoding='utf-8') as f:
+            json.dump(cur, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+def init_lang() -> str:
+    """Resolve and install initial language: persisted > system > default.
+    Call once at startup; returns the resolved code."""
+    global _LANG
+    saved = _load_settings().get('lang')
+    if saved in _SUPPORTED:
+        _LANG = saved
+    else:
+        _LANG = _detect_system_lang()
+    return _LANG
+
+
+# `_t` alias kept so the hundreds of existing `_t(...)` call sites are untouched.
+_t = t
+
+# Resolve language once on import so any module-level string (banner, _CMDS,
+# /help) sees the right locale.
+init_lang()
+# ════════════════════════════════════════════════════════════════════════════
+
 
 # Module-level `clip` shim: keep sb.py-style `clip.copy(...)` calls
 # working without a separate clipboard module — the underlying funcs
@@ -42,6 +749,140 @@ class _Clip:
     @staticmethod
     def paste_image():    return paste_image()
 clip = _Clip()
+
+
+def _enable_windows_vt_mode() -> None:
+    """Enable UTF-8 + ANSI escape processing on Windows consoles when possible."""
+    if not _IS_WINDOWS:
+        return
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        # Make classic conhost/cmd decode UTF-8 bytes written by _w().  This is
+        # harmless in mintty/Git Bash where these calls usually fail because the
+        # std handles are pipes/ptys rather than Win32 console handles.
+        kernel32.SetConsoleOutputCP(65001)
+        kernel32.SetConsoleCP(65001)
+        enable_vt = 0x0004
+        for handle_id in (-11, -12):  # STD_OUTPUT_HANDLE, STD_ERROR_HANDLE
+            handle = kernel32.GetStdHandle(handle_id)
+            mode = ctypes.c_uint32()
+            if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+                kernel32.SetConsoleMode(handle, mode.value | enable_vt)
+    except Exception:
+        # Safe fallback: modern terminals usually already support ANSI/UTF-8;
+        # older conhost may render escape codes, but the TUI should not crash.
+        pass
+
+
+def _enter_utf8_charset() -> None:
+    """Ask VT-compatible terminals to interpret subsequent bytes as UTF-8."""
+    # ESC % G is the ISO-2022/VT sequence for selecting UTF-8.  It fixes some
+    # mintty/Git-Bash launches where the child process inherits a legacy locale
+    # and mojibakes UTF-8 box drawing/CJK into CP936-looking text.
+    _w('\x1b%G')
+
+
+def _ptk_keypress_to_bytes(kp) -> bytes:
+    """Map prompt_toolkit KeyPress objects to tui_v3's internal byte protocol.
+
+    prompt_toolkit normalizes platform-specific console input (Win32 console,
+    ConPTY, mintty/msys pty) into symbolic Keys.  Keep the editor core small by
+    translating those symbols back to the bytes already handled by _feed/_keys.
+    """
+    try:
+        from prompt_toolkit.keys import Keys
+    except Exception:
+        Keys = None  # type: ignore[assignment]
+
+    key = getattr(kp, 'key', None)
+    data = getattr(kp, 'data', '') or ''
+    mods = {str(m).lower().replace('_', '-') for m in (getattr(kp, 'modifiers', None) or ())}
+    modded_s = str(key).lower().replace('_', '-') == 's' or data == 's'
+    if modded_s and any(m in mods for m in ('control', 'ctrl', 'command', 'cmd')):
+        return b'\x13'
+
+    # Printable text and paste chunks.  PTK may deliver a multi-character data
+    # string for bracketed paste/typeahead; forwarding UTF-8 preserves CJK/emoji.
+    if isinstance(data, str) and data and (len(data) > 1 or (len(data) == 1 and ord(data) >= 0x20 and data != '\x7f')):
+        return data.encode('utf-8', 'replace')
+
+    name = getattr(key, 'name', str(key))
+    key_s = str(key)
+    norm = name.lower().replace('_', '-').replace('keys.', '')
+    norm_s = key_s.lower().replace('_', '-').replace('keys.', '')
+    aliases = {norm, norm_s}
+
+    def has(*needles: str) -> bool:
+        return any(n in a for a in aliases for n in needles)
+
+    # Enter submits; Ctrl+J / Shift+Enter insert newline when PTK can distinguish.
+    # Windows terminals send \r for both Enter/Shift+Enter — detect Shift physically.
+    if has('controlm', 'c-m') or key_s in ('\r', '\n'):
+        if _IS_WINDOWS:
+            import ctypes
+            if ctypes.windll.user32.GetAsyncKeyState(0x10) & 0x8000:
+                return b'\n'
+        return b'\r'
+    if has('controlj', 'c-j', 's-enter', 'shift-enter'):
+        return b'\n'
+    if has('controls', 'control-s', 'c-s', 'commands', 'command-s', 'cmd-s'):
+        return b'\x13'
+
+    # Navigation.  Existing _keys() uses these small control bytes.
+    if has('up') and has('shift'):
+        return b'\x1c'
+    if has('down') and has('shift'):
+        return b'\x1d'
+    if has('left') and has('shift'):
+        return b'\x1e'
+    if has('right') and has('shift'):
+        return b'\x1f'
+    if has('up'):
+        return b'\x10'
+    if has('down'):
+        return b'\x0e'
+    if has('left'):
+        return b'\x02'
+    if has('right'):
+        return b'\x06'
+    if has('home'):
+        return b'\x01'
+    if has('end'):
+        return b'\x05'
+    if has('delete'):
+        return b'\x7f'
+    if has('backspace') or data == '\x7f' or data == '\x08':
+        return b'\x7f'
+    if has('escape') or data == '\x1b':
+        return b'\x1b'
+
+    ctrl = {
+        'controla': b'\x01', 'c-a': b'\x01',
+        'controlb': b'\x02', 'c-b': b'\x02',
+        'controlc': b'\x03', 'c-c': b'\x03',
+        'controld': b'\x04', 'c-d': b'\x04',
+        'controle': b'\x05', 'c-e': b'\x05',
+        'controlf': b'\x06', 'c-f': b'\x06',
+        'controlh': b'\x7f', 'c-h': b'\x7f',
+        'controlj': b'\n',   'c-j': b'\n',
+        'controlk': b'\x0b', 'c-k': b'\x0b',
+        'controll': b'\x0c', 'c-l': b'\x0c',
+        'controln': b'\x0e', 'c-n': b'\x0e',
+        'controlp': b'\x10', 'c-p': b'\x10',
+        'controlu': b'\x15', 'c-u': b'\x15',
+        'controlv': b'\x16', 'c-v': b'\x16',
+        'controlx': b'\x18', 'c-x': b'\x18',
+        'controly': b'\x19', 'c-y': b'\x19',
+        'controlz': b'\x1a', 'c-z': b'\x1a',
+    }
+    for a in aliases:
+        if a in ctrl:
+            return ctrl[a]
+
+    if isinstance(data, str) and data:
+        return data.encode('utf-8', 'replace')
+    return b''
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -208,6 +1049,35 @@ def paste_image() -> str | None:
     return path if ok and os.path.isfile(path) else None
 
 
+def _grab_clipboard_file() -> tuple[str, bool] | None:
+    """Return (path, is_image) from the clipboard via PIL — ported from v2.
+
+    PIL.ImageGrab.grabclipboard() is the one cross-platform path that also
+    works on Windows (osascript/xclip/wl-paste below don't).  It handles two
+    shapes: a list of copied file paths, or a raw bitmap Image (saved to a
+    temp PNG).  is_image distinguishes images (→ `[Image #N]`, sent to the
+    model) from any other file (→ `[File #N]`, expanded to its path)."""
+    try:
+        from PIL import ImageGrab, Image
+        data = ImageGrab.grabclipboard()
+    except Exception:
+        return None
+    if isinstance(data, list):
+        for item in data:
+            if isinstance(item, str) and os.path.isfile(item):
+                return (item, os.path.splitext(item)[1].lower() in _IMAGE_EXTS)
+        return None
+    if isinstance(data, Image.Image):
+        try:
+            os.makedirs(_TEMP_DIR, exist_ok=True)
+            path = os.path.join(_TEMP_DIR, f'clip_{int(time.time() * 1000)}.png')
+            data.save(path, 'PNG')
+            return (path, True)
+        except Exception:
+            return None
+    return None
+
+
 def _cleanup():
     if os.path.isdir(_TEMP_DIR):
         shutil.rmtree(_TEMP_DIR, ignore_errors=True)
@@ -227,13 +1097,29 @@ _ANSI_MODE_SET_RE = re.compile(r'\x1b[=>][0-9]*')
 # Keep SGR (color) codes, strip everything else
 _ANSI_SGR_RE = re.compile(r'\x1b\[[0-9;]*m')
 
-_TURN_MARKER_RE = re.compile(r'\*\*LLM Running \(Turn (\d+)\).*?\*\*')
+# agent_loop.py emits `**LLM Running (Turn N) ...**` by default but switches
+# to the short `**Turn N ...**` when `handler.parent.task_dir` is set
+# (agent_loop.py:52).  TUI v3 sets task_dir (for `_stop` signal + `!cmd`
+# shell history via `_intervene`), so we must match both forms.
+_TURN_MARKER_RE = re.compile(r'\*\*(?:LLM Running \()?Turn (\d+)\)?[^\n]*?\*\*')
 _META_TAG_RE = re.compile(r'<(?:thinking|summary|tool_use|file_content)>.*?</(?:thinking|summary|tool_use|file_content)>', re.DOTALL)
 _TOOL_USE_BLOCK_RE = re.compile(r'```json\s*\{[^}]*"tool_name"[^}]*\}\s*```', re.DOTALL)
 _TOOL_USE_TAG_RE = re.compile(r'<tool_use>\s*\{.*?"tool_name"\s*:\s*"([^"]+)".*?\}\s*</tool_use>', re.DOTALL)
 _SUMMARY_RE = re.compile(r'<summary>\s*(.*?)\s*</summary>', re.DOTALL)
 _QUAD_BACKTICK_RE = re.compile(r'(`{4,})')
 _ASK_USER_RE = re.compile(r'"tool_name"\s*:\s*"ask_user".*?"question"\s*:\s*"([^"]*)"', re.DOTALL)
+
+# v2 fold_turns helpers (tuiapp_v2.py:240-267).  4-fence stash keeps a tool
+# result's `` ``` `` from being misread as a turn boundary; the per-turn
+# `<summary>` regex uses a negative lookahead so two adjacent summaries don't
+# merge; the title cleaner strips fenced code + thinking before extraction.
+_FENCE4_STASH_RE = re.compile(r'^`{4,}.*?^`{4,}\n?', re.DOTALL | re.MULTILINE)
+# Same as _TURN_MARKER_RE but capturing the WHOLE match for str.split() to
+# keep the marker as a separator token in the result list.
+_TURN_SPLIT_FOLD_RE = re.compile(r'(\*\*(?:LLM Running \()?Turn \d+\)? \.\.\.\*\*)')
+_SUMMARY_PERTURN_RE = re.compile(r'<summary>\s*((?:(?!<summary>).)*?)\s*</summary>', re.DOTALL)
+_TITLE_CLEAN_RE = re.compile(r'`{3,}.*?`{3,}|<thinking>.*?</thinking>', re.DOTALL)
+_TITLE_ARGS_TAIL_RE = re.compile(r',?\s*args:.*$')
 
 
 @dataclass
@@ -426,9 +1312,18 @@ def _extract_ask_user(ctx: dict | None) -> AskUserEvent | None:
     if payload.get('status') != 'INTERRUPT' or payload.get('intent') != 'HUMAN_INTERVENTION':
         return None
     data = payload.get('data') or {}
+    candidates = data.get('candidates') or []
+    # v2 parity: skip the ask card when the agent didn't supply candidates —
+    # the 'Waiting for your answer ...' marker already lands in scrollback as
+    # part of the assistant stream, and the user replies via the normal input
+    # box.  Pushing an empty-candidate event onto the queue would route us
+    # through _enter_ask → free-text ask card, which freezes the live region
+    # in some terminals.
+    if not candidates:
+        return None
     return AskUserEvent(
         question=data.get('question', ''),
-        candidates=data.get('candidates', []),
+        candidates=candidates,
     )
 
 
@@ -442,15 +1337,56 @@ class AgentBridge:
             self.agent.llmclient = self.agent.llmclients[llm_no % len(self.agent.llmclients)]
         self.agent.inc_out = True
         self.agent.verbose = True
+        # task_dir enables ga's `_stop` / `_keyinfo` / `_intervene` consume
+        # paths.  PID-scoped dir so concurrent v3 processes don't share
+        # signal files.
+        self.agent.task_dir = os.path.join(_ROOT, 'temp', f'_tui_v3_{os.getpid()}')
+        try: os.makedirs(self.agent.task_dir, exist_ok=True)
+        except Exception: pass
         self.ask_user_queue: queue.Queue[AskUserEvent] = queue.Queue()
+        # Wrapped user messages we appended to `_intervene` since the last
+        # turn boundary.  At a non-exit boundary the file was consumed and
+        # next_prompt now carries our text — clear the list.  At an exit
+        # boundary the file was consumed but next_prompt is discarded —
+        # replay via put_task so the user's words aren't lost.
+        self._intervene_pending: list[str] = []
+        self._intervene_lk = threading.Lock()
         self._install_hook()
         self._healthy = True
         self._init_error: str | None = None
         if not getattr(self.agent, 'llmclient', None):
             self._healthy = False
-            self._init_error = 'No LLM configured — check mykey.py'
+            self._init_error = _t('err.no_llm')
         self._runner = threading.Thread(target=self._run_safe, daemon=True, name=f'ga-tui-agent')
         self._runner.start()
+
+    def inject_intervene(self, text: str, *, track: bool = False) -> bool:
+        """Append `text` to `<task_dir>/_intervene`.  ga.turn_end_callback
+        consumes the file at the next turn boundary and prepends `[MASTER]
+        ...` to next_prompt.  Returns False when the agent is idle (caller
+        falls back to put_task).  Append-mode keeps us idempotent under
+        the consume_file race.  `track=True` records the text so the
+        turn_end hook can replay it on an exit boundary (used for queued
+        user messages — `!cmd` shell facts don't need replay)."""
+        td = getattr(self.agent, 'task_dir', None)
+        if not td or not getattr(self.agent, 'is_running', False):
+            return False
+        try: os.makedirs(td, exist_ok=True)
+        except Exception: return False
+        fp = os.path.join(td, '_intervene')
+        try:
+            sep = ''
+            try:
+                if os.path.getsize(fp) > 0: sep = '\n\n'
+            except OSError: pass
+            with open(fp, 'a', encoding='utf-8') as f:
+                f.write(sep + text)
+            if track:
+                with self._intervene_lk:
+                    self._intervene_pending.append(text)
+            return True
+        except Exception:
+            return False
 
     def _run_safe(self):
         try:
@@ -468,6 +1404,16 @@ class AgentBridge:
         ev = _extract_ask_user(ctx)
         if ev:
             self.ask_user_queue.put(ev)
+        with self._intervene_lk:
+            if not self._intervene_pending:
+                return
+            if (ctx or {}).get('exit_reason'):
+                combined = '\n\n'.join(self._intervene_pending)
+                self._intervene_pending = []
+                try: self.agent.put_task(combined, source='user')
+                except Exception: pass
+            else:
+                self._intervene_pending = []
 
     def submit(self, query: str, images: list | None = None) -> queue.Queue:
         return self.agent.put_task(query, source='user', images=images)
@@ -523,16 +1469,20 @@ class AgentBridge:
 # ────────────────────────────────────────────────────────────────────────────
 
 # Prose hierarchy via ATTRIBUTES only (bold/italic/underline) — NO dim for body
-# content (dim on white = unreadable grey). Code keeps a LIGHT syntax theme so
-# it stays dark/legible on the white assistant surface.
+# content (dim on white = unreadable grey). Keep normal prose inherited from the
+# surrounding tile; avoid Rich's inline-code reverse without pinning prose dark.
 _MD_THEME = Theme({
     'markdown.h1': 'bold underline', 'markdown.h2': 'bold underline',
     'markdown.h3': 'bold', 'markdown.h4': 'bold',
     'markdown.h5': 'bold', 'markdown.h6': 'bold',
     'markdown.strong': 'bold', 'markdown.em': 'italic',
-    'markdown.code': 'reverse', 'markdown.code_block': 'none',
+    # Rich's default inline-code ``reverse`` can vanish on themed tiles; keep it
+    # bold but inherited so it stays readable on both light and dark surfaces.
+    'markdown.code': 'bold', 'markdown.code_block': 'none',
     'markdown.block_quote': 'italic', 'markdown.hr': 'none',
     'markdown.link': 'underline', 'markdown.link_url': 'underline',
+    # Bullet inherits the surrounding foreground (a pinned dark hue vanished on
+    # dark terminals); bold alone keeps it visible on any background.
     'markdown.item.bullet': 'bold',
 }, inherit=True)
 
@@ -555,20 +1505,43 @@ else:
     _DIM = '\x1b[2m'
     _ACCENT = '\x1b[38;2;94;106;210m'    # Linear lavender #5e6ad2
     _BORDER = '\x1b[38;5;146m'
-_INK_U = '\x1b[38;5;234m'                # user ink — near-black, strong (as requested)
-# Linear surface ladder: user gets its own panel; AI = plain white surface.
-_TILE_U = '\x1b[48;5;251m' + _INK_U      # user panel (near-black ink)
+_INK_U = '\x1b[38;5;234m'                # user ink — kept for legacy callers
+# User-prompt panel.  Charcoal block (RGB 55,55,55) with soft-white ink —
+# full-row tile via _tile() means the band keeps its right edge on every
+# terminal regardless of wrap-width math.  Switched from xterm-
+# 256 inverse (which renders muddy on Win Terminal dark themes) to truecolor.
+_TILE_U = '\x1b[48;2;55;55;55m\x1b[38;2;230;230;230m'
 _MARK = _ACCENT + '❯' + _RST             # prompt mark — the single accent
+# Shell-mode (`!` magic prefix) accents — vivid pink so it stands out from
+# the normal accent purple without clashing with the heat-counter reds.
+_SHELL_ACCENT = '\x1b[38;5;205m'         # hot pink for border / prompt mark
+_SHELL_BG = '\x1b[48;2;65;60;65m'        # 65,60,65 charcoal-magenta (per spec)
+_SHELL_MARK = _SHELL_ACCENT + '!' + _RST
+# Full-row tile for committed shell rows (echo + each output line), so the
+# pair reads as one block in scrollback, matching cc-style.  Slightly
+# warmer than _TILE_U (55,55,55) so the two row kinds are distinguishable
+# when interleaved.  Black-terminal only — light themes get the bare band.
+_TILE_SHELL = '\x1b[48;2;65;60;65m\x1b[38;2;230;230;230m'
 _BG_TOK = {str(n) for n in list(range(40, 48)) + [49] + list(range(100, 108))}
 _SGR_RE = re.compile(r'\x1b\[([0-9;]*)m')
 _CSI_ERASE_RE = re.compile(r'\x1b\[[0-9;?]*[JK]')
 _SGR_TOKEN_RE = re.compile(r'\x1b\[[0-9;]*m')
 
 
-def _tile(s: str, style: str) -> str:
-    # re-assert style after every reset so muted-markdown \x1b[0m can't punch
-    # a hole in the block; \x1b[K fills to the edge (CJK-safe full-width tile).
-    return style + s.replace(_RST, _RST + style) + '\x1b[K' + _RST
+def _tile(s: str, style: str, width: int | None = None) -> str:
+    # Re-assert style after every reset so muted-markdown \x1b[0m can't punch
+    # a hole in the block.  When `width` is provided we pad with explicit
+    # bg-active spaces — prompt-toolkit's cell renderer doesn't honour
+    # \x1b[K (erase-to-EOL) inside its own buffer, so PTK-bound scrollback
+    # would otherwise leave the row gap exposed.  Fall back to \x1b[K for
+    # legacy callers writing straight to the terminal (no PTK), where the
+    # erase command still fills correctly.
+    body = style + s.replace(_RST, _RST + style)
+    if width is None:
+        return body + '\x1b[K' + _RST
+    visible = _SGR_TOKEN_RE.sub('', s)
+    pad = max(0, width - cell_len(visible))
+    return body + ' ' * pad + _RST
 
 
 def _border(left: str, right: str, width: int, style: str = _BORDER) -> str:
@@ -598,9 +1571,15 @@ def _strip_bg(s: str) -> str:
 _ESC_RE = re.compile(rb'\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b.')
 _FILE_REF_RE = re.compile(r'@([\w./\-~]+)')
 _PASTE_PH_RE = re.compile(r'\[Pasted text #(\d+) \+\d+ lines\]')
+_FILE_PH_RE = re.compile(r'\[File #(\d+)\]')
+_IMG_PH_RE = re.compile(r'\[Image #(\d+)\]')
+# All paste placeholders — used for whole-block delete (v2 parity): backspace
+# flush against any of these wipes the entire placeholder, not one char.
+_PLACEHOLDER_RES = (_PASTE_PH_RE, _IMG_PH_RE, _FILE_PH_RE)
+_IMAGE_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.tiff', '.tif', '.ico'}
 _TURN_MK_RE = re.compile(
-    r'\*\*LLM Running \(Turn \d+\)[^\n]*\*\*'   # native live-format marker
-    r'|^[ \t]*Turn \d+\s*\.{3,}[ \t]*$',         # plain subagent form on its own line
+    r'\*\*(?:LLM Running \()?Turn \d+\)?[^\n]*\*\*'  # native + task-mode short form
+    r'|^[ \t]*Turn \d+\s*\.{3,}[ \t]*$',             # plain subagent form on its own line
     re.M)
 _TOOL_RE = re.compile(
     r'🛠️ Tool: `([^`]+)`[^\n]*\n'                    # 1 = name
@@ -608,7 +1587,9 @@ _TOOL_RE = re.compile(
     r'(?:'
     r'(`{5,})[^\n]*\n(.*?)\n\4[ \t]*\n*'              # 4 = result fence (5-bt), 5 = body
     r'|'                                              # ─ OR ─
-    r'(.*?)(?=^🛠️ Tool: `|^\*\*LLM Running|^<summary>|\Z)'  # 6 = live exec trace
+    # Trail-end sentinel: either form of the `**Turn N ...**` marker, or a
+    # bare `Turn N ...` on its own line, or the next tool / summary tag.
+    r'(.*?)(?=^🛠️ Tool: `|^\*\*(?:LLM Running \()?Turn \d+|^Turn \d+ \.\.\.$|^<summary>|\Z)'  # 6 = live exec trace
     r')',
     re.DOTALL | re.MULTILINE)
 # Prompted-style tool wrappers GA models emit AS TEXT in saved logs (no
@@ -649,6 +1630,15 @@ def _tool_status(result: str, trailing: str) -> str:
         return 'error'
     if re.match(r'^(?:Error[:\s]|Exception[:\s]|Traceback|❌|⛔)', s.lstrip(), re.I):
         return 'error'
+    # ga.do_ask_user yields a 'Waiting for your answer ...' marker BEFORE the
+    # user has actually answered (it's the "I'm blocking on input" signal).
+    # The plain s.strip() truthy check below would otherwise light the chip
+    # ✓ ok the instant that marker appears — making the user think the tool
+    # has finished while the input prompt is, in reality, still waiting.
+    # Mark it pending (· …) until something else (the answer, a real status
+    # line) lands in the result.
+    if 'Waiting for your answer' in s and '✅' not in s and '成功' not in s:
+        return '?'
     if '✅' in s or '成功' in s or s.strip():
         return 'ok'
     return '?'
@@ -784,22 +1774,66 @@ def _chip_box(tid_str: str, combo: str, st: str, w: int, result: str = '') -> li
     return out
 
 
+_FINAL_MARKER_RE = re.compile(
+    r'\n*(?:`{3,5}\n*)?\[Info\]\s*Final response to user\.\n*(?:`{3,5})?\s*$')
+
+
+def _strip_final_marker(text: str) -> str:
+    """Drop the trailing `[Info] Final response to user.` marker (emitted by
+    ga.do_no_tool, optionally fenced).  It's a conductor protocol signal, not
+    user-facing content — desktop_bridge / app.js strip it the same way."""
+    return _FINAL_MARKER_RE.sub('', text)
+
+
+def _extract_user_text(entry) -> str:
+    """Pull the plain user text out of a backend.history entry (str content
+    or a content-block list). Ported from v2 — used to prefill the input box
+    after /rewind."""
+    c = entry.get('content') if isinstance(entry, dict) else None
+    if isinstance(c, str):
+        return c
+    if isinstance(c, list):
+        parts = [b.get('text', '') for b in c
+                 if isinstance(b, dict) and b.get('type') == 'text']
+        return '\n'.join(p for p in parts if p)
+    return ''
+
+
 # Slash-command spec for the `/` hint + Tab completion (only commands _cmd
-# actually services). Kept here so the hint never drifts from the dispatcher.
-_CMDS = [
-    ('/help', '', '命令一览'),
-    ('/llm', '[N]', '列出/切换 LLM'),
-    ('/btw', '<问>', '旁问·不污染主上下文'),
-    ('/review', '[范围]', '代码审查'),
-    ('/rewind', '[N]', '回退 N 轮上下文'),
-    ('/continue', '[N]', '列出/恢复历史会话'),
-    ('/clear', '', '清空上下文'),
-    ('/cost', '', 'token 用量'),
-    ('/verbose', '', '工具调用审计'),
-    ('/export', '', '导出最后回答'),
-    ('/stop', '', '中止当前任务'),
-    ('/quit', '', '退出'),
-]
+# actually services). Built dynamically so /language switches relabel the
+# palette and /help on the next render.
+def _cmds() -> list[tuple[str, str, str]]:
+    return [
+        ('/help',     '',                       _t('cmd.help.desc')),
+        ('/status',   '',                       _t('cmd.status.desc')),
+        ('/llm',      _t('cmd.llm.arg'),        _t('cmd.llm.desc')),
+        ('/btw',      _t('cmd.btw.arg'),        _t('cmd.btw.desc')),
+        ('/review',   _t('cmd.review.arg'),     _t('cmd.review.desc')),
+        # ── slash_cmds bundle (same set as v2; descriptions kept inline
+        # /scheduler stays an interactive multi-pick menu; the rest fold
+        # into prompt-injection turns.  All bundle rows now route through
+        # _t() so zh/en stay in sync.
+        ('/update',    _t('cmd.update.arg'),     _t('cmd.update.desc')),
+        ('/autorun',   _t('cmd.autorun.arg'),    _t('cmd.autorun.desc')),
+        ('/morphling', _t('cmd.morphling.arg'),  _t('cmd.morphling.desc')),
+        ('/goal',      _t('cmd.goal.arg'),       _t('cmd.goal.desc')),
+        ('/hive',      _t('cmd.hive.arg'),       _t('cmd.hive.desc')),
+        ('/conductor', _t('cmd.conductor.arg'),  _t('cmd.conductor.desc')),
+        ('/scheduler', '',                       _t('cmd.scheduler.desc')),
+        ('/rewind',   _t('cmd.rewind.arg'),     _t('cmd.rewind.desc')),
+        ('/continue', _t('cmd.continue.arg'),   _t('cmd.continue.desc')),
+        ('/new',      _t('cmd.new.arg'),        _t('cmd.new.desc')),
+        ('/rename',   _t('cmd.rename.arg'),     _t('cmd.rename.desc')),
+        ('/clear',    '',                       _t('cmd.clear.desc')),
+        ('/cost',     '',                       _t('cmd.cost.desc')),
+        ('/verbose',  '',                       _t('cmd.verbose.desc')),
+        ('/export',   _t('cmd.export.arg'),     _t('cmd.export.desc')),
+        ('/stop',     '',                       _t('cmd.stop.desc')),
+        ('/language', _t('cmd.language.arg'),   _t('cmd.language.desc')),
+        ('/emoji',    _t('cmd.emoji.arg'),      _t('cmd.emoji.desc')),
+        ('/resume',   '',                       _t('cmd.resume.desc')),
+        ('/quit',     '',                       _t('cmd.quit.desc')),
+    ]
 
 
 def _heat(el: float) -> str:
@@ -811,40 +1845,161 @@ def _heat(el: float) -> str:
             '\x1b[1m\x1b[38;2;255;44;44m')
 
 
-# Rotating gerund pool — the spinner's word cycles every ~6 s so a long wait
-# feels alive (small-pet companion vibe) instead of stuck on one phrase.
-_GERUNDS = ('思考中', '推敲中', '琢磨中', '梳理中', '拆解中', '校对中',
-            '回想中', '揣摩中', '探查中', '抽丝剥茧', '串珠成链',
-            '蒸馏提纯', '拨云见日', '排兵布阵', '溯本求源', '修桥铺路')
+# Spinner gerund pool — English only (ported from v2 _SPINNER_GERUNDS).
+# Rotates every ~6 s so a long wait feels alive instead of stuck on one phrase.
+_GERUNDS = SPINNER_GERUNDS
 
 
 def _gerund(el: float) -> str:
     return _GERUNDS[int(el // 6) % len(_GERUNDS)]
 
 
-# Pet faces, 4-frame cycle per heat tier so the face blinks/winks every ~1.6s
-# (frame ticks every 0.4s in _ticker). Mood escalates with patience burn:
-# happy → focused → sleepy → stressed.
-_PETS = (
+# Pet faces, 4-frame cycle per heat tier so the face blinks/winks every ~1s
+# (frame ticks every 0.1s in _ticker now — formerly 0.4s).  Mood escalates
+# with patience burn: happy → focused → sleepy → stressed.
+_PETS_UNICODE = (
     ('(•‿•)', '(•‿•)', '(•‿•)', '(-‿-)'),   # <20s   calm, occasional blink
     ('(•_•)', '(•_-)', '(•_•)', '(-_•)'),   # <60s   focused, alternating wink
     ('(˘_˘)', '(˘_˘)', '(-_-)', '(˘_˘)'),   # <180s  sleepy, half-closed
     ('(>_<)', '(@_@)', '(>_<)', '(T_T)'),   # ≥180s  stressed (concerned!)
 )
+# ASCII fallback — some Windows consoles render CJK punctuation as double-
+# width, making `(>_<)` look "fat" and shoving the heat counter sideways.
+# `/emoji ascii` switches to bracketed glyphs that stay single-width on
+# every terminal.  `/emoji off` hides the pet entirely.
+# Cat head — calm tier uses • (sleepy/cute look), `o` reserved for the
+# focused tier, `-` for the sleepy tier so each row's mood reads
+# distinctly.  Each tier's 4 frames share a width within the tier.
+_PETS_CAT = (
+    ('=^•.•^=', '=^•.•^=', '=^-.-^=', '=^•.•^='),
+    ('=^o.o^=', '=^o.-^=', '=^o.o^=', '=^-.o^='),
+    ('=^-.-^=', '=^-.-^=', '=^v.v^=', '=^-.-^='),
+    ('=^>.<^=', '=^@.@^=', '=^>.<^=', '=^T.T^='),
+)
+# Bracketed dot-eye — same mood arc; `•` for calm, `o` for focused.
+_PETS_DOT = (
+    ('[•.•]', '[•.•]', '[-.-]', '[•.•]'),
+    ('[o.o]', '[o.-]', '[o.o]', '[-.o]'),
+    ('[-.-]', '[-.-]', '[v.v]', '[-.-]'),
+    ('[>.<]', '[@.@]', '[>.<]', '[T.T]'),
+)
+# Bear face — restored to the classic ʕ•ᴥ•ʔ for the calm tier (user
+# preference; see screenshot 025734).  Mood escalates the same way as the
+# other styles: calm → focused → sleepy → stressed.  Bullets are kept to
+# the calm/focused tier where mixing them with `-` would jitter; tier 2
+# and 3 stay dash-/bracket-internal so the heat counter never shifts.
+_PETS_BEAR = (
+    ('ʕ•ᴥ•ʔ', 'ʕ-ᴥ-ʔ', 'ʕ•ᴥ•ʔ', 'ʕ•ᴥ-ʔ'),
+    ('ʕoᴥoʔ', 'ʕoᴥ-ʔ', 'ʕoᴥoʔ', 'ʕ-ᴥoʔ'),
+    ('ʕ-ᴥ-ʔ', 'ʕ-ᴥ-ʔ', 'ʕ~ᴥ~ʔ', 'ʕ-ᴥ-ʔ'),
+    ('ʕ>ᴥ<ʔ', 'ʕ@ᴥ@ʔ', 'ʕ>ᴥ<ʔ', 'ʕTᴥTʔ'),
+)
+_PET_STYLES = {
+    'bear':    _PETS_BEAR,
+    'cat':     _PETS_CAT,
+    'dot':     _PETS_DOT,
+    'unicode': _PETS_UNICODE,
+}
+# `off` is rendered specially (empty string) — kept out of _PET_STYLES so the
+# picker can iterate real styles, then surface the hide-pet row separately.
+_PET_HIDDEN = 'off'
+_pet_style = 'bear'   # default per user request; mutated by /emoji <style>
 
 
 def _pet(el: float, frame: int) -> str:
+    # `frame` ticks at the spinner rate (0.1s).  Pet emotes feel frantic if
+    # they swap every tick, so callers divide the spin counter (currently /5)
+    # to land a ~0.5s pet-frame cadence while the spinner glyph stays snappy.
+    if _pet_style == _PET_HIDDEN:
+        return ''
     tier = 0 if el < 20 else 1 if el < 60 else 2 if el < 180 else 3
-    pool = _PETS[tier]
+    pool = _PET_STYLES.get(_pet_style, _PETS_UNICODE)[tier]
     return pool[frame % len(pool)]
 _BP_START = b'\x1b[200~'
 _BP_END = b'\x1b[201~'
 _SPIN = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
-_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+_ROOT = os.path.realpath(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+# ── terminal window title (OSC 0) ────────────────────────────────────────
+# Win Terminal / xterm honour `\x1b]0;<text>\x07`; legacy cmd.exe ignores it
+# silently.  Cache the last value so the 10 Hz _ticker doesn't spam the
+# emulator with identical writes (xterm coalesces but tracers don't).
+_last_term_title: str = ''
+
+
+def _set_term_title(text: str) -> None:
+    # PTK app run redirects sys.stdout to sb_agent.log (see
+    # _run_prompt_toolkit), so sys.stdout.write here would write OSC 0
+    # into the log file instead of the terminal — title silently
+    # frozen at the very first pre-PTK call.  Write straight to fd 1
+    # via os.write, same approach as _w().
+    global _last_term_title
+    if text == _last_term_title:
+        return
+    _last_term_title = text
+    try:
+        os.write(1, ('\x1b]0;' + text + '\x07').encode('utf-8', 'replace'))
+    except OSError:
+        pass   # detached stdout / non-tty — let-it-crash § 14 (best-effort)
+
+
+def _is_under_root(path: str) -> bool:
+    try:
+        return os.path.commonpath([_ROOT, os.path.realpath(path)]) == _ROOT
+    except (OSError, ValueError):
+        return False
 
 
 def _w(s: str) -> None:
     os.write(1, s.encode('utf-8', 'replace'))
+
+
+# Phrasing-based opt-in for multi-select picker — matches v2's _MULTI_RE so a
+# question containing `[多选]`, `multi-select`, `select all` etc. (anywhere in
+# the prompt) switches the inline picker from single- to multi-mode.
+_MULTI_RE = re.compile(r"\[?(?:多选|multi(?:[-_ ]?select)?|select all)\]?", re.IGNORECASE)
+
+
+def _visible_text(s: str) -> str:
+    """Strip SGR escapes for display-width measurement.  sanitize_ansi keeps SGR
+    intentionally, so PTK's ANSI parser can colorize; for cell-width math we
+    need the bare visible characters."""
+    return _ANSI_SGR_RE.sub('', sanitize_ansi(s))
+
+
+def _ptk_x_from_cell(line: str, cell_x: int) -> int:
+    """Convert a 0-based terminal cell column to PTK's character-index x.
+
+    SB computes cursor columns in terminal cells, where CJK glyphs occupy two
+    columns.  FormattedTextControl/ANSI cursor positions are indexes in the
+    formatted-text line, where the same CJK glyph is one character/fragment.
+    Feeding cell columns directly makes PTK place the cursor too far right and
+    it overwrites/clears cells around wide characters."""
+    target = max(0, int(cell_x))
+    acc = 0
+    idx = 0
+    for ch in _visible_text(line):
+        ch_w = max(1, cell_len(ch))
+        if acc + ch_w > target:
+            break
+        acc += ch_w
+        idx += 1
+    return idx
+
+
+def _is_mouse_or_scroll_keypress(kp) -> bool:
+    """Filter out mouse/scroll events from PTK's key sequence so they don't
+    feed into SB's Up/Down history navigation path."""
+    key = getattr(kp, 'key', None)
+    data = getattr(kp, 'data', '') or ''
+    name = getattr(key, 'name', '')
+    probe = f'{name} {key}'.lower()
+    if 'mouse' in probe or 'scroll' in probe:
+        return True
+    if isinstance(data, str) and (data.startswith('\x1b[<') or data.startswith('\x1b[M')):
+        return True
+    return False
 
 
 def _esc_repl(m: re.Match) -> bytes:
@@ -890,7 +2045,7 @@ def _render(text: str, width: int, markdown: bool) -> list[str]:
     buf = StringIO()
     Console(file=buf, width=width, force_terminal=True, color_system='truecolor',
             legacy_windows=False, theme=_MD_THEME).print(
-        HardBreakMarkdown(text, code_theme='xcode') if markdown else Text(text),
+        HardBreakMarkdown(text, code_theme='monokai') if markdown else Text(text),
         end='')
     out = _strip_bg(buf.getvalue()).split('\n')
     if out and out[-1] == '':
@@ -974,7 +2129,7 @@ def _tail_fit_rows(lines: list[str], width: int, budget: int) -> list[str]:
 
 def _elapsed(s: float) -> str:
     if s < 60:
-        return f'{s:.1f}s'
+        return f'{int(s)}s'
     m, sec = divmod(int(s), 60); return f'{m}:{sec:02d}'
 
 
@@ -1061,7 +2216,11 @@ def _rel(mt: float) -> str:
 class SB:
     def __init__(self) -> None:
         self.buf = ''; self.pos = 0; self._fd = 0; self._old = None
-        self._lk = threading.Lock()
+        # Reentrant: helpers like _flush_esc lock internally yet are also called
+        # from already-locked contexts (the maintenance loop). A plain Lock
+        # deadlocks the whole TUI on a bare Esc; RLock lets the same thread
+        # re-enter while still excluding the agent-runner thread.
+        self._lk = threading.RLock()
         self._live_rows = 0
         self._stream = ''
         self._sent = 0                  # rendered lines of this msg already in scrollback
@@ -1076,12 +2235,39 @@ class SB:
         self._resized = False
         self._rb = b''; self._tail = b''; self._bp = False; self._pbytes = b''
         self.hist: list[str] = []; self._hi = -1
+        self._hist_stash = ''           # live draft preserved while browsing history
+        self._draft_stash = ''
+        self._session_name = ''         # set by /new <name>; shown in banner / status
+        self._tip_idx = random.randrange(max(1, tip_count()))  # banner tip, fixed per launch
+        self._btws: list[list] = []     # [question, answer|None] — answer None while in flight
+        # Plan card state (v2 parity).  `_plan_items` is the last seen items;
+        # `_plan_complete_since` / `_plan_lost_since` track grace periods to
+        # avoid flicker on agent rewrites.  `_plan_path` / `_plan_mtime` cache
+        # the last read so the 30ms spinner tick skips redundant file IO.
+        self._plan_items: list[tuple[str, str]] = []
+        self._plan_complete_since: float | None = None
+        self._plan_lost_since: float | None = None
+        self._plan_path: str = ''
+        self._plan_mtime: float = 0.0
+        self._fold_all = True           # Ctrl+O toggles: when True, assistant blocks with a
+                                        # <summary> render as one `▸ {summary}` header in
+                                        # scrollback; the full source replays when flipped off.
         self._cwd = os.path.join(os.getcwd(), 'temp')
-        self._pstore: dict[int, str] = {}; self._imgs: list[str | None] = []; self._pc = 0
+        # All three keyed by paste id (_pc): _pstore text-paste id→content,
+        # _fstore file-paste id→path, _imgs image-paste id→path.  Keying by id
+        # lets a whole-block delete pop the right entry.
+        self._pstore: dict[int, str] = {}; self._fstore: dict[int, str] = {}
+        self._imgs: dict[int, str] = {}; self._pc = 0
         self._t0 = 0.0; self._spin = 0
+        self._t0_anchor = 0.0           # frozen anchor for elapsed; resets only on state changes
         self._painted: list[str] = []
+        self._prev_term_size: tuple[int, int] | None = None
         self._blocks: list[Block] = []                  # block-based scrollback history;
         self._streaming_block: Block | None = None     # the in-flight assistant block
+        self._stream_turn_seen = 0     # turn-marker count last seen in current stream;
+                                       # bumps trigger an incremental fold-repaint so
+                                       # turn N collapses the moment turn N+1 marker
+                                       # arrives (v2-style live folding).
         # Self-pipe for SIGWINCH delivery. PEP 475 makes Python auto-retry
         # os.read on EINTR even with siginterrupt(SIGWINCH, True) — especially
         # under iTerm split panes where the signal can be delivered while the
@@ -1089,116 +2275,319 @@ class SB:
         # a byte to this pipe; the main select() polls both stdin and the
         # pipe, so a resize always wakes the loop within select's timeout.
         sr, sw = os.pipe()
-        import fcntl as _fcntl
-        for fd in (sr, sw):
-            fl = _fcntl.fcntl(fd, _fcntl.F_GETFL)
-            _fcntl.fcntl(fd, _fcntl.F_SETFL, fl | os.O_NONBLOCK)
+        if not _IS_WINDOWS:
+            import fcntl as _fcntl
+            for fd in (sr, sw):
+                fl = _fcntl.fcntl(fd, _fcntl.F_GETFL)
+                _fcntl.fcntl(fd, _fcntl.F_SETFL, fl | os.O_NONBLOCK)
         self._sig_r, self._sig_w = sr, sw
         self._last_render = 0.0
         self._asking: AskUserEvent | None = None
         self._quit = False
         self._cc_t = 0.0                # last bare-Ctrl+C time (arm-to-quit window)
+        self._last_esc_t = 0.0          # last bare-Esc time (Esc Esc → /clear)
+        # Queued user messages: appended while running, written to the
+        # bridge's `_intervene` file with a "finish current task first"
+        # wrapper that subordinates the new message to the running task.
+        # Cleared when the bridge confirms consumption at the next turn
+        # boundary.
+        self._pending: list[str] = []
         self._epend = b''               # held trailing ESC (split-read disambiguation)
         self._undo: list[tuple[str, int]] = []   # buffer-edit history for Ctrl+Z
         self._redo: list[tuple[str, int]] = []   # cleared on any new edit
         self._sel: int | None = None             # selection anchor (None=no selection)
+        # PTK Application state (populated by _run_prompt_toolkit_application)
+        self._ptk_app = None                     # prompt_toolkit.application.Application
+        self._ptk_loop: asyncio.AbstractEventLoop | None = None
+        self._ptk_cursor = None                  # prompt_toolkit Point set per render
+        # Scrollback emit queue: lines waiting to be print_text()'d above the
+        # PTK render area.  Populated by _emit_lines, drained by the async
+        # maintenance loop via run_in_terminal(print_text).
+        self._sbq: list[str] = []
+        self._sbq_lk = threading.Lock()
+        # When set, the next drain wipes screen+scrollback and re-prints the
+        # entire rendered history at the current width.  Toggled by
+        # _repaint_screen so banner/box borders reflow on terminal resize
+        # instead of leaving stale rows in scrollback.
+        self._pending_repaint = False
+        # Per-render live-region cache so PTK's preferred_height query and the
+        # text getter see the same content within a single render pass.
+        self._live_cache: list[str] = ['']
+        self._live_cache_w = -1
+        self._live_cache_h = -1
+        # ask_user picker state.  None = no picker (free text), 'single' =
+        # arrow keys move highlight + Enter submits one, 'multi' = Space
+        # toggles + Enter submits the joined set.  Any visible char typed
+        # while a picker is active switches it back to None (free-text
+        # escape hatch — the v2 "Type something" affordance).
+        self._picker_mode: str | None = None
+        self._picker_sel: int = 0
+        self._picker_checked: set[int] = set()
+        # Local menu picker — used by /llm, /continue, etc. to present an
+        # arrow-key selectable list in place of the input box.  Distinct from
+        # the ask_user picker (which sits inside an ask_card with a question
+        # header and a free-text input field).  When _menu_active, the live
+        # region renders _menu_card instead of _input_box; ↑↓/Enter/Esc are
+        # captured before the normal input pipeline.
+        self._menu_active: bool = False
+        self._menu_options: list[str] = []
+        self._menu_title: str = ''
+        self._menu_hint: str = ''
+        self._menu_sel: int = 0
+        self._menu_scroll: int = 0          # index of the first visible row in the viewport
+        self._menu_on_submit = None        # Callable[[int|list[int]], None] | None
+        self._menu_on_cancel = None        # Callable[[], None] | None
+        # Multi-select menus: Space toggles _menu_checked[i]; Enter calls
+        # on_submit(sorted(_menu_checked)).  Single-select (default) calls
+        # on_submit(_menu_sel) and ignores _menu_checked.
+        self._menu_multi: bool = False
+        self._menu_checked: set[int] = set()
+        # Interactive command palette: index into _cmd_matches output when
+        # buf starts with `/`.  ↑↓ steer the highlight, Tab completes the
+        # highlighted command, Enter still executes whatever is in buf.
+        self._palette_sel: int = 0
+        self._palette_scroll: int = 0       # viewport offset into the matches list
 
     # ── live region ──
-
-    def _goto_top(self) -> None:
-        if self._parked_up:                       # undo the caret park first so the
-            _w(f'\x1b[{self._parked_up}B')        # 'cursor at region bottom' invariant
-            self._parked_up = 0                   # _goto_top relies on holds again
-        _w('\r')
-        if self._live_rows > 1:
-            _w(f'\x1b[{self._live_rows - 1}A')
-
-    def _paint(self, lines: list[str]) -> bool:   # True if it actually repainted
-        if lines == self._painted:
-            return False
-        old = self._live_rows
-        self._goto_top()
-        last = len(lines) - 1
-        for i, ln in enumerate(lines):
-            _w('\x1b[2K' + ln + ('\r\n' if i != last else ''))
-        if old > len(lines):
-            _w('\x1b[J')                       # only when the region shrank
-        self._painted = list(lines)
-        self._live_rows = len(lines)
-        return True
+    #
+    # The live region is now owned by PTK's Application renderer.  See
+    # _build_live_lines / _get_ptk_text / _get_live_height further down.
+    # The old _paint / _goto_top helpers wrote ANSI to stdout directly; they
+    # are removed.  Any remaining _painted/_live_rows/_parked_up writes left
+    # in callers are harmless legacy resets (they zero state PTK ignores).
 
     def _status_line(self, w: int) -> str:
         name = self._bridge.llm_name if self._bridge else '?'
         if self._asking:
-            state = '◉ 待答 · Esc 撤回提问'
+            state = _t('status.asking')
         elif self._running:
-            el = time.time() - self._t0
+            el = time.time() - self._t0_anchor
             tps = ''
             if el >= 1 and self._stream:
                 r = len(self._stream) / 4 / el        # ~chars→tokens, rough live rate
                 if r >= 0.5:
-                    tps = f' · {r:.0f} tok/s'
-            state = f'{_gerund(el)} {_elapsed(el)}{tps} · Esc 停'
-        elif 0 < time.time() - self._cc_t < 2:
-            state = '○ 再按 Ctrl+C 退出'
+                    tps = _t('status.tps', rate=r)
+            state = f'{_gerund(el)} {_elapsed(el)}{tps}' + _t('status.running.tail')
         else:
-            state = '○ 就绪'
+            state = _t('status.ready')
         cost = _cost_str(self._bridge.agent) if self._bridge else ''
         return f'[main] {name} │ {state}{cost}'
 
-    def _plan_line(self) -> str | None:
+    # v2-style plan card budget: 5 rows max — header(1) + optional step(1) +
+    # tasks(rest) + optional overflow(1).  Grace periods avoid flicker when the
+    # agent rewrites plan.md (transient empty read) or completes (auto-hide).
+    _PLAN_GRACE_SEC = 3.0       # show "✓ complete" for this long, then hide
+    _PLAN_LOST_GRACE_SEC = 5.0  # keep prior items visible during agent rewrites
+                                # / brief working-state clears (longer than v2's
+                                # 1.5s because v3 polls only on render, not on
+                                # turn boundaries — and ga.py auto-exits plan
+                                # mode whenever plan.md momentarily has 0 `[ ]`)
+
+    def _agent_msgs(self, ag) -> list[str]:
+        """Extract a list of text-content strings from agent history — what
+        `plan_state.current_step` / `find_path_in_messages` consume.  History
+        entries can be dicts (raw backend) or objects with `.content`."""
+        hist = getattr(getattr(ag, 'llmclient', None), 'backend', None)
+        hist = getattr(hist, 'history', None) or []
+        out: list[str] = []
+        for h in hist:
+            c = h.get('content') if isinstance(h, dict) else getattr(h, 'content', None)
+            if isinstance(c, list):
+                c = '\n'.join(b.get('text', '') for b in c
+                              if isinstance(b, dict) and b.get('type') == 'text')
+            if isinstance(c, str) and c:
+                out.append(c)
+        return out
+
+    def _plan_card(self, w: int) -> list[str]:
+        """Render the plan/todo card above the input box (v2 parity, port of
+        tuiapp_v2._refresh_planbar).  Returns [] when not in plan mode.
+
+        Layout (5 rows max):
+          📋 Plan (n_done/n_total)              ← header
+            ▸ current step…                     ← optional, from `当前步骤：`
+            ✔ done item                         ← undone first, then done
+            ☐ open item
+            ⋮ +N more                           ← when overflowing
+
+        Cache file reads via mtime so the 30ms spinner tick doesn't open the
+        plan file every frame."""
+        if not self._bridge:
+            return []
+        ag = self._bridge.agent
         try:
             from frontends import plan_state
-            if not self._bridge or not plan_state.is_active(self._bridge.agent):
-                return None
-            p = plan_state.resolve_path(self._bridge.agent)
-            if not p or not os.path.isfile(p):
-                return None
-            with open(p, encoding='utf-8', errors='replace') as f:
-                items = plan_state.extract(f.read())
-            d, tot = plan_state.summary(items)
-            return f'Plan {d}/{tot} · {os.path.basename(p)}' if tot else None
         except Exception:
-            return None
+            return []
+
+        # Fresh read (mtime-gated to skip redundant IO).  Messages fallback
+        # (v2 parity) so the card survives even when the agent transiently
+        # pops `working['in_plan_mode']` — `plan_state.resolve_path` will
+        # walk the message history for the most recent `plan_*/plan.md`.
+        msgs_for_resolve = self._agent_msgs(ag)
+        path = plan_state.resolve_path(ag, messages=msgs_for_resolve)
+        active = plan_state.is_active(ag, messages=msgs_for_resolve)
+        new_items: list = self._plan_items
+        if path and os.path.isfile(path):
+            try:
+                mtime = os.path.getmtime(path)
+            except OSError:
+                mtime = 0.0
+            if path != self._plan_path or mtime != self._plan_mtime:
+                self._plan_path = path
+                self._plan_mtime = mtime
+                try:
+                    with open(path, encoding='utf-8', errors='replace') as f:
+                        new_items = plan_state.extract(f.read())
+                except OSError:
+                    new_items = []
+        elif not active:
+            new_items = []
+
+        # Grace tracking: detect complete edge + handle transient disappearance.
+        now = time.time()
+        prev = self._plan_items
+        now_complete = bool(new_items) and plan_state.is_complete(new_items)
+        was_complete = bool(prev) and plan_state.is_complete(prev)
+        if now_complete and not was_complete:
+            self._plan_complete_since = now
+        elif not now_complete:
+            self._plan_complete_since = None
+        if not new_items and prev:
+            if self._plan_lost_since is None:
+                self._plan_lost_since = now
+        elif new_items:
+            self._plan_lost_since = None
+            self._plan_items = new_items
+
+        # Apply lost-grace expiry.
+        items = self._plan_items
+        if self._plan_lost_since is not None and now - self._plan_lost_since >= self._PLAN_LOST_GRACE_SEC:
+            self._plan_items = []
+            self._plan_lost_since = None
+            items = []
+
+        # Plan mode armed but no items written yet → placeholder card.
+        if not items:
+            if active:
+                return self._plan_placeholder(w, ag)
+            return []
+
+        n_done, n_total = plan_state.summary(items)
+        complete = plan_state.is_complete(items)
+        if complete and self._plan_complete_since is not None:
+            if now - self._plan_complete_since >= self._PLAN_GRACE_SEC:
+                return []
+
+        msgs = self._agent_msgs(ag)
+        step = plan_state.current_step(msgs) if msgs else ''
+
+        # 5-row budget allocation (matches v2 _refresh_planbar).
+        budget = 4 - (1 if step else 0)
+        ordered = ([x for x in items if x[1] != 'done'] +
+                   [x for x in items if x[1] == 'done'])
+        body_lines = budget - 1 if len(ordered) > budget else budget
+        shown = ordered[:body_lines]
+        overflow = max(0, len(ordered) - body_lines)
+
+        head = (_t('plan.complete', n=n_total) if complete
+                else _t('plan.header', done=n_done, total=n_total))
+        rows = [_BOLD + _ACCENT + head + _RST]
+        if step:
+            rows.append(_ACCENT + '  ▸ ' + _RST + _DIM + step[:120] + _RST)
+        for c, st in shown:
+            if st == 'done':
+                rows.append(_ACCENT + '  ✔ ' + _RST + _DIM + c + _RST)
+            else:
+                rows.append(_DIM + '  ☐ ' + _RST + c)
+        if overflow:
+            rows.append(_DIM + '  ⋮ ' + _t('plan.overflow', n=overflow) + _RST)
+        # Clip each row to width and prepend the same left indent the btw card
+        # uses, so plan + btw share a visual margin.
+        out: list[str] = []
+        for r in rows:
+            out.append(' ' + _clip_cells(r, max(1, w - 1)))
+        return out
+
+    def _plan_placeholder(self, w: int, ag) -> list[str]:
+        """Card shown when plan mode is armed but plan.md hasn't been written
+        yet — covers the enter_plan_mode → first write gap."""
+        try:
+            from frontends import plan_state
+        except Exception:
+            return []
+        msgs = self._agent_msgs(ag)
+        path = (plan_state._stashed_plan_path(ag)
+                or plan_state.find_path_in_messages(msgs)
+                or '')
+        hint = ('/'.join(path.replace('\\', '/').rstrip('/').split('/')[-2:])
+                if path else 'plan.md')
+        step = plan_state.current_step(msgs) if msgs else ''
+        rows = [_BOLD + _ACCENT + _t('plan.placeholder') + _RST]
+        if step:
+            rows.append(_ACCENT + '  ▸ ' + _RST + _DIM + step[:120] + _RST)
+        rows.append(_DIM + '  ' + _t('plan.waiting', path=hint) + _RST)
+        out: list[str] = []
+        for r in rows:
+            out.append(' ' + _clip_cells(r, max(1, w - 1)))
+        return out
 
     @staticmethod
-    def _boxln(plain: str, colored: str, w: int) -> str:
+    def _boxln(plain: str, colored: str, w: int, border: str = _BORDER) -> str:
         if w < 4:
             return _clip_cells(plain, max(1, w))
         inner = max(0, w - 4)
         plain_fit = _clip_cells(plain, inner)
         colored_fit = _clip_ansi_cells(colored, inner)
         pad = max(0, inner - cell_len(plain_fit))   # cell_len → CJK-safe alignment
-        return _BORDER + '│ ' + _RST + colored_fit + ' ' * pad + _BORDER + ' │' + _RST
+        return border + '│ ' + _RST + colored_fit + ' ' * pad + border + ' │' + _RST
 
-    def _segs(self, iw: int) -> list[tuple[int, str]]:
-        """Flatten buf into visual rows: (abs char start in buf, chunk text).
-        One source of truth for both caret math and ←→↑↓ navigation."""
+    def _segs(self, iw: int, text: str | None = None) -> list[tuple[int, str]]:
+        """Flatten `text` (defaults to self.buf) into visual rows: (abs char
+        start, chunk text).  One source of truth for both caret math and
+        ←→↑↓ navigation.  Pass `text` explicitly when rendering a virtual
+        body (e.g. shell-mode hides the leading `!`); pair it with the
+        matching `pos` in `_seg_at`."""
+        src = self.buf if text is None else text
         segs, p = [], 0
-        for line in self.buf.split('\n'):
+        for line in src.split('\n'):
             for ch in _wrap_cells(line, iw) or ['']:
                 segs.append((p, ch)); p += len(ch)
             p += 1                              # the '\n' separator
         return segs
 
-    def _seg_at(self, segs: list[tuple[int, str]]) -> tuple[int, int]:
-        """(visual row index, char offset within its chunk) for self.pos."""
+    def _seg_at(self, segs: list[tuple[int, str]], pos: int | None = None) -> tuple[int, int]:
+        """(visual row index, char offset within its chunk) for `pos`
+        (defaults to self.pos).  Caller passes a virtual `pos` when segs
+        were built from a virtual `text`."""
+        p = self.pos if pos is None else pos
         for i, (st, ch) in enumerate(segs):
             end = st + len(ch)
             eol = i + 1 == len(segs) or segs[i + 1][0] != end   # \n gap ⇒ row ends here
-            if st <= self.pos and (self.pos < end or (self.pos == end and eol)):
-                return i, self.pos - st
+            if st <= p and (p < end or (p == end and eol)):
+                return i, p - st
         return len(segs) - 1, len(segs[-1][1])
+
+    def _line_region(self, pos: int | None = None) -> tuple[int, int, int, int]:
+        """(行号, 总行数, 行起始偏移, 行结束偏移) 基于逻辑行（\\n分割）"""
+        p = self.pos if pos is None else pos
+        ls = self.buf.rfind('\n', 0, p) + 1
+        le = self.buf.find('\n', p)
+        if le == -1:
+            le = len(self.buf)
+        line_no = self.buf[:p].count('\n')
+        total = self.buf.count('\n') + 1
+        return line_no, total, ls, le
 
     def _cur_v(self, d: int) -> None:
         """↑/↓ roam by VISUAL row (a long single-line paste wraps to many rows
-        yet stays one logical line — must still roam). Fall through to history
-        only at the text extremes, and only for a single-line draft."""
+        yet stays one logical line — must still roam). At the top/bottom visual
+        row, one more ↑/↓ falls through to input history — including for a
+        multi-line draft (v2 parity)."""
         segs = self._segs(max(1, _term()[0] - 6))
         i, off = self._seg_at(segs); ni = i + d
         if not 0 <= ni < len(segs):
-            if '\n' not in self.buf:
-                self._nav_hist(d)
+            self._nav_hist(d)
             return
         tcol = cell_len(segs[i][1][:off])       # keep display column
         st, ch = segs[ni]
@@ -1209,24 +2598,189 @@ class SB:
             cw += cell_len(c); o += 1
         self.pos = st + o
 
+    def _picker_init(self, ae) -> None:
+        """Initialize picker state for a fresh ask_user event.  Pickers only
+        activate when the event has candidates; otherwise this is a no-op and
+        the user just types free text."""
+        if ae is None or not getattr(ae, 'candidates', None):
+            self._picker_mode = None
+            self._picker_sel = 0
+            self._picker_checked = set()
+            return
+        q = ae.question or ''
+        self._picker_mode = 'multi' if _MULTI_RE.search(q) else 'single'
+        self._picker_sel = 0
+        self._picker_checked = set()
+
+    def _picker_reset(self) -> None:
+        self._picker_mode = None
+        self._picker_sel = 0
+        self._picker_checked = set()
+
+    def _show_menu(self, title: str, options: list[str], on_submit,
+                   hint: str | None = None, on_cancel=None,
+                   multi_select: bool = False,
+                   pre_checked: set[int] | None = None) -> None:
+        """Open a modal arrow-key menu in place of the input box.
+
+        The menu takes over the live region; ↑↓ move the highlight, Enter
+        invokes `on_submit(idx)`, Esc invokes `on_cancel()` (if provided).
+        Submission auto-closes the menu before invoking the callback so the
+        callback is free to open another menu / commit / start a task.
+
+        `multi_select=True` switches to checkbox mode: Space toggles the
+        highlighted row, the per-row prefix becomes `[x]/[ ]`, and Enter
+        delivers a sorted `list[int]` of all checked indices (may be empty
+        if the user submits with nothing ticked).
+
+        `pre_checked` seeds the multi-select tick state atomically.  Callers
+        used to set `self._menu_checked` AFTER `_show_menu` returned, which
+        worked logically but left a one-frame window where PTK could render
+        the menu with the wrong state — observed as /scheduler picker
+        rendering all unchecked even though `reflect/scheduler.py` was alive.
+        Passing the set up-front makes the open atomic."""
+        if not options:
+            return
+        self._menu_active = True
+        self._menu_options = list(options)
+        self._menu_title = title
+        # In multi-select mode show a Space-aware hint by default so the user
+        # discovers the toggle key without reading the docstring.
+        if hint is not None:
+            self._menu_hint = hint
+        elif multi_select:
+            self._menu_hint = _t('menu.hint.multi', default='Space toggle · ↑↓ move · Enter submit · Esc cancel')
+        else:
+            self._menu_hint = _t('menu.hint')
+        self._menu_sel = 0
+        self._menu_scroll = 0
+        self._menu_on_submit = on_submit
+        self._menu_on_cancel = on_cancel
+        self._menu_multi = bool(multi_select)
+        self._menu_checked = set(pre_checked) if pre_checked else set()
+        self._render_live()
+
+    def _close_menu(self) -> None:
+        self._menu_active = False
+        self._menu_options = []
+        self._menu_title = ''
+        self._menu_hint = ''
+        self._menu_sel = 0
+        self._menu_scroll = 0
+        self._menu_on_submit = None
+        self._menu_on_cancel = None
+        self._menu_multi = False
+        self._menu_checked = set()
+
+    @staticmethod
+    def _scroll_window(sel: int, total: int, visible: int, scroll: int) -> int:
+        """Adjust `scroll` so that `sel` stays within the visible window of
+        size `visible`.  Returns the new scroll offset."""
+        if total <= visible:
+            return 0
+        if sel < scroll:
+            return max(0, sel)
+        if sel >= scroll + visible:
+            return min(total - visible, sel - visible + 1)
+        return max(0, min(total - visible, scroll))
+
+    def _menu_submit(self) -> None:
+        cb = self._menu_on_submit
+        sel = self._menu_sel
+        multi = self._menu_multi
+        checked = sorted(self._menu_checked) if multi else None
+        if not self._menu_active:
+            return
+        self._close_menu()
+        if cb is not None:
+            try:
+                # Multi-select delivers a sorted list[int] (possibly empty)
+                # so callers can `if not picked: return` cleanly.  Single-
+                # select keeps the legacy `int` contract.
+                cb(checked if multi else sel)
+            except Exception as e:
+                self.commit([_t('err.menu_cb', err=str(e))])
+
+    def _menu_cancel(self) -> None:
+        cb = self._menu_on_cancel
+        if not self._menu_active:
+            return
+        self._close_menu()
+        if cb is not None:
+            try:
+                cb()
+            except Exception:
+                pass
+
+    def _picker_submit(self) -> str | None:
+        """Return the answer text for the current picker selection, or None
+        if picker is inactive or selection is empty."""
+        ae = self._asking
+        if not ae or not ae.candidates or not self._picker_mode:
+            return None
+        if self._picker_mode == 'multi':
+            if not self._picker_checked:
+                # treat Enter on empty multi as picking the highlighted row
+                return ae.candidates[self._picker_sel] if 0 <= self._picker_sel < len(ae.candidates) else None
+            picked = [ae.candidates[i] for i in sorted(self._picker_checked) if 0 <= i < len(ae.candidates)]
+            return '; '.join(picked) if picked else None
+        # single
+        if 0 <= self._picker_sel < len(ae.candidates):
+            return ae.candidates[self._picker_sel]
+        return None
+
     def _cmd_matches(self, prefix: str) -> list[tuple[str, str, str]]:
         p = prefix.strip().lower()
-        return [c for c in _CMDS if c[0].startswith(p)]
+        return [c for c in _cmds() if c[0].startswith(p)]
+
+    def _palette_visible(self) -> bool:
+        """True when the live `/`-command palette should appear and own ↑↓/Tab."""
+        if self._asking is not None or self._menu_active:
+            return False
+        if '\n' in self.buf or not self.buf.startswith('/'):
+            return False
+        ms = self._cmd_matches(self.buf)
+        if not ms:
+            return False
+        if len(ms) == 1 and ms[0][0] == self.buf.strip():
+            return False
+        return True
 
     def _hint_lines(self, w: int) -> list[str]:
-        """Live `/`-command suggestion list (v2 palette, scrollback-style)."""
-        if self._asking is not None or '\n' in self.buf or not self.buf.startswith('/'):
+        """Live `/`-command palette: scrollback-style list with an arrow-key
+        highlight + scrolling viewport.  ↑↓ move the highlight (handled in
+        `_keys`), Tab completes the highlighted command, Enter completes into
+        the input box.  Long match lists scroll the visible window as sel walks
+        past the edges (no wrap-around, no "N more" chrome)."""
+        if not self._palette_visible():
             return []
         ms = self._cmd_matches(self.buf)
-        if not ms or (len(ms) == 1 and ms[0][0] == self.buf.strip()):
-            return []
-        out = [_DIM + _clip_cells(f'  {n:<10}{a:<7} {d}', w) + _RST for n, a, d in ms[:6]]
-        out.append(_DIM + (f'  … 还有 {len(ms) - 6} 个' if len(ms) > 6 else
-                           '  Tab 补全 · Enter 执行 · Esc 清空') + _RST)
+        total = len(ms)
+        # Cap palette viewport to 6 rows so it doesn't squeeze the input box.
+        visible = min(total, 6)
+        # Clamp sel + slide scroll so sel is in-window.
+        if self._palette_sel < 0 or self._palette_sel >= total:
+            self._palette_sel = 0
+        self._palette_scroll = self._scroll_window(self._palette_sel, total, visible, self._palette_scroll)
+        start = self._palette_scroll
+        end = min(total, start + visible)
+        out: list[str] = []
+        for i in range(start, end):
+            n, a, d = ms[i]
+            # `<11` + literal space guarantees a visible gap between the
+            # 10-char names (/conductor, /morphling, /scheduler) and their
+            # `[arg]` placeholder — without it they render as `/conductor[task]`.
+            row = f'  {n:<11} {a:<8} {d}' if a else f'  {n:<11}          {d}'
+            if i == self._palette_sel:
+                out.append(_ACCENT + _BOLD + _clip_cells(row, w) + _RST)
+            else:
+                out.append(_DIM + _clip_cells(row, w) + _RST)
         return out
 
     def _tab(self) -> None:
-        if self._asking is not None or '\n' in self.buf or not self.buf.startswith('/'):
+        if self._asking is not None or self._menu_active:
+            return
+        if '\n' in self.buf or not self.buf.startswith('/'):
             return
         ms = self._cmd_matches(self.buf)
         if not ms:
@@ -1234,18 +2788,27 @@ class SB:
         if len(ms) == 1:
             n, a, _ = ms[0]; self.buf = n + (' ' if a else '')
         else:
-            lcp = os.path.commonprefix([m[0] for m in ms])
-            if len(lcp) <= len(self.buf):
-                return
-            self.buf = lcp
+            # Tab always completes to whichever entry the palette currently
+            # highlights (defaults to 0 = first match).  Use the full match
+            # list — the palette's scrolling viewport may have walked past
+            # the first 6 items, so a raw `ms[:6]` index would be stale.
+            idx = self._palette_sel if 0 <= self._palette_sel < len(ms) else 0
+            n, a, _ = ms[idx]
+            self.buf = n + (' ' if a else '')
+        self.pos = len(self.buf)
+        self._palette_sel = 0
+        self._palette_scroll = 0
         self.pos = len(self.buf)
 
     def _esc_back(self) -> None:
-        """Universal back: cancel ask → clear draft → stop running. Esc has
-        NO exit capability — quitting is Ctrl+C×2 or Ctrl+D only. Draft-clear
-        comes before running-stop so typing the next prompt mid-run and
-        pressing Esc just discards what you typed (no surprise abort); a
-        second Esc on the now-empty buffer is what stops the agent."""
+        """Universal back: cancel menu → cancel ask → clear btw panel → clear
+        draft → stop running. Esc has NO exit capability — quitting is Ctrl+C×2
+        or Ctrl+D only. The btw panel is cleared outright (no history kept); an
+        in-flight side-question then lands on an orphan and never reappears.
+        Draft-clear comes before running-stop so typing the next prompt mid-run
+        and pressing Esc just discards what you typed."""
+        if self._menu_active:
+            self._menu_cancel(); return
         if self._asking is not None:
             if self._running and self._bridge:
                 self._bridge.abort()
@@ -1258,13 +2821,29 @@ class SB:
                     pass
             self._asking = None; self._running = False; self.buf = ''; self.pos = 0
             self._undo.clear(); self._redo.clear(); self._sel = None
-            self.commit([_DIM + '✗ 已撤回提问 · 可直接输入或重新发问' + _RST]); return
+            self._picker_reset()
+            self.commit([_DIM + _t('msg.ask_cancelled') + _RST]); return
+        if self._btws:                                # clear the side-question panel
+            self._btws = []                           # in-flight answers land on orphans
+            return
         if self.buf:
             self._snap()                              # let Ctrl+Z restore the draft
             self.buf = ''; self.pos = 0; self._sel = None; return
+        if self._pending:                             # cancel queued user messages
+            n = len(self._pending)
+            self._pending = []
+            if self._bridge:
+                td = getattr(self._bridge.agent, 'task_dir', None)
+                if td:
+                    try: os.remove(os.path.join(td, '_intervene'))
+                    except OSError: pass
+                with self._bridge._intervene_lk:
+                    self._bridge._intervene_pending = []
+            self.commit([_DIM + _t('pending.cleared', n=n) + _RST])
+            return
         if self._running and self._bridge:
             self._bridge.abort()
-            self.commit([_DIM + '⏹ 已请求中止 · Esc' + _RST]); return
+            self.commit([_DIM + _t('msg.abort_requested') + _RST]); return
 
     def _ask_card(self, w: int) -> tuple[list[str], int, int]:
         """Single unified card for ask_user: question + candidates + INLINE
@@ -1274,7 +2853,7 @@ class SB:
         ae = self._asking
         if w < 24:
             rows: list[str] = []
-            for ln in (ae.question or '请回答:').strip().split('\n'):
+            for ln in (ae.question or _t('ask.default_q')).strip().split('\n'):
                 rows.extend(_DIM + _clip_cells(x, w) + _RST for x in _wrap_cells(ln, w))
             for i, c in enumerate((ae.candidates or [])[:3], 1):
                 rows.extend(_clip_cells(x, w) for x in _wrap_cells(f'{i}. {c}', w))
@@ -1290,7 +2869,7 @@ class SB:
         inner = max(8, w)
         content_w = max(1, inner - 4)
         pending = self._bridge.ask_user_queue.qsize() if self._bridge else 0
-        label = '◉ 请回答' + (f'  +{pending} 待答' if pending else '')
+        label = _t('ask.title') + (_t('ask.pending', n=pending) if pending else '')
         label_max = max(1, inner - 5)
         if cell_len(label) > label_max:
             label = _clip_cells(label, label_max)
@@ -1308,77 +2887,359 @@ class SB:
             return r
 
         rows = [top]
-        for ln in (ae.question or '请回答:').strip().split('\n'):
+        for ln in (ae.question or _t('ask.default_q')).strip().split('\n'):
             rows.extend(row(ln, _BOLD))
         if ae.candidates:
             rows.extend(row(''))
-            for i, c in enumerate(ae.candidates, 1):
-                rows.extend(row(f'  {i}. {c}'))
-        rows.extend(row(''))                        # gap between info & input
+            # Render each candidate.  Picker mode adds a highlight on the
+            # current row and (in multi) a [ ]/[x] marker; in free-text mode
+            # candidates show only as numbered hints — typing the number
+            # still picks that row at submit time.
+            multi = self._picker_mode == 'multi'
+            for i, c in enumerate(ae.candidates):
+                if multi:
+                    mark = '[x]' if i in self._picker_checked else '[ ]'
+                    body = f'  {mark} {i + 1}. {c}'
+                else:
+                    body = f'  {i + 1}. {c}'
+                if self._picker_mode and i == self._picker_sel:
+                    rows.extend(row(body, _ACCENT + _BOLD))
+                else:
+                    rows.extend(row(body))
+        # Multi mode is "checkbox-only" — no input box.  Free-text doesn't
+        # combine naturally with multi-pick semantics, and hiding the input
+        # keeps the candidate list (with its [x]/[ ] marks) always visible.
+        # Single mode keeps the input box for the focus-cycle UX.
+        if multi:
+            crow, ccol = len(rows) - 1, 0       # cursor is hidden in picker mode
+        else:
+            rows.extend(row(''))                # gap between info & input
 
-        # Inline input area (same wrap math as the regular input box: `❯ chunk`
-        # inside `│ ... │`, caret column = cell_len(prefix+chunk[:off])+3).
-        iw = content_w - 2
-        segs = self._segs(iw)
-        ci, coff = self._seg_at(segs)
-        sel = self._sel_range()
-        crow, ccol = len(rows), cell_len('❯ ') + 3
-        for i, (st, ch) in enumerate(segs):
-            first = i == 0
-            pre_p = '❯ ' if first else '  '
-            pre_c = (_ACCENT + '❯' + _RST + ' ') if first else '  '
-            disp = ch
-            if sel:
-                lo = max(sel[0] - st, 0); hi = min(sel[1] - st, len(ch))
-                if lo < hi:
-                    disp = ch[:lo] + '\x1b[7m' + ch[lo:hi] + '\x1b[27m' + ch[hi:]
-            pad = content_w - cell_len(pre_p + ch)
-            rows.append(_ACCENT + '│' + _RST + ' ' + pre_c + disp +
-                        ' ' * pad + ' ' + _ACCENT + '│' + _RST)
-            if i == ci:
-                crow = len(rows) - 1
-                ccol = cell_len(pre_p + ch[:coff]) + 3
+            # Inline input area (same wrap math as the regular input box: `❯ chunk`
+            # inside `│ ... │`, caret column = cell_len(prefix+chunk[:off])+3).
+            iw = content_w - 2
+            segs = self._segs(iw)
+            ci, coff = self._seg_at(segs)
+            sel = self._sel_range()
+            crow, ccol = len(rows), cell_len('❯ ') + 3
+            for i, (st, ch) in enumerate(segs):
+                first = i == 0
+                pre_p = '❯ ' if first else '  '
+                pre_c = (_ACCENT + '❯' + _RST + ' ') if first else '  '
+                disp = ch
+                if sel:
+                    lo = max(sel[0] - st, 0); hi = min(sel[1] - st, len(ch))
+                    if lo < hi:
+                        disp = ch[:lo] + '\x1b[7m' + ch[lo:hi] + '\x1b[27m' + ch[hi:]
+                pad = content_w - cell_len(pre_p + ch)
+                rows.append(_ACCENT + '│' + _RST + ' ' + pre_c + disp +
+                            ' ' * pad + ' ' + _ACCENT + '│' + _RST)
+                if i == ci:
+                    crow = len(rows) - 1
+                    ccol = cell_len(pre_p + ch[:coff]) + 3
 
         rows.extend(row(''))
-        rows.extend(row('↳ 数字选择 / 自由输入 · Esc 撤回', _DIM))
+        if self._picker_mode == 'multi':
+            hint = _t('ask.hint.multi')
+        elif self._picker_mode == 'single':
+            hint = _t('ask.hint.single')
+        else:
+            hint = _t('ask.hint.freetext')
+        rows.extend(row(hint, _DIM))
         rows.append(bot)
         return rows, crow, ccol
+
+    def _menu_visible_count(self, h: int) -> int:
+        """How many menu rows fit in the current viewport.  Leaves room for
+        title + bottom border + gap + hint + status line."""
+        # Budget: title 1 + bottom border 1 + gap 1 + hint 1 + status 2 ≈ 6
+        return max(3, h - 6)
+
+    def _menu_card(self, w: int) -> tuple[list[str], int, int]:
+        """Modal arrow-key menu rendered in place of the input box.
+
+        Layout mirrors _ask_card's accent-bordered box: title at the top, one
+        row per option with the highlighted row shown in bold accent, a hint
+        line at the bottom.  Long lists use a scrolling viewport — sel stays
+        within the visible window, scrolling adjusts as ↑↓ walk past edges.
+
+        Returns (lines, caret_row, caret_col) to match _input_box's signature;
+        caret column is set to (0, 1) so PTK hides the block cursor (no
+        visible caret while a menu is open)."""
+        total = len(self._menu_options)
+        # Use PTK's current viewport height (set on SB._h by the render loop).
+        h = max(8, getattr(self, '_h', 24))
+        visible = min(total, self._menu_visible_count(h))
+        # Clamp sel and recompute scroll so sel is in-window.
+        self._menu_sel = max(0, min(total - 1, self._menu_sel)) if total else 0
+        self._menu_scroll = self._scroll_window(self._menu_sel, total, visible, self._menu_scroll)
+        start = self._menu_scroll
+        end = min(total, start + visible)
+
+        if w < 24:
+            rows = [_clip_cells(self._menu_title, w)]
+            for i in range(start, end):
+                marker = '▌' if i == self._menu_sel else ' '
+                # In multi-select narrow mode prepend [x]/[ ] so the user can
+                # still tell what is ticked even when the box is too narrow
+                # for the bordered card.
+                if self._menu_multi:
+                    box = '[x]' if i in self._menu_checked else '[ ]'
+                    label_i = f'{marker} {box} {self._menu_options[i]}'
+                else:
+                    label_i = f'{marker} {self._menu_options[i]}'
+                rows.append(_clip_cells(label_i, w))
+            return rows, 0, 1
+        inner = max(8, w)
+        content_w = max(1, inner - 4)
+        label = self._menu_title or _t('menu.default_title')
+        scroll_tag = f'  {self._menu_sel + 1}/{total}' if total > visible else ''
+        full_label = label + (_DIM + scroll_tag + _RST if scroll_tag else '')
+        label_max = max(1, inner - 5)
+        # cell_len ignores ANSI so this measures real visible width
+        if cell_len(_visible_text(full_label)) > label_max:
+            full_label = _clip_cells(full_label, label_max)
+        fill = max(1, inner - 3 - cell_len(_visible_text(' ' + full_label + ' ')))
+        top = (_ACCENT + '╭─' + _RST + ' ' + _BOLD + _ACCENT + full_label + _RST +
+               ' ' + _ACCENT + '─' * fill + '╮' + _RST)
+        bot = _border('╰', '╯', inner, _ACCENT)
+
+        def row(text: str, style: str = '') -> list[str]:
+            r = []
+            for ch in (_wrap_cells(text, content_w) or ['']):
+                pad = content_w - cell_len(ch)
+                r.append(_ACCENT + '│' + _RST + ' ' + style + ch + _RST +
+                         ' ' * pad + ' ' + _ACCENT + '│' + _RST)
+            return r
+
+        rows = [top]
+        # Viewport scrolls as sel walks past the edges; the title's N/total tag
+        # signals position, so no "N more" indicator rows.
+        for i in range(start, end):
+            style = (_ACCENT + _BOLD) if i == self._menu_sel else ''
+            # Multi-select rows get a `[x]`/`[ ]` prefix so the user sees what
+            # is currently ticked.  Single-select keeps the legacy clean look
+            # (bold accent on the highlighted row is enough).
+            if self._menu_multi:
+                box = '[x]' if i in self._menu_checked else '[ ]'
+                rows.extend(row(f'{box} {self._menu_options[i]}', style))
+            else:
+                rows.extend(row(self._menu_options[i], style))
+        rows.extend(row(''))
+        rows.extend(row(self._menu_hint or _t('menu.hint'), _DIM))
+        rows.append(bot)
+        return rows, 0, 1
+
+    def _btw_card(self, w: int) -> list[str]:
+        """Ephemeral side-question panel above the input box: every /btw and
+        its answer, newest last.  The question shows immediately (answer area
+        reads `querying…` until it lands).  Lives only in the live region
+        (never scrollback); Esc clears it.  Earlier replies are NOT folded."""
+        if not self._btws:
+            return []
+        # Side panel — left-aligned but inset a few columns from the margin,
+        # and narrower than the full input box, so it reads as an aside.
+        indent = 3
+        inner = max(8, min(w - indent, 72))
+        content_w = max(1, inner - 4)
+        n = len(self._btws)
+        label = _t('btw.title') + (_DIM + f'  ×{n}' + _RST if n > 1 else '')
+        label_max = max(1, inner - 5)
+        if cell_len(_visible_text(label)) > label_max:
+            label = _clip_cells(label, label_max)
+        fill = max(1, inner - 3 - cell_len(_visible_text(' ' + label + ' ')))
+        top = (_ACCENT + '╭─' + _RST + ' ' + _BOLD + _ACCENT + label + _RST +
+               ' ' + _ACCENT + '─' * fill + '╮' + _RST)
+        bot = _border('╰', '╯', inner, _ACCENT)
+
+        def row(text: str, style: str = '') -> list[str]:
+            r = []
+            for ch in (_wrap_cells(text, content_w) or ['']):
+                pad = content_w - cell_len(ch)
+                r.append(_ACCENT + '│' + _RST + ' ' + style + ch + _RST +
+                         ' ' * pad + ' ' + _ACCENT + '│' + _RST)
+            return r
+
+        out = [top]
+        for i, (q, a) in enumerate(self._btws):
+            if i:
+                out.extend(row(''))                  # blank gap between entries
+            if a is None:                            # still in flight
+                out.extend(row(f'> /btw {q}', _DIM))
+                out.extend(row(_t('btw.querying'), _ACCENT))
+            else:
+                for ln in a.split('\n'):
+                    out.extend(row(ln, _DIM))
+        out.append(bot)
+        # Small left indent so the panel doesn't sit flush against the margin.
+        if indent and inner + indent <= w:
+            out = [' ' * indent + ln for ln in out]
+        return out
+
+    def _pending_card(self, w: int) -> list[str]:
+        if not self._pending:
+            return []
+        n = len(self._pending)
+        head = _t('pending.head_running', n=n)
+        rows = [_ACCENT + _BOLD + _clip_cells('  ↑ ' + head, w) + _RST]
+        body_w = max(20, w - 8)
+        for i, msg in enumerate(self._pending[-3:], 1):
+            preview = msg.replace('\n', ' ').strip()
+            if cell_len(preview) > body_w:
+                preview = _clip_cells(preview, body_w - 1) + '…'
+            rows.append(_DIM + _clip_cells(f'    {i}. {preview}', w) + _RST)
+        if n > 3:
+            rows.append(_DIM + _clip_cells(f'    … +{n - 3} more', w) + _RST)
+        rows.append('')
+        return rows
+
+    def _run_shell(self, cmd: str) -> None:
+        """Execute `cmd` in the host shell and echo command + output into
+        scrollback as the `! cmd` / `└ output` pair seen in screenshot
+        034257.  Both halves get appended to the agent's LLM history
+        (single user-role entry with a `[!shell]` tag) so a follow-up
+        question like "what did I just run?" finds the context.
+
+        Output capture is utf-8 / replace so binary spew never crashes
+        the decoder.  30 s timeout — anything longer wants `/conductor`
+        territory, not a magic prompt."""
+        if not cmd:
+            return
+        w = _term()[0]
+        # Echo the command line as a full-width charcoal tile (cc-style):
+        # pink `!` prompt embedded; `_tile` re-asserts the bg around every
+        # internal _RST so the pink fg coexists with the band.
+        head = _SHELL_ACCENT + '! ' + _RST + cmd
+        self.commit([_tile(' ' + head, _TILE_SHELL, w)])
+        import subprocess
+        from frontends.slash_cmds import detect_user_shell
+        shell_argv, shell_name = detect_user_shell()
+        out = ''
+        rc = 0
+        try:
+            r = subprocess.run(
+                shell_argv + [cmd], capture_output=True,
+                timeout=30, encoding='utf-8', errors='replace',
+            )
+            out = (r.stdout or '') + (r.stderr or '')
+            rc = r.returncode
+        except subprocess.TimeoutExpired:
+            out = _t('shell.timeout', sec=30); rc = -1
+        except Exception as e:
+            out = _t('shell.error', err=f'{type(e).__name__}: {e}'); rc = -1
+        body = (out.rstrip('\n') or _t('shell.empty')).split('\n')
+        rows: list[str] = []
+        for i, ln in enumerate(body):
+            # Output rows stay on bare terminal bg — only the `! cmd` echo
+            # carries the charcoal band so the eye reads it as "this is
+            # the command, that's its output" (cc-style).  `└ ` only on
+            # the first line so multi-line output reads as a continuation.
+            prefix = _DIM + '  └ ' + _RST if i == 0 else _DIM + '    ' + _RST
+            rows.append(prefix + ln)
+        rows.append('')   # blank gap separates the shell pair from the next chat block
+        self.commit(rows)
+        # Persist the exchange so the agent sees it on its next turn.
+        # Splitting on `is_running` avoids racing the agent thread:
+        #   running → use the `_intervene` file hook (safe because the
+        #             agent only reads it at turn boundaries, never
+        #             while iterating `backend.history`).
+        #   idle    → direct append to backend.history is safe — there's
+        #             no concurrent reader.
+        try:
+            txt = _t('shell.history', sh=shell_name, cmd=cmd, out=out.rstrip(), rc=rc)
+            if (self._bridge is not None
+                    and getattr(self._bridge.agent, 'is_running', False)):
+                self._bridge.inject_intervene(txt)
+            else:
+                be = getattr(self._bridge.agent, 'llmclient', None) if self._bridge else None
+                be = getattr(be, 'backend', None) if be is not None else None
+                if be is not None and hasattr(be, 'history'):
+                    be.history.append({"role": "user",
+                                       "content": [{"type": "text", "text": txt}]})
+        except Exception:
+            pass
+
+    def _sync_pending_from_bridge(self) -> None:
+        """Drop UI mirror entries the bridge has confirmed consumed.  The
+        bridge's turn_end hook clears `_intervene_pending` at every turn
+        boundary — that's our signal the model has now seen the wrapped
+        message (or that exit_reason kicked the replay)."""
+        if self._pending and self._bridge and not self._bridge_has_pending():
+            self._pending = []
+
+    def _bridge_has_pending(self) -> bool:
+        if not self._bridge: return False
+        with self._bridge._intervene_lk:
+            return bool(self._bridge._intervene_pending)
 
     def _input_box(self, w: int) -> list[str]:
         """A full-width bordered, padded input box (cc-style). Lives in the
         redraw region only — border glyphs never reach scrollback/copy. The
         caret (row/col) is derived from self.pos so ←→↑↓ edit in place. In
         ask-mode the answer is typed INSIDE the question card itself (one
-        unified component) — short-circuit to _ask_card."""
+        unified component) — short-circuit to _ask_card.  When a modal
+        menu (e.g. /llm picker) is active, _menu_card replaces the input box.
+
+        Shell mode: when the buffer starts with `!`, that `!` IS the
+        prompt mark — pink, same column as `❯`, followed by one space and
+        then the body.  The leading `!` is stripped from the rendered body
+        so it shows once (the duplicate-`!` bug fixed in screenshot
+        040031).  Selection / cursor math uses a virtual buf=buf[1:],
+        pos=max(0, pos-1) so ←→ navigation still tracks the user's
+        intuition (caret never goes before the prompt)."""
+        if self._menu_active:
+            return self._menu_card(w)
         if self._asking is not None:
             return self._ask_card(w)
+        shell_mode = self.buf.startswith('!')
+        if shell_mode:
+            border = _SHELL_ACCENT
+            accent = _SHELL_ACCENT
+            mark = '!'
+            body = self.buf[1:]
+            body_pos = max(0, self.pos - 1)
+        else:
+            border = _BORDER
+            accent = _ACCENT
+            mark = '❯'
+            body = self.buf
+            body_pos = self.pos
         if w < 8:
             iw = max(1, w - 2)
-            segs = self._segs(iw)
-            ci, coff = self._seg_at(segs)
+            segs = self._segs(iw, body)
+            ci, coff = self._seg_at(segs, body_pos)
             rows = []
             for i, (_st, ch) in enumerate(segs):
-                pre = '❯ ' if i == 0 and w >= 3 else '❯' if i == 0 else ''
+                pre = f'{mark} ' if i == 0 and w >= 3 else mark if i == 0 else ''
                 rows.append(_clip_cells(pre + ch, w))
-            ccol = min(max(1, w), cell_len(('❯ ' if ci == 0 and w >= 3 else '❯' if ci == 0 else '') + segs[ci][1][:coff]) + 1)
+            ccol = min(max(1, w), cell_len((f'{mark} ' if ci == 0 and w >= 3 else mark if ci == 0 else '') + segs[ci][1][:coff]) + 1)
             return rows or [''], ci, ccol
-        top = _border('╭', '╮', w)
-        bot = _border('╰', '╯', w)
-        segs = self._segs(max(1, w - 6))
-        ci, coff = self._seg_at(segs)
-        sel = self._sel_range()
+        top = _border('╭', '╮', w, border)
+        bot = _border('╰', '╯', w, border)
+        segs = self._segs(max(1, w - 6), body)
+        ci, coff = self._seg_at(segs, body_pos)
+        # Selection range is computed against the original buf; offset by
+        # 1 for shell mode so the highlight aligns with the displayed
+        # body slice rather than the underlying buf indices.
+        sel_raw = self._sel_range()
+        sel = None
+        if sel_raw is not None:
+            shift = 1 if shell_mode else 0
+            lo, hi = max(0, sel_raw[0] - shift), max(0, sel_raw[1] - shift)
+            if lo < hi:
+                sel = (lo, hi)
         rows = []
         for i, (st, ch) in enumerate(segs):
             first = i == 0
-            pre_p = '❯ ' if first else '  '
-            pre_c = (_ACCENT + '❯' + _RST + ' ') if first else '  '
+            pre_p = f'{mark} ' if first else '  '
+            pre_c = (accent + mark + _RST + ' ') if first else '  '
             disp = ch
             if sel:                              # reverse-video the selected slice
                 lo = max(sel[0] - st, 0); hi = min(sel[1] - st, len(ch))
                 if lo < hi:
                     disp = ch[:lo] + '\x1b[7m' + ch[lo:hi] + '\x1b[27m' + ch[hi:]
-            rows.append(self._boxln(pre_p + ch, pre_c + disp, w))
-        pre = '❯ ' if ci == 0 else '  '
+            rows.append(self._boxln(pre_p + ch, pre_c + disp, w, border))
+        pre = f'{mark} ' if ci == 0 else '  '
         crow, ccol = ci, cell_len(pre + segs[ci][1][:coff]) + 3
         box = [top] + rows + [bot]
         caret_row = crow + 1                      # +1 for the top border row
@@ -1392,24 +3253,53 @@ class SB:
         # fixed "after-tail" block first (pet + input box + hint + status + plan),
         # then size the volatile tail to the remaining budget.
         w, h = _term()
+        max_live = max(1, h - 1)
         after: list[str] = []
         if self._running and self._asking is None:
-            el = time.time() - self._t0
-            after.append(' ' + _heat(el) + _pet(el, self._spin) + _RST +
+            el = time.time() - self._t0_anchor
+            # `_spin // 5` slows the pet-frame swap to ~0.5s (the spinner
+            # glyph itself still cycles at 0.1s for the snappy "alive" feel).
+            after.append(' ' + _heat(el) + _pet(el, self._spin // 5) + _RST +
                          '  ' + _DIM + _gerund(el) + '…' + _RST)
+        # Plan card sits above the btw card — it's longer-lived context and
+        # belongs further from the input area than transient side-questions.
+        # Hidden while a modal menu owns the live region.
+        if not self._menu_active:
+            plan_rows = self._plan_card(w)
+            if plan_rows:
+                after += plan_rows
+        # Side-question panel sits just above the input box (hidden while a
+        # modal menu owns the live region).
+        if self._btws and not self._menu_active:
+            after += self._btw_card(w)
+        # Pending-input preview sits just above the input box too — appears
+        # whenever there's a queued message (during run OR during the
+        # short post-turn cooldown).  Hidden when a modal menu is active
+        # so the picker keeps the whole live region for itself.
+        if self._pending and not self._menu_active:
+            after += self._pending_card(w)
         box_start = len(after)
         box, caret_row, caret_col = self._input_box(w)
         after += box
         after += self._hint_lines(w)
-        if self._running and self._asking is None:
-            lead = _heat(time.time() - self._t0) + _SPIN[self._spin % len(_SPIN)] + ' ' + _RST
-            after.append(lead + _DIM + _clip_cells(self._status_line(w), max(2, w - 2)) + _RST)
-        else:
-            after.append(_DIM + _clip_cells(self._status_line(w), w) + _RST)
-        pl = self._plan_line()
-        if pl:
-            after.append(_DIM + _clip_cells(pl, w) + _RST)
-        max_live = max(1, h - 1)
+        # A modal menu picker or the live `/`-command palette owns the live
+        # region — drop the status line so the list isn't crowded by the
+        # [main] … chrome.
+        if not self._menu_active and not self._palette_visible():
+            if 0 < time.time() - self._cc_t < 1:
+                # Ctrl+C armed: clear the status bar down to just the quit
+                # prompt so it stands out (v2 parity).  Uses the input box's
+                # accent color so the prompt reads as part of that component.
+                after.append(_BOLD + _ACCENT + _clip_cells('  ' + _t('status.cc_confirm'), w) + _RST)
+            elif self.buf.startswith('!') and self._asking is None and not self._menu_active:
+                # Shell-mode hint replaces the status line — same hot pink
+                # so the user reads input box + hint as one component.
+                after.append(_BOLD + _SHELL_ACCENT + _clip_cells('  ' + _t('shell.hint'), w) + _RST)
+            elif self._running and self._asking is None:
+                lead = _heat(time.time() - self._t0_anchor) + _SPIN[self._spin % len(_SPIN)] + ' ' + _RST
+                after.append(lead + _DIM + _clip_cells(self._status_line(w), max(2, w - 2)) + _RST)
+            else:
+                after.append(_DIM + _clip_cells(self._status_line(w), w) + _RST)
         cur_row = box_start + caret_row
         if len(after) > max_live:
             drop = len(after) - max_live
@@ -1421,18 +3311,10 @@ class SB:
         return tail + after
 
     def _render_live(self) -> None:
-        L = self._live_lines()
-        painted = self._paint(L)
-        # Always re-park the caret to _cur — even when paint was skipped (a
-        # trailing space merges into padding so the line is byte-identical, yet
-        # the caret must still advance). _paint→_goto_top already un-parked on
-        # the repaint path; on skip the caret is still parked, so come back down.
-        if not painted and self._parked_up:
-            _w(f'\x1b[{self._parked_up}B')
-        row, col = self._cur
-        up = (len(L) - 1) - row
-        _w('\r' + (f'\x1b[{up}A' if up > 0 else '') + f'\x1b[{col}G')
-        self._parked_up = up
+        """Request a live-region repaint.  PTK Application owns the live region
+        now — this method just invalidates the app so PTK rebuilds the cache and
+        rerenders.  The old stdout-based paint/cursor-park logic is gone."""
+        self._invalidate_ptk()
 
     def commit(self, content) -> None:
         """Append finalized history. Accepts either a Block (preferred — keeps
@@ -1467,17 +3349,240 @@ class SB:
             # up the surviving blocks correctly.
 
     def _emit_lines(self, lines: list[str], w: int) -> None:
-        """Write lines to scrollback, wiping any live region currently below."""
+        """Queue finalized lines for emission to the terminal's native scrollback.
+
+        Old behavior wrote ANSI directly via _w() and competed with PTK's
+        renderer for stdout.  Now lines are queued and the async maintenance
+        loop drains them via run_in_terminal(app.print_text), which moves PTK
+        out of the way, prints into scrollback above the live region, then lets
+        PTK re-render its area on top."""
         if not lines:
-            self._render_live(); return
-        emit: list[str] = []
+            self._invalidate_ptk()
+            return
+        out: list[str] = []
         for ln in lines:
-            emit.extend(_fit_rows(ln, w))
-        self._goto_top()
-        _w('\x1b[J')
-        _w('\r\n'.join(emit) + '\r\n')
-        self._painted = []; self._live_rows = 0
-        self._render_live()
+            out.extend(_fit_rows(ln, w))
+        with self._sbq_lk:
+            self._sbq.extend(out)
+        # Reset legacy paint state — PTK owns the live region; these counters
+        # are kept as zero so any stray legacy code path that reads them sees
+        # "nothing painted" rather than ghost positions.
+        self._painted = []; self._live_rows = 0; self._parked_up = 0
+        self._schedule_drain()
+        self._invalidate_ptk()
+
+    # ── PTK presentation plumbing ──
+
+    def _invalidate_ptk(self) -> None:
+        """Tell PTK to schedule a re-render of the live region."""
+        app = self._ptk_app
+        if app is not None:
+            app.invalidate()
+
+    def _ptk_size(self) -> tuple[int, int]:
+        """Current terminal size, preferring PTK's view of it (which can differ
+        from os.get_terminal_size on Windows ConPTY mid-resize)."""
+        app = self._ptk_app
+        if app is not None:
+            try:
+                sz = app.output.get_size()
+                return max(1, int(sz.columns)), max(1, int(sz.rows))
+            except Exception:
+                pass
+        return _term()
+
+    def _schedule_drain(self) -> None:
+        """Wake the scrollback drain task from any thread."""
+        loop = self._ptk_loop
+        app = self._ptk_app
+        if loop is None or app is None:
+            return
+        loop.call_soon_threadsafe(self._kick_drain)
+
+    def _kick_drain(self) -> None:
+        app = self._ptk_app
+        if app is None:
+            return
+        app.create_background_task(self._drain_async())
+
+    async def _drain_async(self) -> None:
+        """Drain the scrollback queue (or handle a pending repaint).
+
+        Resize path: when _pending_repaint is set, wipe screen+scrollback and
+        re-emit all rendered blocks at the current width — old scrollback
+        content was baked at the previous width and can't reflow on its own."""
+        from prompt_toolkit.application import run_in_terminal
+        from prompt_toolkit.formatted_text import ANSI as _ANSI
+        app = self._ptk_app
+        if app is None:
+            return
+
+        if self._pending_repaint:
+            w = self._ptk_size()[0]
+            with self._lk:
+                self._pending_repaint = False
+                # Drop queued items — they are about to be re-rendered as part
+                # of the full history below.  Holding both would double-print.
+                with self._sbq_lk:
+                    self._sbq = []
+                hist_all = self._render_all_blocks(w)
+            hist_fit: list[str] = []
+            for ln in hist_all:
+                hist_fit.extend(_fit_rows(ln, w))
+            body = '\r\n'.join(hist_fit) + ('\r\n' if hist_fit else '')
+            # \x1b[3J clears scrollback (xterm/iTerm/wt/most modern terms);
+            # \x1b[2J clears viewport; \x1b[H homes cursor.  Combined they
+            # reset both regions so we can replay history from scratch.
+            payload = '\x1b[3J\x1b[2J\x1b[H' + body
+
+            def _do_repaint() -> None:
+                try:
+                    app.output.write_raw(payload)
+                    app.output.flush()
+                except Exception:
+                    pass
+
+            try:
+                await run_in_terminal(_do_repaint)
+            except Exception:
+                pass
+            self._invalidate_ptk()
+            return
+
+        with self._sbq_lk:
+            if not self._sbq:
+                return
+            batch = self._sbq
+            self._sbq = []
+        text = '\n'.join(batch) + '\n'
+
+        def _do_print() -> None:
+            try:
+                app.print_text(_ANSI(text))
+            except Exception:
+                pass
+
+        try:
+            await run_in_terminal(_do_print)
+        except Exception:
+            pass
+
+    def _build_live_lines(self) -> list[str]:
+        """Build the live region (input box + status + spinner + plan + open
+        stream tail) at PTK's current size and cache the result.  Same content
+        feeds both PTK's height query and its text getter within a render
+        pass."""
+        w, h = self._ptk_size()
+        with self._lk:
+            # _live_lines uses _term() internally; SB.{_w,_h} feed into
+            # _input_box width math.  Sync both before building so a resize
+            # shows up in this very render pass.
+            try:
+                self._w, self._h = w, h  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            if self._stream and self._streaming_block is not None:
+                safe_src = self._streaming_block.source
+                open_src = sanitize_ansi(self._stream)[len(safe_src):]
+                saved_base = self._tool_base
+                self._tool_base = self._pre_streaming_tool_base() + self._streaming_block.tool_n
+                open_body = self._render_assistant(open_src, max(1, w - 2)) if open_src.strip() else []
+                self._tool_base = saved_base
+                self._live_tail = _indent_rows(open_body[-8:], w)
+
+            # _live_lines reads _term() for its budget; redirect it to PTK's
+            # size so the input-box border math matches the actual viewport.
+            this_mod = sys.modules[__name__]
+            saved_term = this_mod._term
+            this_mod._term = lambda: (w, h)
+            try:
+                live = self._live_lines()
+            finally:
+                this_mod._term = saved_term
+
+            clipped: list[str] = []
+            for ln in live:
+                visible = _visible_text(ln)
+                if cell_len(visible) > w:
+                    clipped.append(_clip_ansi_cells(ln, w))
+                else:
+                    clipped.append(ln)
+
+            from prompt_toolkit.data_structures import Point as _Point
+            row, col = self._cur
+            cy = max(0, min(max(0, len(clipped) - 1), row))
+            cell_cx = max(0, min(max(0, w - 1), col - 1))
+            cursor_line = clipped[cy] if 0 <= cy < len(clipped) else ''
+            self._ptk_cursor = _Point(x=_ptk_x_from_cell(cursor_line, cell_cx), y=cy)
+
+            self._live_cache = clipped if clipped else ['']
+            self._live_cache_w = w
+            self._live_cache_h = h
+            return self._live_cache
+
+    def _ensure_live_cache(self) -> list[str]:
+        """Return _live_cache, rebuilding if the cached size doesn't match the
+        current terminal.  Safety net for code paths that touch the getters
+        outside the normal render cycle."""
+        w, h = self._ptk_size()
+        if (self._live_cache_w != w or self._live_cache_h != h or not self._live_cache):
+            return self._build_live_lines()
+        return self._live_cache
+
+    def _get_ptk_text(self):
+        from prompt_toolkit.formatted_text import ANSI as _ANSI
+        return _ANSI('\n'.join(self._ensure_live_cache()))
+
+    def _get_ptk_cursor(self):
+        return self._ptk_cursor
+
+    def _get_live_height(self):
+        from prompt_toolkit.layout.dimension import Dimension as _Dimension
+        cache = self._ensure_live_cache()
+        n = max(1, len(cache))
+        return _Dimension(min=1, max=n, preferred=n)
+
+    def _fold_turns(self, text: str) -> list[dict]:
+        """Split assistant text into fold/text segments (v2 fold_turns port,
+        tuiapp_v2.py:240-267).  In v2 a fold unit is a TURN (which may contain
+        one or more tool calls), not a single tool — but in this agent's
+        format every turn is typically `<summary>…</summary> + 🛠️ Tool: …`,
+        so per-turn ≈ per-tool in practice.
+
+        Returns:
+            [{'type': 'text', 'content': str}, ...]  - prose / final-turn body
+            [{'type': 'fold', 'title': str, 'content': str}, ...]  - foldable turn
+        """
+        placeholders: list[str] = []
+        def stash(m):
+            placeholders.append(m.group(0))
+            return f'\x00PH{len(placeholders) - 1}\x00'
+        safe = _FENCE4_STASH_RE.sub(stash, text)
+        parts = _TURN_SPLIT_FOLD_RE.split(safe)
+        parts = [re.sub(r'\x00PH(\d+)\x00',
+                        lambda m: placeholders[int(m.group(1))], p) for p in parts]
+        if len(parts) < 4:                                  # 0 or 1 turn marker
+            return [{'type': 'text', 'content': text}]
+        segs: list[dict] = []
+        if parts[0].strip():
+            segs.append({'type': 'text', 'content': parts[0]})
+        turns = [(parts[i], parts[i + 1] if i + 1 < len(parts) else '')
+                 for i in range(1, len(parts), 2)]
+        for idx, (marker, content) in enumerate(turns):
+            if idx == len(turns) - 1:                       # final turn = text
+                segs.append({'type': 'text', 'content': marker + content})
+                continue
+            cleaned = _TITLE_CLEAN_RE.sub('', content)
+            ms = _SUMMARY_PERTURN_RE.findall(cleaned)
+            if ms:
+                title = ms[0].strip().split('\n', 1)[0]
+            else:
+                first = cleaned.strip().split('\n', 1)[0] or marker.strip('*')
+                title = _TITLE_ARGS_TAIL_RE.sub('', first)
+            if len(title) > 72:
+                title = title[:72] + '...'
+            segs.append({'type': 'fold', 'title': title, 'content': content})
+        return segs
 
     def _render_block(self, b: Block, w: int) -> list[str]:
         """Render one block at width w. Mutates self._last_tool_n for
@@ -1486,10 +3591,34 @@ class SB:
         if b.kind == 'user':
             parts = b.source.split('\n')
             raw = [_MARK + ' ' + parts[0]] + [CONT + p for p in parts[1:]]
-            lines = [_tile(' ' + x, _TILE_U) for x in raw]
+            lines = [_tile(' ' + x, _TILE_U, w) for x in raw]
             lines.append('')
             return lines
         if b.kind == 'assistant':
+            if self._fold_all:
+                # v2-parity per-turn fold (tuiapp_v2.py:fold_turns).  Each non-
+                # last turn collapses to one `▸ {summary}` header; the final
+                # turn (current reply) stays as text.  Fold-seg bodies are
+                # rendered internally and discarded — keeps tid counting
+                # exact so /verbose tids don't shift when Ctrl+O toggles.
+                segs = self._fold_turns(b.source)
+                if any(s['type'] == 'fold' for s in segs):
+                    out: list[str] = []
+                    saved_base = self._tool_base
+                    total_tool_n = 0
+                    for seg in segs:
+                        self._tool_base = saved_base + total_tool_n
+                        body = self._render_assistant(seg['content'], max(1, w - 2))
+                        total_tool_n += self._last_tool_n
+                        if seg['type'] == 'fold':
+                            head = _ACCENT + '▸ ' + _RST + _DIM + seg['title'] + _RST
+                            out.extend(_indent_rows([head], w))
+                        else:
+                            out.extend(_indent_rows(body, w))
+                    self._tool_base = saved_base
+                    self._last_tool_n = total_tool_n
+                    b.tool_n = total_tool_n
+                    return out + ['']
             body = self._render_assistant(b.source, max(1, w - 2))
             b.tool_n = self._last_tool_n            # cache for tool_base recompute
             return _indent_rows(body, w) + ['']
@@ -1534,35 +3663,37 @@ class SB:
         d, r = _DIM, _RST
         cwd = os.getcwd().replace(os.path.expanduser('~'), '~')
         name = self._bridge.llm_name if self._bridge else '?'
+        lbl_model = _t('banner.label.model')
+        lbl_dir = _t('banner.label.directory')
+        lbl_sess = _t('banner.label.session')
+        sess_val = self._session_name or _t('banner.session.single')
+        llm_hint = _t('banner.llm_hint')
         rows = [(_ACCENT + '>_' + _RST + ' GenericAgent', '>_ GenericAgent'),
                 ('', ''),
-                (f'{d}model:{r}       {name}   {d}/llm 切换{r}',
-                 f'model:       {name}   /llm 切换'),
-                (f'{d}directory:{r}   {cwd}', f'directory:   {cwd}'),
-                (f'{d}session:{r}     单会话 · scrollback', 'session:     单会话 · scrollback')]
+                (f'{d}{lbl_model}{r}       {name}   {d}{llm_hint}{r}',
+                 f'{lbl_model}       {name}   {llm_hint}'),
+                (f'{d}{lbl_dir}{r}   {cwd}', f'{lbl_dir}   {cwd}'),
+                (f'{d}{lbl_sess}{r}     {sess_val}', f'{lbl_sess}     {sess_val}')]
         top = _border('╭', '╮', w)
         bot = _border('╰', '╯', w)
         lines = ['', top]
         lines += [self._boxln(p, c, w) for c, p in rows]
         lines += [bot, '',
-                  f'  {d}Tip: Enter 发送 · Shift+Enter/Ctrl+J 换行 · ↑↓ 历史 · '
-                  f'cmd+⌫ 清行 · /help 全部命令{r}', '']
+                  f'  {d}{tip(self._tip_idx)}{r}', '']
         if self._bridge and not self._bridge._healthy:
             lines.append(f'  {d}⚠ {self._bridge._init_error}{r}'); lines.append('')
         return lines
 
     def _repaint_screen(self) -> None:
-        """Wipe BOTH viewport and scrollback, then replay ALL blocks at the
-        current width. Lines that overflow the viewport scroll naturally into
-        the fresh scrollback at the new width — so the entire history reflows,
-        not just what's visible. \\x1b[3J (clear scrollback) is iTerm/xterm
-        specific but widely supported; on terminals that ignore it, viewport
-        still re-renders correctly and old scrollback simply stays put.
+        """Schedule a full repaint of viewport + scrollback at current width.
 
-        The in-flight stream's open portion (after the streaming block's safe
-        boundary) re-renders into _live_tail too so mid-stream resize snaps
-        to the new width."""
-        w, h = _term()
+        scrollback can't reflow on its own — once a banner is in the terminal
+        history buffer at width W1, resizing to W2 leaves it stretched.  We
+        flip _pending_repaint and let the async drain wipe the screen and
+        replay all blocks at the new width.  The in-flight stream tail is also
+        re-rendered into _live_tail so a mid-stream resize snaps to the new
+        width on the next PTK redraw."""
+        w, _h = self._ptk_size()
         if self._stream and self._streaming_block is not None:
             safe_src = self._streaming_block.source
             open_src = sanitize_ansi(self._stream)[len(safe_src):]
@@ -1571,25 +3702,9 @@ class SB:
             open_body = self._render_assistant(open_src, max(1, w - 2)) if open_src.strip() else []
             self._tool_base = saved_base
             self._live_tail = _indent_rows(open_body[-8:], w)
-        live = self._live_lines()
-        hist_all = self._render_all_blocks(w)
-        # Fold each rendered line to terminal width — long ANSI lines (e.g.
-        # plain blocks) reflow via _fit_rows so no soft-wrap drift.
-        hist_fit: list[str] = []
-        for ln in hist_all:
-            hist_fit.extend(_fit_rows(ln, w))
-        _w('\x1b[3J\x1b[2J\x1b[H')                # wipe scrollback + viewport
-        for ln in hist_fit:                        # write all history; overflow
-            _w('\x1b[2K' + ln + '\r\n')           # naturally scrolls to new scrollback
-        last = len(live) - 1
-        for i, ln in enumerate(live):
-            _w('\x1b[2K' + ln + ('\r\n' if i != last else ''))
-        self._painted = list(live)
-        self._live_rows = len(live)
-        row, col = self._cur
-        up = (len(live) - 1) - row
-        _w('\r' + (f'\x1b[{up}A' if up > 0 else '') + f'\x1b[{col}G')
-        self._parked_up = up
+        self._pending_repaint = True
+        self._schedule_drain()
+        self._invalidate_ptk()
 
     # ── input / paste ──
 
@@ -1657,27 +3772,103 @@ class SB:
             self._snap()                           # only snap here when it didn't,
         self.buf = self.buf[:self.pos] + s + self.buf[self.pos:]; self.pos += len(s)
 
-    def _handle_clip_paste(self) -> None:
-        img = clip.paste_image()
+
+    def _stash_draft(self) -> None:
+        if self.buf:
+            self._snap()
+            self._draft_stash = self.buf
+            self.buf = ''; self.pos = 0
+            self._hi = -1; self._hist_stash = ''; self._sel = None
+            self._redo.clear()
+        elif self._draft_stash:
+            self._snap()
+            self.buf = self._draft_stash; self.pos = len(self.buf)
+            self._draft_stash = ''
+            self._hi = -1; self._hist_stash = ''; self._sel = None
+            self._redo.clear()
+
+    def _placeholder_at(self, side: str) -> tuple[int, int, int] | None:
+        """If a paste placeholder sits flush against the caret, return
+        (start, end, sid).  `side='left'` → the placeholder *ends* at the caret
+        (backspace target).  Mirrors v2's `_placeholder_adjacent`."""
+        if self._sel is not None:
+            return None
+        for pat in _PLACEHOLDER_RES:
+            for m in pat.finditer(self.buf):
+                edge = m.end() if side == 'left' else m.start()
+                if edge == self.pos:
+                    return (m.start(), m.end(), int(m.group(1)))
+        return None
+
+    def _handle_paste(self, text: str = '') -> None:
+        """Unified paste entry.  Bracketed paste passes the payload `text`;
+        Ctrl+V passes nothing so we read the clipboard ourselves.
+
+        v2 order: a copied file / bitmap on the clipboard wins over text — so
+        an image paste still works even when the terminal delivers an (empty)
+        bracketed-paste event instead of a raw Ctrl+V key."""
+        grab = _grab_clipboard_file()              # PIL: copied file or bitmap
+        if grab:
+            self._add_clip_file(*grab); return
+        if text:
+            self._paste_text(text); return
+        # No text payload → Ctrl+V, or an empty bracketed paste with an image
+        # on the clipboard.  Try the legacy bitmap grabber, then clipboard text.
+        img = clip.paste_image()                   # legacy fallback (osascript/xclip)
         if img:
-            self._pc += 1; self._imgs.append(img); self._insert(f'[Image #{self._pc}]'); return
+            self._pc += 1; self._imgs[self._pc] = img
+            self._insert(f'[Image #{self._pc}]'); return
         txt = clip.paste()
         if txt:
             self._paste_text(txt)
 
+    def _handle_clip_paste(self) -> None:
+        self._handle_paste()
+
+    def _add_clip_file(self, path: str, is_image: bool) -> None:
+        """Fold a pasted file/image into a placeholder (v2 parity).  Images go
+        through `_imgs` (sent to the model); other files get a `[File #N]`
+        placeholder that `_expand` later swaps for the path."""
+        self._pc += 1
+        if is_image:
+            self._imgs[self._pc] = path
+            self._insert(f'[Image #{self._pc}]')
+        else:
+            self._fstore[self._pc] = path
+            self._insert(f'[File #{self._pc}]')
+
+    def _try_paste_path(self, raw: str) -> bool:
+        """Git-bash / mintty fallback (v2 `_paste_file_from_text`): some
+        screenshot tools put the file *path* on the clipboard as plain text.
+        A single-line, on-disk path is treated as a file/image paste."""
+        path = raw.strip().strip('"').strip("'")
+        if not path or '\n' in path or '\r' in path or len(path) > 1024:
+            return False
+        if not os.path.isfile(path):
+            return False
+        self._add_clip_file(path, os.path.splitext(path)[1].lower() in _IMAGE_EXTS)
+        return True
+
     def _paste_text(self, txt: str) -> None:
-        lines = txt.count('\n') + 1
-        if lines > 2 or len(txt) > 240:        # fold long / multi-line paste (v2 parity)
-            self._pc += 1; self._imgs.append(None); self._pstore[self._pc] = txt
+        txt = txt.replace('\r\n', '\n').replace('\r', '\n')
+        if self._try_paste_path(txt):              # a pasted file path → file paste
+            return
+        lines = len(txt.splitlines()) or 1
+        if lines > 2:                              # fold multi-line paste (v2: >2 lines)
+            self._pc += 1; self._pstore[self._pc] = txt
             self._insert(f'[Pasted text #{self._pc} +{lines} lines]')
         else:
             self._insert(txt)
 
     def _nav_hist(self, d: int) -> None:
-        if '\n' in self.buf or not self.hist:
+        # v2 parity: a multi-line draft can still reach history (no '\n' guard);
+        # the live draft is stashed on entry and restored when walking back
+        # past the newest entry.
+        if not self.hist:
             return
         if self._hi == -1:
             if d == -1:
+                self._hist_stash = self.buf           # preserve the live draft
                 self._hi = len(self.hist) - 1
             else:
                 return
@@ -1686,8 +3877,10 @@ class SB:
         if self._hi < 0:
             self._hi = 0
         self._snap()                                  # let Ctrl+Z undo a history recall
-        if self._hi >= len(self.hist):
-            self._hi = -1; self.buf = ''; self.pos = 0; return
+        if self._hi >= len(self.hist):                # walked past newest → restore draft
+            self._hi = -1
+            self.buf = self._hist_stash; self.pos = len(self.buf)
+            return
         self.buf = self.hist[self._hi]; self.pos = len(self.buf)
 
     def _expand(self, raw: str) -> str:
@@ -1698,50 +3891,141 @@ class SB:
                 if os.path.isabs(p) or p.startswith('~'):
                     return m.group(0)
                 fp = os.path.normpath(os.path.join(self._cwd, p))
-                if not fp.startswith(_ROOT) or not os.path.isfile(fp):
+                if not _is_under_root(fp) or not os.path.isfile(fp):
                     return m.group(0)
                 with open(fp, encoding='utf-8', errors='replace') as f:
                     return f'[File: {p}]\n{f.read(100_000)}\n[/File]'
             t = _FILE_REF_RE.sub(_r, t)
         for num, content in self._pstore.items():
             t = _PASTE_PH_RE.sub(lambda m: content if int(m.group(1)) == num else m.group(0), t)
+        # `[File #N]` / `[Image #N]` placeholders expand to the real path inline
+        # (v2 parity) — that's how the model actually sees the file/image; the
+        # bare `[Image #N]` block alone tells it nothing.
+        for num, path in self._fstore.items():
+            t = _FILE_PH_RE.sub(lambda m: path if int(m.group(1)) == num else m.group(0), t)
+        for num, path in self._imgs.items():
+            t = _IMG_PH_RE.sub(lambda m: path if int(m.group(1)) == num else m.group(0), t)
         return t
 
     def _on_enter(self) -> None:
         if self._asking is not None:
             ae = self._asking
             ans = self.buf.strip()
-            if ans.isdigit() and 1 <= int(ans) <= len(ae.candidates):
+            # Focus model: picker mode active → submit the highlighted
+            # candidate (or multi-pick `;`-join), ignoring whatever's in the
+            # buf draft.  The user can switch focus to the input via ↑↓ /
+            # printable char first if they want their typed text to win.
+            if self._picker_mode:
+                picked = self._picker_submit()
+                if picked is not None:
+                    ans = picked
+            elif ans.isdigit() and 1 <= int(ans) <= len(ae.candidates):
                 ans = ae.candidates[int(ans) - 1]
             if not ans:
                 return
             self.buf = ''; self.pos = 0; self._asking = None
             self._undo.clear(); self._redo.clear(); self._sel = None
-            self._commit_user(f'[答] {ans}')
+            self._picker_reset()
+            self._commit_user(_t('msg.answer_prefix', text=ans))
             self._submit(ans, [])
             try:                                              # parallel sub-agent asks:
                 self._asking = self._bridge.ask_user_queue.get_nowait()
+                self._picker_init(self._asking)
             except queue.Empty:                                # if more were queued behind
-                pass                                            # this one, surface the next
+                self._picker_reset()                            # this one, surface the next
             return                                              # immediately so the user
                                                                 # can answer them in series
+        # Interactive command palette: Enter completes the highlighted match
+        # into the input box and stops — it does NOT dispatch.  The user then
+        # reviews / edits the command and presses Enter again to run it (the
+        # palette is hidden once buf is an exact command name).
+        if self._palette_visible():
+            self._tab()
+            return
         raw = self.buf.strip()
         if not raw:
             return
-        self.buf = ''; self.pos = 0; self._hi = -1
+        self.buf = ''; self.pos = 0; self._hi = -1; self._hist_stash = ''
         self._undo.clear(); self._redo.clear(); self._sel = None
         if len(self.hist) >= 500:
             self.hist = self.hist[-250:]
-        self.hist.append(raw)
-        if raw.startswith('/'):
-            self._commit_user(raw); self._cmd(raw); return
-        if self._running:
+        if not self.hist or self.hist[-1] != raw:   # v2: skip consecutive dupes
+            self.hist.append(raw)
+        if raw.startswith('!'):
+            # Shell-mode magic: run the rest as a host shell command, echo
+            # the command + output into scrollback, and append the pair to
+            # the agent's LLM history so the next real turn can reference
+            # it (per screenshot 034257 — agent recalls `echo hi`).
+            self._run_shell(raw[1:].strip())
             return
-        imgs = [p for p in self._imgs if p]
-        expanded = self._expand(raw)               # expand paste/file refs FIRST so
+        if raw.startswith('/'):
+            # /btw owns its own live-region panel — keep the command itself
+            # out of the main scrollback.
+            cmd0 = (raw[1:].split(None, 1)[0] or '').lower()
+            if cmd0 != 'btw':
+                self._commit_user(raw)
+            self._cmd(raw); return
+        # Expand placeholders FIRST so the agent receives the resolved text,
+        # not the [Image #N] / [Pasted #N] markers.  This matches the idle
+        # submit path below — keeping the form identical means a queued
+        # message and an immediate one feed the LLM the same bytes.
+        imgs = [self._imgs[i] for i in
+                (int(m.group(1)) for m in _IMG_PH_RE.finditer(raw)) if i in self._imgs]
+        expanded = self._expand(raw)
+        if self._running:
+            wrapped = _t('pending.inject_wrap', text=expanded)
+            if self._bridge and self._bridge.inject_intervene(wrapped, track=True):
+                self._pending.append(expanded)
+                self._commit_user(_t('pending.queued_marker', text=expanded))
+                self._pstore.clear(); self._fstore.clear(); self._imgs.clear()
+                self._render_live()
+                return
+            # Agent went idle in the race — fall through to put_task.
         self._commit_user(expanded)                # scrollback shows exactly what
         self._submit(expanded, imgs)               # the agent receives, not the
-        self._pstore.clear(); self._imgs.clear()   # `[Pasted text #N]` placeholder
+        self._pstore.clear(); self._fstore.clear(); self._imgs.clear()   # drop placeholders
+
+    def _cost_section(self, tname: str, t, be) -> list[str]:
+        """A v2-style /cost block for one token tracker — total / cache /
+        context-window / requests.  Labels stay English (jargon)."""
+        from frontends import cost_tracker
+        k = _human
+        model = self._bridge.llm_name if self._bridge else '?'
+        label = self._session_name or tname           # show the session name when set
+        rows = [f'{label}  ·  model: {model}  ·  elapsed: {_elapsed(t.elapsed_seconds())}']
+        rows.append(f'  Token usage:     {k(t.total_tokens()):>8} total  '
+                    f'({k(t.total_input_side())} input + {k(t.output)} output)')
+        if t.cache_read or t.cache_create:
+            rows.append(f'  Cache:           {k(t.cache_read):>8} read  ·  '
+                        f'{k(t.cache_create)} created  ·  {t.cache_hit_rate():.1f}% hit')
+        cap = cost_tracker.context_window_chars(be) if be else 0
+        used = cost_tracker.current_input_chars(be) if be else 0
+        if cap > 0:
+            pct = max(0.0, (cap - used) / cap * 100.0)
+            rows.append(f'  Context window:  {pct:>7.0f}% left  '
+                        f'({k(used)} chars used / {k(cap)} cap)')
+        rows.append(f'  Requests:        {t.requests:>8}')
+        return rows
+
+    def _set_session_name(self, ag, name: str) -> None:
+        """Persist the session name (keyed by the agent's log file) so a later
+        /continue surfaces it — mirrors v2's session_names integration."""
+        try:
+            from frontends import session_names
+            lp = getattr(ag, 'log_path', '') or ''
+            if lp:
+                session_names.set_name(lp, name)
+        except Exception:
+            pass
+
+    def _reset_session(self, ag) -> None:
+        """Wipe the conversation: drop LLM history, clear the screen and every
+        rendered block.  Shared by /clear and /new."""
+        from frontends import continue_cmd
+        continue_cmd.reset_conversation(ag)
+        _w('\x1b[2J\x1b[H'); self._painted = []; self._live_rows = 0
+        self._blocks = []; self._streaming_block = None; self._sent = 0
+        self._tool_base = 0; self._tools = {}
 
     def _cmd(self, raw: str) -> None:
         assert self._bridge is not None
@@ -1749,70 +4033,181 @@ class SB:
         name = parts[0].lower() if parts else ''
         arg = parts[1].strip() if len(parts) > 1 else ''
         ag = self._bridge.agent
-        idle_only = {'clear', 'export', 'btw', 'review', 'rewind', 'continue'}
+        # /btw is deliberately NOT idle-only — a side question must be fireable
+        # while the main agent runs (that's its whole purpose).
+        idle_only = {'clear', 'export', 'review', 'rewind', 'continue'}
         if name in idle_only and self._running:
-            self.commit(['运行中,先 /stop 再用该命令']); return
+            self.commit([_t('err.running_blocked')]); return
         if name in ('q', 'quit', 'exit'):
             self._quit = True
         elif name in ('stop', 'abort'):
             if self._running:
                 self._bridge.abort()
-            self.commit(['⏹ 已请求中止' if self._running else '（空闲，无任务）'])
-        elif name in ('new', 'switch', 'close', 'rename', 'sessions', 'branch'):
-            self.commit([f'/{name}:单会话模式暂不支持(会话管理已暂缓)'])
+            self.commit([_t('msg.abort_done') if self._running else _t('msg.idle_no_task')])
+        elif name in ('status', 'sessions'):
+            # /status: full snapshot of the current session.
+            # /sessions: same output (v3 is single-session; multi-session listing
+            # is the same data as a 1-row table).
+            be = getattr(getattr(ag, 'llmclient', None), 'backend', None)
+            rounds = 0
+            try:
+                if be is not None and getattr(be, 'history', None):
+                    rounds = sum(1 for m in be.history if m.get('role') == 'user')
+            except Exception:
+                pass
+            llm = self._bridge.llm_name if self._bridge else '?'
+            if self._running:
+                el = time.time() - self._t0_anchor
+                state = _t('status.state.running', verb=_gerund(el), elapsed=_elapsed(el))
+            elif self._asking is not None:
+                state = _t('status.state.waiting')
+            else:
+                state = _t('status.state.idle')
+            try:
+                from frontends import cost_tracker as _ct
+                cap = _ct.context_window_chars(be) if be is not None else 0
+                used = _ct.context_chars_used(be) if be is not None else 0
+                ctx_use = _t('status.ctx.fmt', used=used, cap=cap * 3) if cap else _t('status.ctx.unknown')
+            except Exception:
+                ctx_use = _t('status.ctx.unknown')
+            cwd = os.getcwd().replace(os.path.expanduser('~'), '~')
+            rows = ['',
+                    _DIM + _t('status.title') + _RST,
+                    '',
+                    f'  {_DIM}{_t("status.label.model"):<9}{_RST} {llm}',
+                    f'  {_DIM}{_t("status.label.state"):<9}{_RST} {state}',
+                    f'  {_DIM}{_t("status.label.rounds"):<9}{_RST} {rounds}',
+                    f'  {_DIM}{_t("status.label.context"):<9}{_RST} {ctx_use}',
+                    f'  {_DIM}{_t("status.label.cwd"):<9}{_RST} {cwd}',
+                    '']
+            if self._bridge and not self._bridge._healthy:
+                rows.append(f'  {_DIM}⚠ {self._bridge._init_error}{_RST}')
+                rows.append('')
+            self.commit(rows)
+        elif name == 'new':
+            # New session = wipe the current conversation and start fresh.
+            # Keeping prior sessions around (multi-session) is a separate
+            # workstream — see temp/plan_tui_v3_refactor/TODO.md.
+            self._reset_session(ag)
+            self._session_name = arg or ''
+            if arg:
+                self._set_session_name(ag, arg)
+            _set_term_title(self._term_title())
+            self.commit(Block('banner', ''))       # fresh banner shows the new name
+            self.commit([_DIM + (_t('msg.new_session_named', name=arg) if arg
+                                 else _t('msg.new_session')) + _RST])
+        elif name == 'rename':
+            if not arg:
+                self.commit([_t('err.rename_usage')]); return
+            self._session_name = arg
+            self._set_session_name(ag, arg)
+            _set_term_title(self._term_title())
+            self.commit([_DIM + _t('msg.renamed', name=arg) + _RST])
+        # /switch /close /branch — 多会话后端尚未接入，命令未实现，先注释掉。
+        # elif name in ('switch', 'close', 'branch'):
+        #     self.commit([_t('err.multi_session', name=name)])
         elif name == 'continue':
             from frontends import continue_cmd
             sess = continue_cmd.list_sessions(exclude_pid=os.getpid())
-            if not arg:
-                if not sess:
-                    self.commit([_DIM + '  没有可恢复的历史会话' + _RST]); return
-                w = _term()[0]
-                rows = ['', _DIM + '  恢复历史会话   /continue N 进入' + _RST, '']
-                for n, (_p, mt, prev, rnd) in enumerate(sess[:20], 1):
-                    body = (prev or '').replace('\n', ' ')[:max(20, w - 22)]
-                    rows.append(_DIM + f'{n:>4}  {_rel(mt):>4}  {rnd:>3}轮  ' + _RST + body)
-                if len(sess) > 20:
-                    rows.append(_DIM + f'     … 另有 {len(sess) - 20} 个较早会话' + _RST)
-                rows.append('')
-                self.commit(rows); return
-            if not arg.isdigit():
-                self.commit(['用法: /continue 或 /continue N']); return
-            i = int(arg) - 1
-            if not (0 <= i < len(sess)):
-                self.commit([f'❌ 索引越界(有效 1-{len(sess)})']); return
-            path = sess[i][0]
-            msg, _ = continue_cmd.restore(ag, path)   # swaps backend.history (full)
-            self.commit([_DIM + f'┄┄ 载入 {os.path.basename(path)},以下为完整上文 ┄┄' + _RST])
-            for mm in continue_cmd.extract_ui_messages(path):
-                c = (mm.get('content') or '').strip()
-                if not c:
-                    continue
-                if mm.get('role') == 'user':
-                    self._commit_user(c)
-                else:
-                    self._commit_assistant(c)
-            self.commit([_DIM + f'┄┄ {msg} · 接着说即可 ┄┄' + _RST])
+            if not sess:
+                self.commit([_DIM + _t('msg.no_history') + _RST]); return
+
+            def _do_restore(path: str) -> None:
+                msg, _ = continue_cmd.restore(ag, path)
+                self.commit([_DIM + '┄┄ ' + _t('msg.continue_loading', name=os.path.basename(path)) + ' ┄┄' + _RST])
+                for mm in continue_cmd.extract_ui_messages(path):
+                    c = (mm.get('content') or '').strip()
+                    if not c:
+                        continue
+                    if mm.get('role') == 'user':
+                        self._commit_user(c)
+                    else:
+                        self._commit_assistant(c)
+                self.commit([_DIM + '┄┄ ' + _t('msg.continue_ready', msg=msg) + ' ┄┄' + _RST])
+
+            if arg:
+                # Direct numeric argument still supported for power users / scripts.
+                if not arg.isdigit():
+                    self.commit([_t('err.continue_usage')]); return
+                i = int(arg) - 1
+                if not (0 <= i < len(sess)):
+                    self.commit([_t('err.index_oob', max=len(sess))]); return
+                _do_restore(sess[i][0]); return
+
+            # No arg → arrow-key menu.  Show every session; the menu picker's
+            # scrolling viewport (↑/↓ slides the window) reaches older entries
+            # without needing /continue N as a fallback.
+            w = _term()[0]
+            try:
+                from frontends import session_names as _sn
+            except Exception:
+                _sn = None
+            options: list[str] = []
+            unit = _t('continue.unit.round')
+            for _p, mt, prev, rnd in sess:
+                nm = ''
+                if _sn is not None:
+                    try:
+                        nm = _sn.name_for(_p)
+                    except Exception:
+                        nm = ''
+                # Uniform 3-part row `{age} · {n}轮 · {text}` — a named session
+                # shows its name in the text slot, an unnamed one its preview,
+                # so the columns line up either way.
+                text = nm or (prev or '').replace('\n', ' ').strip()[:max(20, w - 30)]
+                options.append(f'{_rel(mt)} · {rnd}{unit} · {text}')
+
+            def _pick_session(idx: int) -> None:
+                _do_restore(sess[idx][0])
+
+            self._show_menu(_t('continue.title'), options, _pick_session)
         elif name == 'clear':
-            from frontends import continue_cmd
-            continue_cmd.reset_conversation(ag)
-            _w('\x1b[2J\x1b[H'); self._painted = []; self._live_rows = 0
-            self._blocks = []; self._streaming_block = None; self._sent = 0
-            self._tool_base = 0; self._tools = {}
-            self.commit([_DIM + '🆕 新对话 · 上下文已清空' + _RST])
+            self._reset_session(ag)
+            self.commit([_DIM + _t('msg.cleared') + _RST])
         elif name == 'rewind':
-            n = int(arg) if arg.isdigit() else 1
             be = getattr(getattr(ag, 'llmclient', None), 'backend', None)
-            done = 0
-            if be is not None and getattr(be, 'history', None):
-                while done < n and len(be.history) >= 2:
-                    be.history.pop(); be.history.pop(); done += 1
-            self.commit([f'↩ 回退 {done} 轮(上下文已退;scrollback 不可改,以此为界)'])
+            turns = self._rewindable_turns(be)
+            if not turns:
+                self.commit([_t('msg.no_rewindable')]); return
+            if arg:
+                # Direct numeric form: /rewind N.
+                if not arg.isdigit():
+                    self.commit([_t('err.rewind_usage')]); return
+                n = int(arg)
+                if not (1 <= n <= len(turns)):
+                    self.commit([_t('err.rewind_range', max=len(turns))]); return
+                msg, prefill = self._do_rewind(be, n)
+                self.commit([msg])
+                if prefill:
+                    self.buf = prefill; self.pos = len(prefill)
+                return
+            # No arg → menu picker, one row per rewindable turn (recent first,
+            # capped at 20 like v2) with a content preview.
+            LIMIT = 20
+            recent = list(reversed(turns))[:LIMIT]
+            options: list[str] = []
+            for offset, (_idx, prev) in enumerate(recent, 1):
+                preview = (prev or '').replace('\n', ' ').strip()[:60]
+                options.append(_t('rewind.option', n=offset, preview=preview))
+
+            def _pick_rewind(idx: int) -> None:
+                msg, prefill = self._do_rewind(be, idx + 1)
+                self.commit([msg])
+                if prefill:
+                    self.buf = prefill; self.pos = len(prefill)
+
+            self._show_menu(_t('rewind.title'), options, _pick_rewind)
         elif name == 'btw':
             if not arg:
-                self.commit(['用法: /btw <旁问>(不污染主上下文)']); return
-            threading.Thread(target=self._btw, args=(raw,), daemon=True).start()
-            threading.Thread(target=self._ticker, daemon=True).start()
-            self._running = True; self._t0 = time.time()
+                self.commit([_t('err.btw_usage')]); return
+            # Background side question — does NOT touch self._running, so it
+            # never blocks idle-only commands nor makes /stop think the main
+            # agent is busy.  Concurrent /btw is allowed.  The entry shows in
+            # the panel immediately (answer slot None → `querying…`).
+            entry: list = [arg, None]
+            self._btws.append(entry)
+            threading.Thread(target=self._btw, args=(entry,), daemon=True).start()
+            self._render_live()
         elif name == 'review':
             from frontends import review_cmd
             dq = queue.Queue()
@@ -1824,69 +4219,440 @@ class SB:
                     text = dq.get_nowait().get('done', '')
                     self.commit(Block('assistant', text))   # markdown re-renders on resize
                 except queue.Empty:
-                    self.commit(['(review 无输出)'])
+                    self.commit([_t('msg.review_empty')])
+        elif name == 'resume':
+            # GA's _handle_slash_cmd (agentmain.py:124) replaces `/resume`
+            # with a session-recovery prompt before the LLM sees it.  We
+            # just forward the literal string — the agent expands it.
+            self._submit('/resume', [])
+        elif name in ('update', 'autorun', 'morphling', 'goal', 'hive', 'conductor'):
+            # slash_cmds bundle — build a long prompt and feed it back through
+            # _submit so the agent sees an ordinary user turn.  Keeps the
+            # frontend ignorant of SOP details; see frontends/slash_cmds.py.
+            from frontends import slash_cmds
+            prompt = slash_cmds.prompt_for('/' + name, arg or '')
+            if prompt:
+                self._submit(prompt, [])
+            else:
+                self.commit([f'❌ unknown command /{name}'])
+        elif name == 'scheduler':
+            from frontends import slash_cmds
+            parts = (arg or '').split(None, 1)
+            head = parts[0].lower() if parts else ''
+            if head in ('start', 'run'):
+                names = (parts[1] if len(parts) > 1 else '').replace(',', ' ').split()
+                if not names:
+                    self.commit([_t('scheduler.usage_start')])
+                else:
+                    lines = []
+                    for n in names:
+                        ok, msg = slash_cmds.start_service(n)
+                        lines.append(('✅ ' if ok else '❌ ') + msg)
+                    self.commit(lines)
+            else:
+                # Mirror hub.pyw discover_services(): reflect tasks + frontend
+                # apps, so the picker shows the same set as the GUI launcher.
+                services = slash_cmds.list_launchable_services()
+                if not services:
+                    self.commit([_t('scheduler.empty')]); return
+                ordered = ([s for s in services if s['kind'] == 'reflect'] +
+                           [s for s in services if s['kind'] == 'frontend'])
+                # Snapshot currently-running services so the picker reflects
+                # real OS state: pre-check running rows + show "· running"
+                # suffix. The diff between checked-after vs running-now is the
+                # source of truth for start/stop in the confirm step.
+                try:
+                    running = slash_cmds.running_services()  # {name: pid}
+                except Exception:
+                    running = {}
+                running_idxs = {i for i, s in enumerate(ordered)
+                                if s['name'] in running}
+                options = []
+                for s in ordered:
+                    is_running = s['name'] in running
+                    doc = f"  — {s['doc']}" if s['doc'] else ''
+                    tag = _t('scheduler.running_tag') if is_running else ''
+                    label = f"{s['name']}{tag}{doc}"
+                    if is_running:
+                        # Functional green so already-running rows pop out
+                        # of the picker grid even without the checkbox tick;
+                        # cell_len ignores ANSI so column math stays sane.
+                        label = _OK + label + _RST
+                    options.append(label)
+
+                # Two-step ask_user-style flow:
+                #   picker (pre-checked = running) → diff vs running
+                #     → confirm card (Submit / Edit selection) → apply
+                # Esc on the confirm card re-opens the picker with the in-
+                # progress ticks preserved (ask_user-style rollback).
+                def _open_picker(preset: set[int] | None = None) -> None:
+                    initial = running_idxs if preset is None else preset
+
+                    def _pick_services(idxs: list[int]) -> None:
+                        chosen_idxs = list(idxs)
+                        chosen_set = set(chosen_idxs)
+                        starts = [ordered[i]['name']
+                                  for i in chosen_idxs
+                                  if i not in running_idxs]
+                        stops = [ordered[i]['name']
+                                 for i in sorted(running_idxs)
+                                 if i not in chosen_set]
+                        if not starts and not stops:
+                            self.commit([_t('scheduler.no_change')]); return
+
+                        bits = []
+                        if starts:
+                            bits.append(_t('scheduler.diff.start',
+                                           n=len(starts), names='、'.join(starts)))
+                        if stops:
+                            bits.append(_t('scheduler.diff.stop',
+                                          n=len(stops), names='、'.join(stops)))
+                        submit_label = ' / '.join(bits)
+
+                        def _confirm(ci: int) -> None:
+                            if ci == 0:
+                                lines = []
+                                # Stop first so a name that appears in both
+                                # lists (never produced by this diff, but
+                                # cheap insurance) can't race the cmdline scan.
+                                for nm in stops:
+                                    ok, msg = slash_cmds.stop_service(nm)
+                                    lines.append(('■ ' if ok else '❌ ') + msg)
+                                for nm in starts:
+                                    ok, msg = slash_cmds.start_service(nm)
+                                    lines.append(('▶ ' if ok else '❌ ') + msg)
+                                self.commit(lines)
+                            elif ci == 1:
+                                self.commit([_t('scheduler.back_to_pick')])
+                                _open_picker(preset=chosen_set)
+                            else:
+                                self.commit([_t('scheduler.cancelled')])
+
+                        def _confirm_cancel() -> None:
+                            self.commit([_t('scheduler.back_to_pick')])
+                            _open_picker(preset=chosen_set)
+
+                        self._show_menu(
+                            _t('scheduler.confirm.title'),
+                            [submit_label, _t('scheduler.confirm.edit')],
+                            _confirm,
+                            hint=_t('scheduler.confirm.hint'),
+                            on_cancel=_confirm_cancel,
+                            multi_select=False,
+                        )
+
+                    hint_text = _t('scheduler.pick.hint')
+                    try:
+                        cron_n = len(slash_cmds.list_scheduler_tasks())
+                    except Exception:
+                        cron_n = 0
+                    if cron_n:
+                        sch_running = 'reflect/scheduler.py' in running
+                        key = 'scheduler.cron.active' if sch_running else 'scheduler.cron.inactive'
+                        hint_text += '\n' + _t(key, n=cron_n)
+                    # Pre-check the running set (first open) or the in-progress
+                    # selection (re-open via "Edit selection" / Esc) — passed
+                    # to _show_menu so it lands atomically with the rest of
+                    # the menu state, not as a post-open override.
+                    self._show_menu(
+                        _t('scheduler.pick.title'),
+                        options,
+                        _pick_services,
+                        hint=hint_text,
+                        multi_select=True,
+                        pre_checked=initial if initial else None,
+                    )
+
+                _open_picker()
         elif name == 'llm':
             if arg:
                 self._bridge.switch_llm(int(arg) if arg.isdigit() else -1)
-                self.commit([f'LLM → {self._bridge.llm_name}'])
+                self.commit([_t('msg.llm_switched', name=self._bridge.llm_name)])
             else:
-                out = ['LLM 列表(/llm N 切换):']
-                for it in self._bridge.list_llms():
-                    out.append(f'  {it[0]}. {it[1]}' + ('  ←当前' if len(it) > 2 and it[2] else ''))
-                self.commit(out)
+                items = self._bridge.list_llms()
+                if not items:
+                    self.commit([_t('msg.no_llms')]); return
+                options: list[str] = []
+                current = 0
+                for n, it in enumerate(items):
+                    cur = len(it) > 2 and it[2]
+                    if cur:
+                        current = n
+                    options.append(('● ' if cur else '  ') + f'{it[0]}. {it[1]}')
+
+                def _pick_llm(idx: int) -> None:
+                    target = items[idx]
+                    self._bridge.switch_llm(int(target[0]) if str(target[0]).isdigit() else -1)
+                    self.commit([_t('msg.llm_switched', name=self._bridge.llm_name)])
+
+                self._show_menu(_t('llm.title'), options, _pick_llm)
+                self._menu_sel = current
         elif name == 'cost':
             from frontends import cost_tracker
-            out = ['Token 用量:']
-            for tn, st in cost_tracker.all_trackers().items():
-                out.append(f'  {tn}: {st}')
-            self.commit(out if len(out) > 1 else ['（暂无统计）'])
+            trackers = cost_tracker.all_trackers()
+            if not trackers:
+                self.commit([_t('msg.no_tracker')]); return
+            # A mixin model spreads LLM calls across worker threads → many
+            # trackers for one logical session.  Aggregate into one block.
+            agg = cost_tracker.TokenStats()
+            agg.started_at = min((t.started_at for t in trackers.values()),
+                                 default=agg.started_at)
+            for t in trackers.values():
+                agg.requests += t.requests
+                agg.input += t.input
+                agg.output += t.output
+                agg.cache_create += t.cache_create
+                agg.cache_read += t.cache_read
+            be = getattr(getattr(ag, 'llmclient', None), 'backend', None)
+            self.commit(['✦ Token usage']
+                        + self._cost_section(self._session_name or 'session', agg, be))
         elif name == 'export':
             from frontends import export_cmd
-            txt = export_cmd.last_assistant_text(ag)
-            if not txt:
-                self.commit(['（没有可导出的回答）']); return
-            p = export_cmd.export_to_temp(txt, 'tui')
-            self.commit([f'已导出: {p}'])
+            parts = arg.split(None, 1) if arg else []
+            head = parts[0].lower() if parts else ''
+            rest = parts[1] if len(parts) > 1 else ''
+
+            def _do_clip() -> None:
+                txt = export_cmd.last_assistant_text(ag)
+                if not txt:
+                    self.commit([_t('msg.no_export')]); return
+                wrapped = export_cmd.wrap_for_clipboard(txt)
+                if copy(wrapped):
+                    self.commit([_t('msg.export_clipped', n=len(wrapped))])
+                else:
+                    self.commit([_t('msg.export_clip_failed')])
+
+            def _do_all() -> None:
+                lp = getattr(ag, 'log_path', '') or ''
+                if lp and os.path.isfile(lp):
+                    self.commit([_t('msg.export_all', path=lp)])
+                else:
+                    self.commit([_t('msg.export_all_missing')])
+
+            def _do_file(fname: str = '') -> None:
+                txt = export_cmd.last_assistant_text(ag)
+                if not txt:
+                    self.commit([_t('msg.no_export')]); return
+                if not fname:
+                    from datetime import datetime as _dt
+                    fname = 'export-' + _dt.now().strftime('%Y%m%d-%H%M%S') + '.md'
+                p = export_cmd.export_to_temp(txt, fname)
+                self.commit([_t('msg.export_done', path=p)])
+
+            def _prefill_file() -> None:
+                # v2 parity: picker → file fills the input with a default name
+                # so the user can edit before committing.
+                from datetime import datetime as _dt
+                default = 'export-' + _dt.now().strftime('%Y%m%d-%H%M%S') + '.md'
+                text = '/export ' + default
+                self.buf = text
+                self.pos = len(text)
+                self._sel = None
+                self._render_live()
+
+            if not head:
+                opts = [_t('export.opt.clip'),
+                        _t('export.opt.file'),
+                        _t('export.opt.all')]
+                actions = (_do_clip, _prefill_file, _do_all)
+                self._show_menu(_t('export.title'), opts,
+                                lambda i: actions[i]())
+            elif head in ('clip', 'copy'):
+                _do_clip()
+            elif head == 'all':
+                _do_all()
+            elif head == 'file':
+                _do_file(rest)
+            else:
+                # legacy: /export <name> → file with that name
+                _do_file(arg)
         elif name in ('verbose', 'tools', 'trace'):
             self._verbose_view()
+        elif name == 'language':
+            self._cmd_language(arg)
+        elif name == 'emoji':
+            self._cmd_emoji(arg)
         elif name == 'help':
-            self.commit(['命令:',
-                         '  /help                这个',
-                         '  /llm [N]             列出 / 切换 LLM',
-                         '  /btw <问>            旁问(不污染主上下文)',
-                         '  /review [范围]       代码审查',
-                         '  /rewind [N]          回退 N 轮上下文(默认1)',
-                         '  /continue [N]        列出 / 恢复历史会话',
-                         '  /clear               清空上下文',
-                         '  /cost                token 用量',
-                         '  /verbose             工具调用审计(↑↓选 Enter切换 c复制 q退)',
-                         '  /export              导出最后回答到 temp',
-                         '  /stop                中止当前任务',
-                         '  /quit                退出',
-                         '  Esc                  撤回提问 · 清草稿 · 停任务(不退出)',
-                         '  Ctrl+C × 2           退出(空闲时;运行中只 abort 任务)',
-                         '  Ctrl+L               强制重画(睡眠唤醒后修复)',
-                         '  Ctrl+Z / Ctrl+Y      撤销 / 重做 输入框编辑',
-                         '  Shift+←→↑↓           选中文字 (Ctrl+C 复制 / Ctrl+X 剪切 / Ctrl+A 全选)',
-                         '  会话类(/new /switch /branch …):单会话已暂缓'])
+            self.commit([_t('help.title'),
+                         _t('help.help'),
+                         _t('help.status'),
+                         _t('help.sessions'),
+                         _t('help.llm'),
+                         _t('help.btw'),
+                         _t('help.review'),
+                         _t('help.rewind'),
+                         _t('help.resume'),
+                         _t('help.continue'),
+                         _t('help.new'),
+                         _t('help.rename'),
+                         _t('help.clear'),
+                         _t('help.cost'),
+                         _t('help.verbose'),
+                         _t('help.export'),
+                         _t('help.stop'),
+                         _t('help.language'),
+                         _t('help.emoji'),
+                         _t('help.update'),
+                         _t('help.autorun'),
+                         _t('help.morphling'),
+                         _t('help.goal'),
+                         _t('help.hive'),
+                         _t('help.conductor'),
+                         _t('help.scheduler'),
+                         _t('help.quit'),
+                         _t('help.esc'),
+                         _t('help.cc'),
+                         _t('help.cl'),
+                         _t('help.cz'),
+                         _t('help.shift_arrow')])
         else:
-            self.commit([f'未知命令 /{name} — /help 看可用命令'])
+            self.commit([_t('err.unknown_cmd', name=name)])
 
-    def _btw(self, raw: str) -> None:
+    def _btw(self, entry: list) -> None:
+        """Answer a side question and fill `entry[1]` in place.  If Esc cleared
+        the panel meanwhile, `entry` is just an orphan — the mutation is
+        invisible and the panel renders the current (empty) list."""
         from frontends import btw_cmd
+        question = entry[0]
         try:
-            ans = btw_cmd.handle_frontend_command(self._bridge.agent, raw)
-        finally:
-            self._running = False
+            ans = btw_cmd.handle_frontend_command(self._bridge.agent, '/btw ' + question)
+        except Exception as e:
+            ans = f'> /btw {question}\n\n❌ {type(e).__name__}: {e}'
+        # btw_cmd's formatter prefixes the header with a 🟡 glyph — drop it.
+        ans = (ans or '').replace('🟡 ', '').replace('🟡', '').strip()
         with self._lk:
-            self.commit(Block('assistant', ans or '(无回答)'))   # markdown re-renders on resize
+            entry[1] = ans or f'> /btw {question}\n\n{_t("msg.btw_no_answer")}'
+            self._render_live()
+
+    def _cmd_emoji(self, arg: str) -> None:
+        """`/emoji` opens an arrow-key picker (parity with /llm); `/emoji
+        <style>` switches directly.  Styles are sourced from `_PET_STYLES`
+        so adding a new face dict automatically surfaces a new row.  `off`
+        is rendered as a separate trailing row that hides the pet entirely.
+        """
+        global _pet_style
+        choice = (arg or '').strip().lower()
+        valid_keys = list(_PET_STYLES.keys()) + [_PET_HIDDEN]
+        if choice:
+            if choice not in valid_keys:
+                self.commit([f'{_DIM}'
+                             + _t('emoji.unknown', choice=choice,
+                                  valid=', '.join(valid_keys))
+                             + _RST])
+                return
+            _pet_style = choice
+            self.commit([f'{_DIM}' + _t('emoji.switched', style=choice) + _RST])
+            return
+        # No arg → /llm-style picker.  Sample = the first frame of tier 0
+        # so each row shows what the calm face looks like.
+        keys = list(_PET_STYLES.keys())
+        options: list[str] = []
+        current_idx = 0
+        for i, k in enumerate(keys):
+            sample = _PET_STYLES[k][0][0]
+            if k == _pet_style:
+                current_idx = i
+                options.append(_t('emoji.row.current', name=k, sample=sample))
+            else:
+                options.append(_t('emoji.row.other', name=k, sample=sample))
+        # Trailing "off" row hides the pet — appended last so the regular
+        # face styles cluster at the top of the menu.
+        off_label = (_t('emoji.row.current', name=_PET_HIDDEN, sample=_t('emoji.row.off'))
+                     if _pet_style == _PET_HIDDEN
+                     else _t('emoji.row.other', name=_PET_HIDDEN, sample=_t('emoji.row.off')))
+        options.append(off_label)
+        if _pet_style == _PET_HIDDEN:
+            current_idx = len(keys)
+        picks = keys + [_PET_HIDDEN]
+
+        def _pick(idx: int) -> None:
+            global _pet_style
+            _pet_style = picks[idx]
+            self.commit([f'{_DIM}' + _t('emoji.switched', style=picks[idx]) + _RST])
+
+        self._show_menu(_t('emoji.title'), options, _pick)
+        self._menu_sel = current_idx
+
+    def _cmd_language(self, arg: str) -> None:
+        """`/language` — arrow-key picker (like /llm); `/language <code>` — direct switch."""
+        codes = supported()
+        labels = LANG_LABELS
+        cur = get_lang()
+        if arg:
+            code = arg.strip().lower()
+            if code not in codes:
+                avail = ', '.join(f'{c} ({labels.get(c, c)})' for c in codes)
+                self.commit([_t('err.lang_unknown', code=arg, available=avail)]); return
+            set_lang(code)
+            self.commit([_t('msg.lang_switched', label=labels.get(code, code))])
+            self._repaint_screen()
+            return
+
+        # No arg → menu picker.  Build options in stable code order; a leading
+        # ● marks the active language (the ↑↓ highlight marks the cursor row).
+        options: list[str] = []
+        current_idx = 0
+        for i, code in enumerate(codes):
+            if code == cur:
+                current_idx = i
+            options.append(('● ' if code == cur else '  ')
+                           + f'{labels.get(code, code)}  ({code})')
+
+        def _pick_lang(idx: int) -> None:
+            code = codes[idx]
+            if code == get_lang():
+                # No-op pick — still report current so the user sees confirmation.
+                self.commit([_t('msg.lang_current', label=labels.get(code, code), code=code)])
+                return
+            set_lang(code)
+            self.commit([_t('msg.lang_switched', label=labels.get(code, code))])
+            self._repaint_screen()
+
+        self._show_menu(_t('lang.title'), options, _pick_lang)
+        self._menu_sel = current_idx
+
+    def _rewindable_turns(self, be) -> list[tuple[int, str]]:
+        """v2-parity turn detector: scan backend.history and return
+        (history_index, preview) for every *real* user turn.  A user message
+        whose content is a tool_result block is skipped — otherwise a single
+        tool round-trip would be miscounted as an extra rewindable turn."""
+        turns: list[tuple[int, str]] = []
+        hist = getattr(be, 'history', None) or []
+        for i, m in enumerate(hist):
+            if not isinstance(m, dict) or m.get('role') != 'user':
+                continue
+            c = m.get('content')
+            if isinstance(c, str):
+                turns.append((i, c[:60])); continue
+            if isinstance(c, list):
+                if any(isinstance(b, dict) and b.get('type') == 'tool_result' for b in c):
+                    continue
+                texts = [b.get('text', '') for b in c
+                         if isinstance(b, dict) and b.get('type') == 'text']
+                if texts and any(t.strip() for t in texts):
+                    turns.append((i, texts[0][:60]))
+        return turns
+
+    def _do_rewind(self, be, n: int) -> tuple[str, str]:
+        """Cut backend.history back `n` real user turns.  Returns
+        (report_line, prefill_text) — prefill is the user text of the turn
+        rewound *to*, so the caller can drop it back into the input box."""
+        turns = self._rewindable_turns(be)
+        if not (1 <= n <= len(turns)):
+            return _t('err.rewind_range', max=len(turns)), ''
+        hist = be.history
+        cut = turns[-n][0]
+        prefill = _extract_user_text(hist[cut]) if cut < len(hist) else ''
+        removed = len(hist) - cut
+        hist[:] = hist[:cut]
+        return _t('msg.rewind', n=n, removed=removed), prefill
 
     def _verbose_view(self) -> None:
         """Tool-call audit on a TEMP alt-screen — main scrollback is never
         touched. Data is the already-captured ToolRecord log (self._tools)."""
         recs = [self._tools[k] for k in sorted(self._tools)]
         if not recs:
-            self.commit([_DIM + '  (暂无工具调用记录)' + _RST]); return
+            self.commit([_DIM + _t('msg.no_tools') + _RST]); return
         sel, mode, scroll = 0, 0, 0
         fields = ('result', 'args', 'raw')
         _w('\x1b[?1049h\x1b[?2004l')          # alt-screen; pause bracketed paste here
@@ -1895,16 +4661,15 @@ class SB:
                 w, h = _term()
                 r = recs[sel]
                 lines: list[str] = []
-                for ln in (getattr(r, fields[mode]) or '(空)').split('\n'):
+                for ln in (getattr(r, fields[mode]) or _t('verbose.empty')).split('\n'):
                     lines += _wrap_cells(ln, w - 2) or ['']
                 avail = max(2, h - 4)               # rows shared by list + detail
                 list_h = min(len(recs), max(3, avail // 3))
                 body_h = max(1, avail - list_h)
                 lo = max(0, min(sel - list_h // 2, len(recs) - list_h))
                 scroll = max(0, min(scroll, max(0, len(lines) - body_h)))
-                out = ['\x1b[2J\x1b[H', _BOLD + '  Tool Trace' + _RST + _DIM +
-                       f'   ↑↓ 选 · PgUp/Dn 滚 · Enter 切换[{fields[mode]}]'
-                       ' · c 复制 · e 导出 · q 退' + _RST, '']
+                out = ['\x1b[2J\x1b[H', _BOLD + _t('verbose.title') + _RST + _DIM +
+                       _t('verbose.hint', field=fields[mode]) + _RST, '']
                 for t in recs[lo:lo + list_h]:
                     mk = _ACCENT + '▌' + _RST if t is r else ' '
                     stc = (_OK + 'ok' if t.status == 'ok' else
@@ -1937,26 +4702,43 @@ class SB:
                                               f'tool_t{r.id}_{fields[mode]}')
         finally:
             _w('\x1b[?1049l\x1b[?2004h')       # leave alt-screen; resume bracketed paste
-            self._goto_top(); _w('\x1b[J')
-            self._painted = []; self._live_rows = 0
-            self._render_live()
+            # NOTE: this /verbose alt-screen viewer reads keys via os.read(self._fd),
+            # which conflicts with PTK's input loop.  In PTK Application mode the
+            # viewer is currently broken; a future rewrite should wrap it in
+            # app.run_in_terminal and use PTK's input pipeline.  For now we just
+            # invalidate so PTK redraws the live region after we exit alt-screen.
+            self._painted = []; self._live_rows = 0; self._parked_up = 0
+            self._pending_repaint = True
+            self._schedule_drain()
+            self._invalidate_ptk()
 
     # ── agent ──
 
     def _submit(self, query: str, images: list) -> None:
         assert self._bridge is not None
-        self._running = True; self._t0 = time.time()
+        self._running = True; self._t0 = self._t0_anchor = time.time()
         self._stream = ''; self._sent = 0; self._live_tail = []
         dq = self._bridge.submit(query, images=images or None)
         threading.Thread(target=self._drain, args=(dq,), daemon=True).start()
         threading.Thread(target=self._ticker, daemon=True).start()
 
     def _ticker(self) -> None:
+        # 0.1s cadence matches tui_v2's snappy "alive" feel; the 0.4s sleep
+        # that lived here previously made the spinner look stalled on long
+        # tool turns.  _render_live is cheap (it diffs by hash before
+        # touching the TTY).  Also drives the OSC 0 terminal-title spinner.
         while self._running:
-            time.sleep(0.4)
+            time.sleep(0.1)
             with self._lk:
                 if self._running:
                     self._spin += 1; self._render_live()
+                    _set_term_title(self._term_title())
+
+    def _term_title(self) -> str:
+        name = (self._session_name or '').strip()
+        head = (_SPIN[self._spin % len(_SPIN)] + ' ') if self._running else ''
+        tail = f'{name} · GenericAgent' if name else 'GenericAgent'
+        return f'{head}{tail}'
 
     def _poll_ask(self, grace: float = 0.0) -> AskUserEvent | None:
         """Only pull a queued ask when none is currently being shown.
@@ -1988,7 +4770,22 @@ class SB:
                     return
                 continue
             if isinstance(ev, DoneEvent):
-                ae = self._poll_ask(grace=0.4)  # ask hook may land around turn end
+                # ga.ask_user() emits its "Waiting for your answer …" marker
+                # to the stream *just before* it pushes the AskUserEvent onto
+                # ask_user_queue.  When the agent then short-circuits with
+                # should_exit=True a DoneEvent can land here before the
+                # AskUserEvent.put() returns.  The previous 2s grace was the
+                # right idea but too short under load (long sessions backed
+                # up the put), so the ae would be missed and the question
+                # silently dropped into scrollback — observed as 'input box
+                # never re-appears'.  When the marker is present, treat the
+                # ae as REQUIRED and wait longer; the hook is synchronous
+                # with agent thread exit so 10s is comfortably above the
+                # real arrival time.  Plain replies keep the snappy 0.4s.
+                if 'Waiting for your answer' in self._stream:
+                    ae = self._poll_ask(grace=10.0)
+                else:
+                    ae = self._poll_ask(grace=0.4)
                 with self._lk:
                     self._enter_ask(ae) if ae else self._finalize(ev.text)
                 break
@@ -2001,6 +4798,10 @@ class SB:
                 elif isinstance(ev, (SystemEvent, ErrorEvent)):
                     self._finalize(getattr(ev, 'text', None) or getattr(ev, 'message', '')); break
         self._running = False
+        # _ticker stops as soon as _running goes False so the title would
+        # freeze on the last spinner frame.  Repaint it now to drop the
+        # glyph and reveal a clean idle title.
+        _set_term_title(self._term_title())
         with self._lk:
             self._flow(final=True) if self._stream else self._render_live()
 
@@ -2010,6 +4811,7 @@ class SB:
         self._stream = ''; self._sent = 0; self._live_tail = []
         self._asking = ae; self._running = False; self.buf = ''; self.pos = 0
         self._undo.clear(); self._redo.clear(); self._sel = None
+        self._picker_init(ae)
         self._render_live()
 
     def _commit_user(self, text: str) -> None:
@@ -2075,6 +4877,7 @@ class SB:
 
     def _commit_assistant(self, text: str) -> None:
         self.commit(Block('assistant', text))   # commit() handles _tool_base
+                                                # and _render_block does the fold
 
     def _safe_pos(self, stream: str) -> int:
         """Position up to which the stream is STRUCTURALLY stable — past this
@@ -2084,9 +4887,13 @@ class SB:
         (no closing tag). Falls back to last `\\n\\n` paragraph boundary."""
         unsafe = []
         for m in re.finditer(r'🛠️ Tool:', stream):
-            if not re.search(r'(?:^|\n)(?:\*\*LLM Running|🛠️ Tool:)', stream[m.end():]):
+            # Closing sentinel for an in-flight tool block: next tool, next
+            # turn marker (either form), or next assistant frame.  Matches
+            # both `**LLM Running (Turn N) ...**` and the task-mode short
+            # `**Turn N ...**` so task_dir-enabled runs aren't mis-classified.
+            if not re.search(r'(?:^|\n)(?:\*\*(?:LLM Running \()?Turn \d+|🛠️ Tool:)', stream[m.end():]):
                 unsafe.append(m.start())
-        for m in re.finditer(r'\*\*LLM Running', stream):
+        for m in re.finditer(r'\*\*(?:LLM Running \()?Turn \d+', stream):
             if '**' not in stream[m.end():]:
                 unsafe.append(m.start())
         for tag in ('summary', 'thinking'):
@@ -2110,13 +4917,14 @@ class SB:
         following `**LLM Running` or next `🛠️ Tool:` once a tool's result
         finishes, so detection of those markers gates the commit."""
         w = _term()[0]
-        stream = sanitize_ansi(self._stream)
+        stream = _strip_final_marker(sanitize_ansi(self._stream))
 
         if self._streaming_block is None and (stream.strip() or final):
             self._streaming_block = Block('assistant', '')
             self._blocks.append(self._streaming_block)
             self._cap_blocks()
             self._sent = 0
+            self._stream_turn_seen = 0   # new response → reset incremental fold tracker
 
         if final:
             if self._streaming_block is not None:
@@ -2131,8 +4939,19 @@ class SB:
             new = full_lines[self._sent:]
             self._live_tail = []
             self._emit_lines(new, w)
+            # Per-turn fold only kicks in with ≥2 turn markers (see _fold_turns).
+            # Anything less stays expanded and doesn't need a repaint — saves a
+            # screen flash on simple Q&A.
+            multi_turn = len(_TURN_SPLIT_FOLD_RE.findall(stream)) >= 2
             self._streaming_block = None
             self._stream = ''; self._sent = 0; self._live_tail = []
+            self._stream_turn_seen = 0   # response done → reset for next stream
+            # Auto-collapse after generation: streamed body was already pushed
+            # to scrollback above; trigger a full repaint so it gets replaced
+            # by per-turn folded headers (scrollback-first can't unwrite, full
+            # repaint is the only knob).
+            if multi_turn and self._fold_all:
+                self._repaint_screen()
             return
 
         safe = self._safe_pos(stream)
@@ -2170,6 +4989,18 @@ class SB:
             self._emit_lines(new, w)
         else:
             self._render_live()
+        # Incremental fold (v2 live-fold parity): the moment a new turn marker
+        # arrives, the PREVIOUS turn body is complete and can collapse into a
+        # `▸ {summary}` header.  Trigger a full repaint each time the marker
+        # count climbs — already-committed expanded lines get cleared and
+        # replaced with the folded form.  Without this users see every turn
+        # expanded all the way through the response and only fold at the very
+        # end (final=True), which feels bulk-and-flash.
+        turn_count = len(_TURN_SPLIT_FOLD_RE.findall(stream))
+        if (self._fold_all and turn_count > self._stream_turn_seen
+                and turn_count >= 2):
+            self._stream_turn_seen = turn_count
+            self._repaint_screen()
 
     def _finalize(self, text: str) -> None:
         if text and not self._stream:
@@ -2227,14 +5058,126 @@ class SB:
             text = self._tail[:e.start].decode('utf-8', 'ignore'); self._tail = self._tail[e.start:]
         for ch in text:
             o = ord(ch)
+            # ── menu picker key intercept (modal: blocks all input editing) ─
+            # /llm, /continue, … open an arrow-key menu.  ↑↓ move highlight
+            # (saturating at endpoints — no wrap), Enter submits, Esc cancels.
+            # Other keys are swallowed — no free-text typing while a menu is up.
+            if self._menu_active:
+                n = len(self._menu_options)
+                if o == 0x10:                                # ↑
+                    if n:
+                        self._menu_sel = max(0, self._menu_sel - 1)
+                    self._render_live(); continue
+                if o == 0x0e:                                # ↓
+                    if n:
+                        self._menu_sel = min(n - 1, self._menu_sel + 1)
+                    self._render_live(); continue
+                if self._menu_multi and ch == ' ':            # Space toggles
+                    # Only meaningful in multi-select mode; in single mode we
+                    # swallow Space to keep "modal, no free-text" invariant.
+                    if n:
+                        i = self._menu_sel
+                        if i in self._menu_checked:
+                            self._menu_checked.discard(i)
+                        else:
+                            self._menu_checked.add(i)
+                    self._render_live(); continue
+                if ch == '\r':                               # Enter
+                    self._menu_submit(); continue
+                if o == 0x1b:                                # Esc
+                    self._menu_cancel(); continue
+                if o == 0x02:                                # ← cancel (directional Esc)
+                    # The /scheduler confirm card spawns a menu with an
+                    # on_cancel that re-opens the picker — ← gives users
+                    # a one-handed rollback without reaching for Esc.
+                    # Menus with no on_cancel just dismiss.
+                    self._menu_cancel(); continue
+                # swallow everything else while the menu is up
+                continue
+            # ── ask_user picker key intercept ───────────────────────────────
+            # Single mode: focus cycles [cand0..candN-1, input].  ↑↓ moves
+            #   through candidates and the input box; printable chars switch
+            #   focus to input and insert.
+            # Multi mode: NO input box (rendering skips it too).  ↑↓ wrap
+            #   inside candidates only; Space toggles current checkbox;
+            #   non-Enter/Esc printable chars are swallowed (free-text would
+            #   break the "submit checked items" semantics).
+            if self._asking is not None:
+                ae = self._asking
+                n = len(ae.candidates) if getattr(ae, 'candidates', None) else 0
+                if self._picker_mode == 'multi':
+                    if o == 0x10 and n > 0:                  # ↑ wrap in multi
+                        self._picker_sel = (self._picker_sel - 1) % n
+                        self._render_live(); continue
+                    if o == 0x0e and n > 0:                  # ↓ wrap in multi
+                        self._picker_sel = (self._picker_sel + 1) % n
+                        self._render_live(); continue
+                    if ch == ' ':                            # Space toggle
+                        i = self._picker_sel
+                        if i in self._picker_checked:
+                            self._picker_checked.discard(i)
+                        else:
+                            self._picker_checked.add(i)
+                        self._render_live(); continue
+                    if o >= 0x20:                            # swallow other printables
+                        continue
+                elif o in (0x10, 0x0e) and n > 0:            # ↑ / ↓ in single
+                    self._sel = None
+                    if not self._picker_mode:
+                        # Input → picker.  ↑ enters at bottom, ↓ enters at top.
+                        self._picker_mode = 'single'
+                        self._picker_sel = (n - 1) if o == 0x10 else 0
+                    elif o == 0x10:                          # ↑ inside picker
+                        if self._picker_sel <= 0:            # top edge → input
+                            self._picker_mode = None
+                        else:
+                            self._picker_sel -= 1
+                    else:                                     # ↓ inside picker
+                        if self._picker_sel >= n - 1:        # bottom edge → input
+                            self._picker_mode = None
+                        else:
+                            self._picker_sel += 1
+                    self._render_live(); continue
+                if self._picker_mode == 'single' and o >= 0x20:
+                    self._picker_mode = None                   # keep sel alive
+                    # fall through to normal insert below
             if ch == '\r':
                 self._on_enter()
             elif ch == '\n':
                 self._insert('\n')
             elif o == 0x10:                       # ↑ visual-row up (history at top)
-                self._sel = None; self._cur_v(-1)
+                if self._palette_visible():
+                    self._palette_sel = max(0, self._palette_sel - 1)
+                else:
+                    self._sel = None
+                    segs = self._segs(max(1, _term()[0] - 6))
+                    vi, _ = self._seg_at(segs)
+                    if vi == 0:                 # 视觉首行(必在第一逻辑行)
+                        _, _, ls, _ = self._line_region()
+                        if self.pos == ls:
+                            self._nav_hist(-1)
+                        else:
+                            self.pos = ls       # 先跳行首,下次再进历史
+                    else:
+                        self._cur_v(-1)
+            elif o == 0x13:                       # Ctrl+S stash/restore draft
+                self._stash_draft()
             elif o == 0x0e:                       # ↓ visual-row down (history at bottom)
-                self._sel = None; self._cur_v(1)
+                if self._palette_visible():
+                    n = len(self._cmd_matches(self.buf))
+                    self._palette_sel = min(n - 1, self._palette_sel + 1) if n else 0
+                else:
+                    self._sel = None
+                    segs = self._segs(max(1, _term()[0] - 6))
+                    vi, _ = self._seg_at(segs)
+                    if vi == len(segs) - 1:     # 视觉末行(必在最末逻辑行)
+                        _, _, _, le = self._line_region()
+                        if self.pos == le:
+                            self._nav_hist(1)
+                        else:
+                            self.pos = le       # 先跳行尾,下次再进历史
+                    else:
+                        self._cur_v(1)
             elif o == 0x02:                       # ← caret left
                 self._sel = None; self.pos = max(0, self.pos - 1)
             elif o == 0x06:                       # → caret right
@@ -2258,12 +5201,15 @@ class SB:
                 r = self._sel_range()
                 if r:
                     clip.copy(self.buf[r[0]:r[1]]); self._kill_sel()
-            elif o == 0x1b:                       # Esc — universal back
+            elif o == 0x1b:                       # Esc — universal back (Esc Esc handled in _handle_key)
                 self._esc_back()
             elif o == 0x09:                       # Tab — slash-command completion
                 self._tab()
             elif o == 0x0c:                       # Ctrl+L — force redraw (sleep/wake recovery)
                 self._redraw()
+            elif o == 0x0f:                       # Ctrl+O — silent toggle: fold/unfold tool chips
+                self._fold_all = not self._fold_all
+                self._repaint_screen()
             elif o == 0x16:                       # Ctrl+V
                 self._handle_clip_paste()
             elif o == 0x15:                       # Cmd+⌫ / Ctrl+U: kill to line start
@@ -2273,7 +5219,15 @@ class SB:
                     self.buf = self.buf[:ls] + self.buf[self.pos:]; self.pos = ls
             elif o in (0x7f, 0x08):
                 if not self._kill_sel():
-                    if self.pos:
+                    hit = self._placeholder_at('left')
+                    if hit:                       # backspace flush against a
+                        st, end, sid = hit         # placeholder → wipe the block
+                        self._snap()
+                        self.buf = self.buf[:st] + self.buf[end:]; self.pos = st
+                        self._pstore.pop(sid, None)
+                        self._fstore.pop(sid, None)
+                        self._imgs.pop(sid, None)
+                    elif self.pos:
                         self._snap()
                         self.buf = self.buf[:self.pos - 1] + self.buf[self.pos:]; self.pos -= 1
             elif o >= 0x20:
@@ -2310,11 +5264,18 @@ class SB:
                     self._render_live()
                 return True
             if self._running and self._bridge:    # running task → abort (single press)
-                self._bridge.abort(); return True
-            if time.time() - self._cc_t < 2:      # idle: arm-to-quit; second press
+                self._bridge.abort()
+                self._running = False             # stop the spinner/pet animation now
+                with self._lk:
+                    self._render_live()
+                return True
+            if time.time() - self._cc_t < 1:      # idle: arm-to-quit; second press
                 return False                       # within the window actually exits
-            self._cc_t = time.time()              # first press arms + shows hint
             with self._lk:
+                if self.buf:                      # v2: first press clears the draft
+                    self._snap()
+                    self.buf = ''; self.pos = 0; self._sel = None
+                self._cc_t = time.time()          # arm: second press quits + shows hint
                 self._render_live()
             return True
         for kind, chunk in self._ingest(data):
@@ -2330,70 +5291,212 @@ class SB:
                 return False
         return True
 
-    def _on_resize(self, *_a) -> None:
-        self._resized = True
-        try:
-            os.write(self._sig_w, b'r')   # wake the select() in run()
-        except (BlockingIOError, OSError):
-            pass                           # pipe full = pending wake already queued
+    def _run_prompt_toolkit(self) -> None:
+        """prompt_toolkit Application backend (scrollback-first).
 
-    def run(self) -> None:
+        PTK owns: raw mode, key dispatch, resize polling, async lifecycle, and
+        rendering of the *live region only* (input box + status + spinner +
+        plan + open stream tail).  The Window has dynamic height that follows
+        content, so PTK reserves only the live region's rows at the bottom of
+        the terminal.
+
+        Finalized history is pushed above the PTK render area via
+        app.print_text() wrapped in run_in_terminal() — the terminal's native
+        scrollback owns the conversation and the mouse wheel scrolls it.
+        """
+        from prompt_toolkit.application import Application
+        from prompt_toolkit.filters import Condition
+        from prompt_toolkit.key_binding import KeyBindings
+        from prompt_toolkit.keys import Keys
+        from prompt_toolkit.layout import Layout
+        from prompt_toolkit.layout.containers import Window
+        from prompt_toolkit.layout.controls import FormattedTextControl
+        from prompt_toolkit.output.defaults import create_output
+
         self._bridge = AgentBridge()
         try:
             from frontends import cost_tracker
-            cost_tracker.install()        # without this _trackers stays empty → no cost
+            cost_tracker.install()
         except Exception:
             pass
-        self._old = termios.tcgetattr(self._fd)
-        signal.signal(signal.SIGWINCH, self._on_resize)
-        signal.siginterrupt(signal.SIGWINCH, True)   # don't auto-retry os.read — let
-                                                      # SIGWINCH wake the read so a
-                                                      # resize repaints immediately
-                                                      # (otherwise stale until keypress)
+
         os.makedirs(self._cwd, exist_ok=True)
-        logf = open(os.path.join(self._cwd, 'sb_agent.log'), 'w', buffering=1)
+        logf = open(os.path.join(self._cwd, 'sb_agent.log'), 'w', buffering=1,
+                    encoding='utf-8')
         so, se = sys.stdout, sys.stderr
-        sys.stdout = sys.stderr = logf  # agent chatter → log, not the terminal
-        try:
-            tty.setraw(self._fd)
-            _w('\x1b[?2004h')  # bracketed paste: multi-line paste won't pre-submit
-            _w('\x1b[>4;1m')   # modifyOtherKeys: Shift+Enter becomes distinguishable
-            _w('\x1b[2J\x1b[H')  # one-time fresh page (NOT alt-screen; scrollback intact)
-            self.commit(Block('banner', ''))
+        sys.stdout = sys.stderr = logf
+
+        kb = KeyBindings()
+        last_size: list[tuple[int, int] | None] = [None]
+
+        def _handle_key(event) -> None:
+            for kp in event.key_sequence:
+                if _is_mouse_or_scroll_keypress(kp):
+                    continue
+                # Bracketed paste: PTK parses `\x1b[200~…\x1b[201~` into a
+                # single keypress whose `data` is the whole payload.  Route it
+                # straight to the paste handler — otherwise the payload's
+                # newlines fall through `_keys` as Enter presses (premature
+                # submit) and multi-line / file / image folding never runs.
+                if getattr(kp, 'key', None) == Keys.BracketedPaste:
+                    # A modal menu picker owns the live region — no input box
+                    # to paste into, so swallow the paste.
+                    if not self._menu_active:
+                        with self._lk:
+                            self._handle_paste(getattr(kp, 'data', '') or '')
+                            self._render_live()
+                    event.app.invalidate()
+                    continue
+                data = _ptk_keypress_to_bytes(kp)
+                # PTK has already disambiguated a bare Escape from arrow-key
+                # sequences (arrows arrive as Keys.Up/… → distinct bytes), so a
+                # b'\x1b' here is unambiguously Esc.  Handle it directly instead
+                # of routing through _keys, whose raw-terminal escape-delay
+                # hold (~30ms) would otherwise lag every menu/ask cancel.
+                #
+                # Esc Esc within 800 ms → /rewind (user-requested binding).
+                # The first Esc still runs _esc_back (cancel ask / clear
+                # draft / abort task), so this only fires when the user
+                # presses twice quickly — never surprises a single press.
+                if data == b'\x1b':
+                    now = time.time()
+                    if now - self._last_esc_t < 0.8:
+                        self._last_esc_t = 0.0
+                        with self._lk:
+                            self._cmd('/rewind')
+                            self._render_live()
+                    else:
+                        self._last_esc_t = now
+                        with self._lk:
+                            self._esc_back()
+                            self._render_live()
+                    event.app.invalidate()
+                    continue
+                if data and not self._feed(data):
+                    event.app.exit()
+                    return
+            event.app.invalidate()
+
+        kb.add(Keys.Any, eager=True)(_handle_key)
+
+        control = FormattedTextControl(
+            text=self._get_ptk_text,
+            focusable=True,
+            show_cursor=True,
+            get_cursor_position=self._get_ptk_cursor,
+        )
+        # dont_extend_height + dynamic height makes PTK reserve only the live
+        # region's rows at the bottom of the terminal.  Anything written via
+        # run_in_terminal/print_text scrolls above into native scrollback.
+        root = Window(
+            content=control,
+            wrap_lines=False,
+            # Hide the caret when focus is owned elsewhere:
+            #  - a modal menu picker (no text field at all)
+            #  - the ask card with picker mode active (focus on a candidate row)
+            # Free-text mode in the ask card (_picker_mode=None) keeps the
+            # cursor visible so the user can see where their typing lands.
+            always_hide_cursor=Condition(
+                lambda: self._menu_active
+                or (self._asking is not None and self._picker_mode is not None)
+            ),
+            height=self._get_live_height,
+            dont_extend_height=True,
+        )
+        layout = Layout(root, focused_element=control)
+
+        def _before_render(app: Application) -> None:
+            ts = self._ptk_size()
+            size_changed = last_size[0] != ts
+            if size_changed:
+                last_size[0] = ts
+                with self._lk:
+                    self._resized = False
+                    self._repaint_screen()
+            # Rebuild the live-region cache every frame so the height query
+            # (PTK calls preferred_height before the text getter) and the text
+            # getter see exactly the same content — even when streaming
+            # mutates state between renders without a size change.
+            self._build_live_lines()
+
+        async def _maintenance_loop() -> None:
             while True:
-                # Always select on BOTH stdin and the SIGWINCH self-pipe — under
-                # iTerm split panes, signal-driven InterruptedError on os.read
-                # is unreliable (PEP 475 auto-retries; on some macOS builds the
-                # signal can be coalesced/dropped during the read syscall). The
-                # self-pipe trick wakes select() deterministically whenever
-                # SIGWINCH fires, so a resize ALWAYS repaints within ~40ms even
-                # if the user never touches a key.
-                gated = self._epend or (self._rb and not self._bp)
-                timeout = 0.04 if gated else None
-                r, _, _ = select.select([self._fd, self._sig_r], [], [], timeout)
-                if self._sig_r in r:
-                    try: os.read(self._sig_r, 4096)
-                    except OSError: pass               # drain pending wake bytes
-                if self._resized:
+                await asyncio.sleep(0.03)
+                dirty = False
+                if self._running and self._asking is None:
+                    # spinner / elapsed text is time-based
+                    dirty = True
+                if 0 < time.time() - self._cc_t < 1.1:
+                    # Ctrl+C armed: keep re-rendering so the status line
+                    # restores itself once the 1s window lapses (the extra
+                    # 0.1s margin guarantees one render past expiry).
+                    dirty = True
+                if self._pending:
                     with self._lk:
-                        self._resized = False
-                        self._redraw()
-                if not r:
-                    self._flush_esc(); continue
-                if self._fd in r:
-                    try:
-                        data = os.read(self._fd, 4096)
-                    except InterruptedError:
-                        continue
-                    if not data or not self._feed(data):
-                        break
+                        self._sync_pending_from_bridge()
+                    dirty = True
+                if self._epend or (self._rb and not self._bp):
+                    with self._lk:
+                        self._flush_esc()
+                    dirty = True
+                with self._sbq_lk:
+                    has_q = bool(self._sbq)
+                if (has_q or self._pending_repaint) and self._ptk_app is not None:
+                    self._ptk_app.create_background_task(self._drain_async())
+                if dirty and self._ptk_app is not None:
+                    self._ptk_app.invalidate()
+
+        def _pre_run() -> None:
+            self._ptk_loop = asyncio.get_event_loop()
+            app = self._ptk_app
+            assert app is not None
+            app.create_background_task(_maintenance_loop())
+            _enable_windows_vt_mode()
+            _enter_utf8_charset()
+            _w('\x1b[?1007l')   # disable alt-scroll so wheel scrolls scrollback
+            _w('\x1b[?2004h')   # enable bracketed paste
+            _w('\x1b[>4;1m')    # ask supporting terminals to distinguish Shift+Enter
+            self.commit(Block('banner', ''))
+
+        app = Application(
+            layout=layout,
+            key_bindings=kb,
+            full_screen=False,
+            erase_when_done=False,
+            # No refresh_interval: each auto-refresh re-positions PTK's cursor
+            # to the live region, which makes the terminal auto-scroll to the
+            # bottom — destroying the user's scrollback position.  Maintenance
+            # loop invalidates explicitly only when running (spinner anim).
+            terminal_size_polling_interval=0.2,
+            mouse_support=False,
+            before_render=_before_render,
+            output=create_output(stdout=so),
+        )
+        self._ptk_app = app
+
+        try:
+            app.run(pre_run=_pre_run, handle_sigint=False)
         finally:
-            _w('\x1b[>4;0m')   # restore default key reporting
+            _w('\x1b[>4;0m')
             _w('\x1b[?2004l')
-            termios.tcsetattr(self._fd, termios.TCSADRAIN, self._old)
+            _w('\x1b[?1007h')
+            self._ptk_app = None
+            self._ptk_loop = None
             sys.stdout, sys.stderr = so, se
             logf.close()
-            _w('\r\x1b[J'); os.write(1, b'\n')
+            try:
+                os.write(1, b'\n')
+            except Exception:
+                pass
+
+    def run(self) -> None:
+        _set_term_title(self._term_title())
+        try:
+            return self._run_prompt_toolkit()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            _set_term_title('GenericAgent')
 
 
 # sb.py's original `main()` and __main__ guard intentionally dropped — the
@@ -2407,19 +5510,23 @@ class SB:
 def _ensure_deps():
     try:
         import rich  # noqa: F401
-    except ImportError:
-        print("Error: rich is not installed.")
-        print("Install with: pip install rich")
+        import prompt_toolkit  # noqa: F401
+    except ImportError as e:
+        import sys
+        print(_t('err.dep_missing', name=e.name))
+        print(_t('err.dep_install'))
         sys.exit(2)
 
 
-def main():
+def main(argv: list[str] | None = None) -> int:
     _ensure_deps()
     install_cjk_wrap()
     if not sys.stdin.isatty():
-        print('tui_v3: needs a real TTY (run it in iTerm directly)'); return
+        print(_t('err.no_tty'))
+        return 1
     SB().run()
+    return 0
 
 
 if __name__ == '__main__':
-    main()
+    raise SystemExit(main())

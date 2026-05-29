@@ -1,3 +1,5 @@
 #!/usr/bin/env bash
 cd "$(dirname "$0")"
-exec python -m ga_cli "$@"
+PY=.venv/bin/python
+[ -x "$PY" ] || PY=python
+exec "$PY" -m ga_cli "$@"

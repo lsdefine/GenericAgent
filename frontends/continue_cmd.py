@@ -8,6 +8,11 @@ _LOG_GLOB = os.path.join(_LOG_DIR, 'model_responses_*.txt')
 _BLOCK_RE = re.compile(r'^=== (Prompt|Response) ===.*?\n(.*?)(?=^=== (?:Prompt|Response) ===|\Z)',
                        re.DOTALL | re.MULTILINE)
 _SUMMARY_RE = re.compile(r'<summary>\s*(.*?)\s*</summary>', re.DOTALL)
+_ROUND_HEADER_RE = re.compile(rb'^=== (Prompt|Response) ===', re.MULTILINE)
+_ROUNDS_CACHE_PATH = os.path.join(os.path.expanduser('~'), '.genericagent', 'continue_rounds_cache.json')
+_ROUNDS_CACHE_VERSION = 1
+_rounds_cache = None
+_rounds_cache_dirty = False
 
 def _rel_time(mtime):
     d = int(time.time() - mtime)
@@ -98,21 +103,197 @@ def _parse_native_history(pairs):
         history.append({'role': 'assistant', 'content': blocks})
     return history
 
+_PREVIEW_WIN = 32 * 1024
+
+# Content-grep budget for `/continue` search box: read at most this many bytes
+# per session (head window) so 17MB files don't stall the UI. Empirically the
+# user-typed prompt + first model reply + early summaries live in the first MB,
+# which is what users actually want to recall sessions by.
+_GREP_WIN = 1 * 1024 * 1024
+
+
+def file_contains_all(path, terms, max_bytes=_GREP_WIN):
+    """True iff every lowercase term in `terms` appears in the first
+    `max_bytes` of `path` (case-insensitive). Empty `terms` returns True so
+    callers can short-circuit. Reads as bytes + .lower() to avoid utf-8 cost
+    and stays within a fixed memory envelope regardless of file size.
+    """
+    if not terms:
+        return True
+    try:
+        with open(path, 'rb') as fh:
+            buf = fh.read(max_bytes)
+    except OSError:
+        return False
+    if not buf:
+        return False
+    hay = buf.lower()
+    for t in terms:
+        if t and t.encode('utf-8', errors='ignore') not in hay:
+            return False
+    return True
+
+
+def search_sessions(query, sessions, max_bytes=_GREP_WIN):
+    """Filter `sessions` ([(path, mtime, preview, n), ...]) by content grep.
+
+    `query` is whitespace-split into AND terms (case-insensitive). Each
+    session is kept iff its path/preview already match OR the first
+    `max_bytes` of its file contain every term. Order is preserved.
+    Empty/whitespace query returns the list as-is.
+    """
+    q = (query or '').strip().lower()
+    if not q:
+        return list(sessions or [])
+    terms = [t for t in q.split() if t]
+    if not terms:
+        return list(sessions or [])
+    out = []
+    for item in sessions or []:
+        path = item[0] if len(item) > 0 else ''
+        preview = item[2] if len(item) > 2 else ''
+        meta = (os.path.basename(path) + '\n' + (preview or '')).lower()
+        if all(t in meta for t in terms):
+            out.append(item)
+            continue
+        if file_contains_all(path, terms, max_bytes=max_bytes):
+            out.append(item)
+    return out
+
+
+def _preview_from_file(path):
+    """Cheap preview: last <summary> in tail window, else first user line in head window."""
+    try:
+        sz = os.path.getsize(path)
+        with open(path, 'rb') as fh:
+            if sz <= _PREVIEW_WIN * 2:
+                head = tail = fh.read()
+            else:
+                head = fh.read(_PREVIEW_WIN)
+                fh.seek(-_PREVIEW_WIN, 2); tail = fh.read()
+    except OSError: return ''
+    tail_s = tail.decode('utf-8', errors='replace')
+    m = _SUMMARY_RE.findall(tail_s)
+    if m: return m[-1].strip()
+    for line in head.decode('utf-8', errors='replace').splitlines():
+        s = line.strip()
+        if s and not s.startswith('===') and not s.startswith('###') and '<history>' not in s:
+            return s
+    return ''
+
+
+def _rounds_cache_key(path):
+    return os.path.normcase(os.path.abspath(path))
+
+
+def _load_rounds_cache():
+    """Load lazy mtime/size keyed round-count cache for /continue.
+
+    Cache is intentionally triggered only by list_sessions(): no TUI startup cost,
+    no logging-path coupling.  Missing/stale entries are recomputed on demand.
+    """
+    global _rounds_cache
+    if _rounds_cache is not None:
+        return _rounds_cache
+    _rounds_cache = {}
+    try:
+        with open(_ROUNDS_CACHE_PATH, encoding='utf-8') as fh:
+            data = json.load(fh)
+        if isinstance(data, dict) and data.get('version') == _ROUNDS_CACHE_VERSION:
+            items = data.get('items')
+            if isinstance(items, dict):
+                _rounds_cache = items
+    except Exception:
+        _rounds_cache = {}
+    return _rounds_cache
+
+
+def _save_rounds_cache(valid_keys=None):
+    global _rounds_cache_dirty
+    if not _rounds_cache_dirty or _rounds_cache is None:
+        return
+    try:
+        if valid_keys is not None:
+            keep = set(valid_keys)
+            for k in list(_rounds_cache.keys()):
+                if k not in keep:
+                    _rounds_cache.pop(k, None)
+        os.makedirs(os.path.dirname(_ROUNDS_CACHE_PATH), exist_ok=True)
+        tmp = _ROUNDS_CACHE_PATH + '.tmp'
+        data = {'version': _ROUNDS_CACHE_VERSION, 'items': _rounds_cache}
+        with open(tmp, 'w', encoding='utf-8') as fh:
+            json.dump(data, fh, ensure_ascii=False, separators=(',', ':'))
+        os.replace(tmp, _ROUNDS_CACHE_PATH)
+        _rounds_cache_dirty = False
+    except Exception:
+        # Cache is a performance hint only; never break /continue on cache I/O.
+        pass
+
+
+def _count_complete_rounds_from_file(path):
+    """Count completed Prompt→Response pairs using only block headers.
+
+    Counting Prompt headers alone overcounts an in-flight/incomplete last round.
+    Header-pair counting matched `_pairs()` on sampled real logs while avoiding
+    expensive UTF-8 decode / body regex parsing.
+    """
+    try:
+        with open(path, 'rb') as fh:
+            data = fh.read()
+    except OSError:
+        return 0
+    pending = False
+    rounds = 0
+    for m in _ROUND_HEADER_RE.finditer(data):
+        if m.group(1) == b'Prompt':
+            pending = True
+        elif pending:
+            rounds += 1
+            pending = False
+    return rounds
+
+
+def _rounds_for_file(path, st):
+    global _rounds_cache_dirty
+    cache = _load_rounds_cache()
+    key = _rounds_cache_key(path)
+    size = int(getattr(st, 'st_size', 0))
+    mtime_ns = int(getattr(st, 'st_mtime_ns', int(getattr(st, 'st_mtime', 0) * 1_000_000_000)))
+    ent = cache.get(key)
+    if isinstance(ent, dict) and ent.get('size') == size and ent.get('mtime_ns') == mtime_ns:
+        try:
+            return int(ent.get('rounds', 0)), key
+        except Exception:
+            pass
+    n = _count_complete_rounds_from_file(path)
+    cache[key] = {'size': size, 'mtime_ns': mtime_ns, 'rounds': int(n)}
+    _rounds_cache_dirty = True
+    return n, key
+
+
 def list_sessions(exclude_pid=None):
-    """Newest-first list of (path, mtime, first_user_text, n_rounds)."""
+    """Newest-first list of (path, mtime, preview_text, n_rounds). Preview uses head/tail window only."""
     files = glob.glob(_LOG_GLOB)
     if exclude_pid is not None:
         tag = f'model_responses_{exclude_pid}.txt'
         files = [f for f in files if not f.endswith(tag)]
     out = []
+    valid_keys = []
     for f in files:
         try:
-            with open(f, encoding='utf-8', errors='replace') as fh:
-                content = fh.read()
-        except Exception: continue
-        pairs = _pairs(content)
-        if not pairs: continue
-        out.append((f, os.path.getmtime(f), _preview_text(pairs), len(pairs)))
+            st = os.stat(f)
+            mtime, sz = st.st_mtime, st.st_size
+        except OSError:
+            continue
+        if sz < 32:
+            continue
+        preview = _preview_from_file(f)
+        if not preview:
+            continue
+        rounds, key = _rounds_for_file(f, st)
+        valid_keys.append(key)
+        out.append((f, mtime, preview, rounds))
+    _save_rounds_cache(valid_keys)
     out.sort(key=lambda x: x[1], reverse=True)
     return out
 _MD_ESCAPE_RE = re.compile(r'([\\`*_\[\]])')

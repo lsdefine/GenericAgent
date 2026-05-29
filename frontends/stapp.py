@@ -94,6 +94,9 @@ def render_sidebar():
         st.toast("Desktop pet started")
     
     if LANG == 'zh':
+        if st.button('🎯 给我找点事做'):
+            st.session_state['_inject_prompt'] = '按照自主行动的规划部分，充分分析我的情况，给我生成一批TODO，务必让我感兴趣'
+            st.rerun(scope="app")
         st.divider()
         if st.button("开始空闲自主行动"):
             st.session_state.last_reply_time = int(time.time()) - 1800
@@ -152,11 +155,7 @@ def render_segments(segments, suffix=''):
         if seg['type'] == 'fold':
             with st.expander(seg['title'], expanded=False): st.markdown(seg['content'])
         else:
-            # Strip <summary> meta tags from text segments — folded turns already
-            # promote them to expander titles; for the first/last segments
-            # they'd otherwise leak into the chat as raw text (esp. after /continue
-            # restores a multi-turn body).
-            st.markdown(_SUMMARY_TAG_RE.sub('', seg['content']) + suffix)
+            st.markdown(seg['content'] + suffix)
 
 def agent_backend_stream(prompt=None):
     """Drain main task display_queue.
@@ -236,14 +235,17 @@ except (ImportError, AttributeError):
     from streamlit.components.v1 import html as _embed_html  # ≤1.55
 _js_scroll_fix = (
     "!function(){var p=window.parent;if(p.__sfx2)return;p.__sfx2=1;var d=p.document;"
-    "function f(){var m=d.querySelector('section.main');if(!m)return;"
-    "var s=m.scrollTop;m.style.minHeight=m.scrollHeight+1+'px';void m.offsetHeight;"
-    "m.style.minHeight='';void m.offsetHeight;m.scrollTop=s}"
+    "var pending=0;"
+    "function f(){pending=0;var m=d.querySelector('section.main');if(!m)return;"
+    "var s=m.scrollTop,h=m.scrollHeight;"
+    "m.style.minHeight=h+1+'px';void m.offsetHeight;"
+    "m.style.minHeight='';void m.offsetHeight;"
+    "m.scrollTop=s}"
+    "function schedule(){if(!pending){pending=1;requestAnimationFrame(f)}}"
     "d.addEventListener('transitionend',function(e){"
-    "e.target.closest&&e.target.closest('details')&&setTimeout(f,60)},!0);"
-    "new MutationObserver(function(){setTimeout(f,80)})"
-    ".observe(d.body,{subtree:1,attributes:1,attributeFilter:['open']});"
-    "setInterval(f,5000)}()"
+    "e.target.closest&&e.target.closest('details')&&setTimeout(schedule,60)},!0);"
+    "new MutationObserver(function(){setTimeout(schedule,80)})"
+    ".observe(d.body,{subtree:1,attributes:1,attributeFilter:['open']})}()"
 )
 # IME composition fix (macOS only) - prevents Enter from submitting during CJK input
 _js_ime_fix = ("" if os.name == 'nt' else
@@ -258,7 +260,9 @@ _js_ime_fix = ("" if os.name == 'nt' else
     "f();new MutationObserver(f).observe(d.body,{childList:1,subtree:1})}()")
 _embed_html(f'<script>{_js_scroll_fix};{_js_ime_fix}</script>', height=0)
 
-if prompt := st.chat_input("any task?"):
+_injected = st.session_state.pop('_inject_prompt', None)
+prompt = st.chat_input("any task?") or _injected
+if prompt:
     ts = time.strftime("%Y-%m-%d %H:%M:%S")
     cmd = (prompt or "").strip()
     def _reset_and_rerun():

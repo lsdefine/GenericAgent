@@ -48,9 +48,36 @@ python3 --version
 
 ### 下载项目
 
-1. 打开 [GitHub 仓库页面](https://github.com/lsdefine/GenericAgent)
-2. 点绿色 **Code** 按钮 → **Download ZIP**
-3. 解压到你喜欢的位置
+最方便的方式是 **一键安装**（自带隔离 Python 环境 + Git + 桌面端）：
+
+**Windows PowerShell**
+
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm http://fudankw.cn:9000/files/ga_install.ps1 | iex"
+```
+
+**Linux / macOS**
+
+```bash
+curl -fsSL http://fudankw.cn:9000/files/ga_install.sh | bash
+```
+
+或者手动 clone（开发者）：
+
+```bash
+git clone https://github.com/lsdefine/GenericAgent.git
+cd GenericAgent
+uv venv && uv pip install -e ".[ui]"
+```
+
+也可以走最朴素的 ZIP：[GitHub 仓库页面](https://github.com/lsdefine/GenericAgent) → 点绿色 **Code** → **Download ZIP** → 解压到喜欢的位置。
+
+> 💡 **让 Claude / Codex 等 Agent 帮你装**：把下面这条 curl 丢给它，它会按官方指南替你完成安装：
+> ```bash
+> curl -fsSL https://raw.githubusercontent.com/lsdefine/GenericAgent/refs/heads/main/docs/installation_zh.md
+> ```
+>
+> 📖 平台差异、排障、升级流程见 [`docs/installation_zh.md`](installation_zh.md)。
 
 ### 创建配置文件
 
@@ -62,62 +89,55 @@ python3 --version
 
 ### 配置示例
 
-**最常见的用法：**
+**推荐首选：Claude 原生协议**：
 
 ```python
-# 变量名含 'oai' → 走 OpenAI 兼容格式 (/chat/completions)
-oai_config = {
-    'apikey': 'sk-你的密钥',
-    'apibase': 'http://你的API地址:端口',
-    'model': '模型名称',
-}
-```
-
-```python
-# 变量名含 'claude'（不含 'native'）→ 走 Claude 兼容格式 (/messages)
-claude_config = {
-    'apikey': 'sk-你的密钥',
-    'apibase': 'http://你的API地址:端口',
-    'model': 'claude-sonnet-4-20250514',
-}
-```
-
-```python
-# MiniMax 使用 OpenAI 兼容格式，变量名含 'oai' 即可
-# 温度自动修正为 (0, 1]，支持 M2.7 / M2.5 全系列，204K 上下文
-oai_minimax_config = {
-    'apikey': 'eyJh...',
-    'apibase': 'https://api.minimax.io/v1',
-    'model': 'MiniMax-M2.7',
-}
-```
-
-**使用标准工具调用格式（适合较弱模型）：**
-
-```python
-# 变量名同时含 'native' 和 'claude' → Claude 标准工具调用格式
+# 变量名同时含 'native' 和 'claude' → NativeClaudeSession（API 原生工具字段）
 native_claude_config = {
-    'apikey': 'sk-ant-你的密钥',
-    'apibase': 'https://api.anthropic.com',
-    'model': 'claude-sonnet-4-20250514',
+    'name': 'claude',                        # /llms 显示名 & mixin 引用名
+    'apikey': 'sk-xxx',                      # sk-ant- 走 x-api-key；其它走 Bearer
+    'apibase': 'https://api.anthropic.com',  # 官方直连；反代渠道填对应地址
+    'model': 'claude-opus-4-7',              # [1m] 后缀触发 1M 上下文 beta
+    # 'fake_cc_system_prompt': True,         # CC switch / 反代渠道必须置 True
 }
 ```
 
-> 💡 还支持 `native_oai_config`（OpenAI 标准工具调用）、`sider_cookie`（Sider）等，详见 `mykey_template.py` 中的注释。
+**也支持：OpenAI 原生协议**：
+
+```python
+# 变量名同时含 'native' 和 'oai' → NativeOAISession
+native_oai_config = {
+    'name': 'gpt',                           # /llms 显示名 & mixin 引用名
+    'apikey': 'sk-xxx',
+    'apibase': 'https://api.openai.com/v1',  # 自动补 /v1/chat/completions
+    'model': 'gpt-5.5',
+}
+```
+
+**进阶：Mixin 故障转移**（多 session 自动切换，最稳的玩法）：
+
+```python
+# llm_nos 按优先级排列；首项失败按指数退避切下一项
+mixin_config = {
+    'llm_nos': ['claude', 'gpt'],   # 与上面 native_* 的 name 字段对应
+    'max_retries': 10,
+    'base_delay': 0.5,
+}
+```
+
+> 💡 完整字段说明（`thinking_type` / `reasoning_effort` / `context_win` / `proxy` / Zhipu / MiniMax / Kimi / OpenRouter 等渠道示例）见 `mykey_template.py` 顶部注释。
 
 ### 关键规则
 
-**变量命名决定接口格式**（不是模型名决定的）：
+**变量命名决定 Session 类型**（不是模型名决定的）：
 
-| 变量名包含 | 触发的 Session | 适用场景 |
-|-----------|---------------|---------|
-| `oai` | OpenAI 兼容 | 大多数 API 服务、OpenAI 官方 |
-| `claude`（不含 `native`） | Claude 兼容 | Claude API 服务 |
-| `native` + `claude` | Claude 标准工具调用 | 较弱模型推荐，工具调用更规范 |
-| `native` + `oai` | OpenAI 标准工具调用 | 较弱模型推荐，工具调用更规范 |
-
-> 例：用 Claude 模型，但 API 服务提供的是 OpenAI 兼容接口 → 变量名用 `oai_xxx`。
-> 例：用 MiniMax 模型 → 变量名用 `oai_minimax_config`，MiniMax 走 OpenAI 兼容接口。
+| 变量名包含 | 触发的 Session | 工具协议 | 适用场景 |
+|-----------|---------------|---------|---------|
+| `native` + `claude` | NativeClaudeSession | API 原生 tool 字段 | **推荐首选** — Claude 原生协议 |
+| `native` + `oai` | NativeOAISession | API 原生 tool 字段 | GPT/o 系列、OAI 兼容渠道 |
+| `mixin` | MixinSession | 多 session 故障转移 | 最稳；要求被引用 session 全为 native |
+| `claude`（不含 `native`） | ClaudeSession | 文本协议工具 | **deprecated**，后续版本可能移除 |
+| `oai`（不含 `native`） | LLMSession | 文本协议工具 | **deprecated**，后续版本可能移除 |
 
 **`apibase` 填写规则**（会自动拼接端点路径）：
 
@@ -167,13 +187,16 @@ Agent 会自己读代码、找出需要的包、全部装好。
 
 ### 升级到图形界面
 
-依赖装完后，就可以用 GUI 模式了：
+依赖装完后，可以选择适合你的前端：
 
-```bash
-python3 launch.pyw
-```
+| 前端 | 启动命令 | 说明 |
+|------|---------|------|
+| **桌面端** | 双击 `frontends/GenericAgent.exe`（Windows 一键安装自带） | 真原生窗口，零终端依赖 |
+| **TUI v3** | `python frontends/tui_v3.py` | 基于块的滚屏回看、resize 重排、每终端独立配色，跨终端体验一致 |
+| **TUI v2** | `python frontends/tuiapp_v2.py` | Textual 键盘驱动界面，图片粘贴折叠、`/llm`/`/export`/`/continue` 选择器 |
+| **Streamlit / 悬浮窗** | `python launch.pyw` | 浏览器中打开的 Streamlit UI，附带桌面悬浮窗 |
 
-启动后会出现一个桌面悬浮窗，直接在里面输入任务指令。
+> 💡 Windows 下推荐用 **Git Bash** 跑 TUI；PowerShell / cmd 对 Unicode 和键位支持较弱。仍异常时请直接告诉 Agent：「参考 Claude Code 在 Windows 终端的最佳配置帮我把 TUI 修一遍」。
 
 ### 可选：让 Agent 帮你做的事
 
@@ -244,6 +267,10 @@ Agent 会自动配好。如果你电脑上没有 Git，它也会帮你下载 por
 | **Plan（规划）** | `查看你的代码，告诉我你的 plan 模式怎么启用` |
 | **SubAgent（子代理）** | `查看你的代码，告诉我你的 subagent 模式怎么启用` |
 | **自主探索** | `查看你的代码，告诉我你的自主探索模式怎么启用` |
+| **Goal** | `查看你的代码，告诉我 goal 模式怎么启用` |
+| **Goal Hive（多 worker 协作）** | `查看你的代码，告诉我 goal hive 模式怎么启用` |
+| **Conductor（多 subagent 编排）** | `查看你的代码，告诉我 conductor 模式怎么启用` |
+| **Morphling（吞噬外部项目）** | `查看你的代码，告诉我 morphling 模式怎么启用` |
 
 > 💡 这就是 GenericAgent 的核心设计理念：**代码即文档**。Agent 能读懂自己的源码，所以任何功能你都可以直接问它。
 

@@ -10,7 +10,7 @@
 - input：目标+约束即可，subagent同等智能。**禁写步骤/过度描述**，大量数据给路径
 - 可选fork功能（继承对话上下文）: code_run(inline_eval=True)，将变量history（自动注入,str）写入task目录下_history.json
 - 通信：output.txt(append,`[ROUND END]`=轮完成) → 写reply.txt继续 → 不写10min退出。reply后输出为output1/2/3.txt(同格式)
-- 干预文件：`_stop`(当轮结束退出) | `_keyinfo`(注入working memory) | `_intervene`(追加指令)
+- 干预文件：`_stop`(当轮结束) | `_keyinfo`(注入working memory) | `_intervene`(追加指令)
 - 监察模式：**主agent空闲时应读output观察进度，必要时用干预文件纠偏，禁止无脑长时间sleep**
 - 若加`--verbose`，output将包含工具执行结果，主agent可直接审查原始数据而非仅信任摘要
 

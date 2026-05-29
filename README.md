@@ -351,9 +351,13 @@ Baselines across these dimensions include **Claude Code**, **OpenAI CodeX**, and
 
 ## 📅 Roadmap & News
 
+- **2026-05-23** — 🆕 **TUI v3 released** (`frontends/tui_v3.py`). Block-based scrollback with proper resize reflow, per-terminal color profile for cross-terminal parity, and feature parity with v2.
+- **2026-05-18** — 🆕 **Morphling mode**. Project-level skill absorption — extract goal + tests from any external repo, then decide per component: call, rewrite, or discard. See `memory/morphling_sop.md`.
+- **2026-05-17** — 🆕 **Goal Hive mode**. Multi-worker cooperative Goal mode — BBS-coordinated master/workers running long-horizon objectives in parallel. See `memory/goal_hive_sop.md`.
 - **2026-05-15** — 🖥️ **Desktop GUI released**. One-line installs ship a ready-to-run desktop app (`frontends/GenericAgent.exe`). Developers launch via `python launch.pyw`.
 - **2026-05-14** — 🆕 **Conductor sub-agent orchestration**. Spawn, supervise, and auto-clean parallel sub-agents; first-class delegation primitives complementing `/btw` side-questions.
 - **2026-05-12** — 🆕 **TUI v2 released** (`frontends/tuiapp_v2.py`). Refined Textual frontend with image-paste folding, file paste, block-delete, Ctrl+C copy, history navigation, and `/llm` / `/export` / `/continue` pickers.
+- **2026-05-08** — 🆕 **Goal mode** (`reflect/goal_mode.py`). Time-budget-driven self-driven loop — "keep optimizing X for N hours" with no premature delivery.
 - **2026-04-21** — 📄 [**Technical Report on arXiv**](https://arxiv.org/abs/2604.17091) — *GenericAgent: A Token-Efficient Self-Evolving LLM Agent via Contextual Information Density Maximization*.
 - **2026-04-11** — Introduced **L4 session archive memory** and scheduler cron integration.
 - **2026-03-23** — Personal WeChat supported as a bot frontend.
@@ -388,6 +392,7 @@ Thanks to the **LinuxDo** community for the support!
 
 - [chilishark27/ga-manager](https://github.com/chilishark27/ga-manager)
 - [wangjc683/galley](https://github.com/wangjc683/galley)
+- [FroStorM/A3Agent](https://github.com/FroStorM/A3Agent/tree/workbench)
 
 ---
 
@@ -720,9 +725,13 @@ GenericAgent 通过 **分层记忆 × 最小工具集 × 自主执行循环** �
 
 ## 📅 路线图与最新动态
 
+- **2026-05-23** — 🆕 **TUI v3 正式发布**（`frontends/tui_v3.py`）。基于块的滚屏回看 + 正确的 resize 重排，每终端独立配色保证跨终端一致，并与 v2 达成功能对齐。
+- **2026-05-18** — 🆕 **Morphling 模式**。项目级能力吞噬 —— 从任意外部仓库抽取目标与测例后，对每个核心组件分别决定调用、重写或舍弃。详见 `memory/morphling_sop.md`。
+- **2026-05-17** — 🆕 **Goal Hive 模式**。多 worker 协作版 Goal —— Master/Worker 通过 BBS 协同推进长程目标。详见 `memory/goal_hive_sop.md`。
 - **2026-05-15** — 🖥️ **桌面 GUI 发布**。一键安装会自带可直接运行的桌面端（`frontends/GenericAgent.exe`），开发者也可用 `python launch.pyw` 启动。
 - **2026-05-14** — 🆕 **Conductor 子 Agent 编排**。派发、监督、自动清理并行子 Agent；与 `/btw` 旁路子 Agent 互补，提供一等公民级的任务委派原语。
 - **2026-05-12** — 🆕 **TUI v2 正式发布**（`frontends/tuiapp_v2.py`）。重做视觉风格的 Textual 前端，支持图片粘贴折叠、文件粘贴、块删除、Ctrl+C 复制、历史导航，以及 `/llm` / `/export` / `/continue` 选择器。
+- **2026-05-08** — 🆕 **Goal 模式**（`reflect/goal_mode.py`）。时间预算驱动的自驱循环 —— "持续优化 X N 小时"，预算没到不准提前交付。
 - **2026-04-21** — 📄 [**技术报告已发布至 arXiv**](https://arxiv.org/abs/2604.17091) — *GenericAgent: A Token-Efficient Self-Evolving LLM Agent via Contextual Information Density Maximization*。
 - **2026-04-11** — 引入 **L4 会话归档记忆**，并接入 scheduler cron 调度。
 - **2026-03-23** — 支持个人微信接入作为 Bot 前端。
@@ -757,6 +766,7 @@ GenericAgent 通过 **分层记忆 × 最小工具集 × 自主执行循环** �
 
 - [chilishark27/ga-manager](https://github.com/chilishark27/ga-manager)
 - [wangjc683/galley](https://github.com/wangjc683/galley)
+- [FroStorM/A3Agent](https://github.com/FroStorM/A3Agent/tree/workbench)
 
 ---
 

@@ -23,6 +23,11 @@ ui = [
     "streamlit>=1.28",
     "pywebview>=4.0",
     "textual>=0.70",
+    # tui_v3 (scrollback-first TUI) — prompt_toolkit replaces textual; rich is
+    # now a direct dependency (was transitive via textual in tui_v2).
+    "prompt_toolkit>=3.0,<4",
+    "rich>=13.0",
+    "pillow>=9.0",
 ]
 all-frontends = [
     "python-telegram-bot>=20.0",

@@ -204,7 +204,7 @@ uv pip install -e ".[ui]"
 > **重要：用 `curl` 获取本文，不要依赖会摘要网页的读取器。** 摘要常会丢掉环境变量、命令引号和安全规则。
 >
 > ```bash
-> curl -fsSL https://raw.githubusercontent.com/lsdefine/GenericAgent/refs/heads/main/installation.zh.md
+> curl -fsSL https://raw.githubusercontent.com/lsdefine/GenericAgent/refs/heads/main/docs/installation.md
 > ```
 
 你正在替人类用户安装 **GenericAgent**。请直接执行、逐步验证；除非用户明确授权，不要做破坏性清理。

@@ -26,6 +26,7 @@ from chatapp_common import (
 )
 from continue_cmd import handle_frontend_command, reset_conversation
 from btw_cmd import handle_frontend_command as handle_btw_frontend_command
+from review_cmd import handle as handle_review_command
 from llmcore import mykeys
 
 agent = GeneraticAgent()
@@ -868,6 +869,28 @@ async def _reply_command_text(message, text):
             print(f"[TG command markdown fallback] {type(exc).__name__}: {exc}", flush=True)
             await message.reply_text(segment)
 
+def _review_command_body(cmd):
+    cmd = (cmd or "").strip()
+    if cmd == "/review":
+        return ""
+    if cmd.startswith("/review "):
+        return cmd[len("/review"):].strip()
+    return ""
+
+async def _handle_review_command(update, ctx, cmd):
+    dq = Q.Queue()
+    prompt = handle_review_command(agent, _review_command_body(cmd), dq)
+    if not prompt:
+        try:
+            item = dq.get_nowait()
+            return await _reply_command_text(update.message, item.get("done", ""))
+        except Q.Empty:
+            return await _reply_command_text(update.message, "(review 无输出)")
+    _cancel_stream_task(ctx)
+    task_dq = agent.put_task(prompt, source="telegram")
+    task = asyncio.create_task(_stream(task_dq, update.message))
+    ctx.user_data['stream_task'] = task
+
 async def handle_msg(update, ctx):
     uid = update.effective_user.id
     if ALLOWED and uid not in ALLOWED:
@@ -1051,6 +1074,8 @@ async def handle_command(update, ctx):
     if op == '/btw':
         answer = await asyncio.to_thread(handle_btw_frontend_command, agent, cmd)
         return await _reply_command_text(update.message, answer)
+    if op == '/review':
+        return await _handle_review_command(update, ctx, cmd)
     if op == '/new':
         _cancel_stream_task(ctx)
         return await update.message.reply_text(reset_conversation(agent))

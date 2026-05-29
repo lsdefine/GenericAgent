@@ -1,9 +1,11 @@
-"""Opt-in Langfuse tracing. Self-activates on import if langfuse_config exists in mykey.
+"""Langfuse tracing via hook system. Self-activates on import if langfuse_config exists in mykey.
 
-Hooks only via monkey-patch so core files stay untouched:
-- agent_loop.agent_runner_loop        -> outer agent trace (parent of all below)
-- llmcore._write_llm_log              -> generation span (Prompt=start, Response=end)
-- BaseHandler.tool_before/after       -> tool span
+Replaces old monkey-patch approach with hooks on:
+  - agent_before / agent_after  -> agent trace
+  - llm_before / llm_after    -> generation span
+  - tool_before / tool_after  -> tool span
+
+Usage tracking (SSE parser wrapping) stays as internal llmcore patch.
 """
 import threading, sys
 
@@ -16,21 +18,82 @@ except Exception:
     _lf = None
 
 if _lf:
-    import llmcore, agent_loop
+    import plugins.hooks as hooks, llmcore
     _tls = threading.local()
 
-    _orig_log = llmcore._write_llm_log
-    def _patched_log(label, content, log_path=None):
+    # ── Agent trace ──────────────────────────────────────────────
+
+    @hooks.register('agent_before')
+    def _on_agent_before(ctx):
         try:
-            if label == 'Prompt':
-                _tls.gen = _lf.start_observation(name='llm.chat', as_type='generation', input=content[:20000])
-                _tls.usage = None
-            elif label == 'Response' and getattr(_tls, 'gen', None) is not None:
-                _tls.gen.update(output=content[:20000], usage_details=getattr(_tls, 'usage', None))
-                _tls.gen.end(); _tls.gen = None
-        except Exception: pass
-        return _orig_log(label, content, log_path)
-    llmcore._write_llm_log = _patched_log
+            _tls.trace_obs = _lf.start_observation(
+                name='agent.task', as_type='agent',
+                input={'user_input': ctx.get('user_input', '')})
+        except Exception:
+            _tls.trace_obs = None
+
+    @hooks.register('agent_after')
+    def _on_agent_after(ctx):
+        try:
+            obs = getattr(_tls, 'trace_obs', None)
+            if obs:
+                obs.update(output=ctx.get('exit_reason'))
+                obs.end()
+                _tls.trace_obs = None
+            _lf.flush()
+        except Exception:
+            pass
+
+    # ── LLM generation span (replaces _write_llm_log patch) ─────
+
+    @hooks.register('llm_before')
+    def _on_llm_before(ctx):
+        try:
+            _tls.gen = _lf.start_observation(
+                name='llm.chat', as_type='generation',
+                input=str(ctx.get('messages', ''))[:20000])
+            _tls._usage = None
+        except Exception:
+            _tls.gen = None
+
+    @hooks.register('llm_after')
+    def _on_llm_after(ctx):
+        try:
+            gen = getattr(_tls, 'gen', None)
+            if gen:
+                gen.update(output=str(ctx.get('response', ''))[:20000],
+                           usage_details=getattr(_tls, '_usage', None))
+                gen.end()
+                _tls.gen = None
+        except Exception:
+            pass
+
+    # ── Tool spans (replaces tool_before/after_callback patches) ─
+
+    @hooks.register('tool_before')
+    def _on_tool_before(ctx):
+        try:
+            name = ctx.get('tool_name', '?')
+            args = {k: v for k, v in (ctx.get('args') or {}).items() if not k.startswith('_')}
+            if not hasattr(_tls, 'tstack'): _tls.tstack = []
+            _tls.tstack.append(_lf.start_observation(name=name, as_type='tool', input=args))
+        except Exception:
+            pass
+
+    @hooks.register('tool_after')
+    def _on_tool_after(ctx):
+        try:
+            stack = getattr(_tls, 'tstack', [])
+            if stack:
+                sp = stack.pop()
+                ret = ctx.get('ret')
+                out = {'data': ret.data, 'next_prompt': ret.next_prompt,
+                       'should_exit': ret.should_exit} if ret else None
+                sp.update(output=out); sp.end()
+        except Exception:
+            pass
+
+    # ── Usage tracking: tee SSE data for token counts ───────────
 
     def _extract_usage(buf):
         u = {}
@@ -72,51 +135,12 @@ if _lf:
                 for ln in resp_lines:
                     buf.append(ln); yield ln
             ret = yield from orig(tee(), *a, **kw)
-            try: _tls.usage = _extract_usage(buf)
-            except Exception: pass
+            try:
+                _tls._usage = _extract_usage(buf)
+            except Exception:
+                pass
             return ret
         return wrapped
+
     llmcore._parse_claude_sse = _wrap_parser(llmcore._parse_claude_sse)
     llmcore._parse_openai_sse = _wrap_parser(llmcore._parse_openai_sse)
-
-    _orig_before = agent_loop.BaseHandler.tool_before_callback
-    _orig_after = agent_loop.BaseHandler.tool_after_callback
-
-    def _patched_before(self, tool_name, args, response):
-        try:
-            if not hasattr(_tls, 'tstack'): _tls.tstack = []
-            a = {k: v for k, v in args.items() if k != '_index'}
-            _tls.tstack.append(_lf.start_observation(name=tool_name, as_type='tool', input=a))
-        except Exception: pass
-        return _orig_before(self, tool_name, args, response)
-
-    def _patched_after(self, tool_name, args, response, ret):
-        try:
-            if getattr(_tls, 'tstack', None):
-                sp = _tls.tstack.pop()
-                out = {'data': ret.data, 'next_prompt': ret.next_prompt, 'should_exit': ret.should_exit} if ret else None
-                sp.update(output=out); sp.end()
-        except Exception: pass
-        return _orig_after(self, tool_name, args, response, ret)
-
-    agent_loop.BaseHandler.tool_before_callback = _patched_before
-    agent_loop.BaseHandler.tool_after_callback = _patched_after
-
-    _orig_loop = agent_loop.agent_runner_loop
-    def _patched_loop(client, system_prompt, user_input, handler, tools_schema, *a, **kw):
-        try: cm = _lf.start_as_current_observation(name='agent.task', as_type='agent', input={'user_input': user_input})
-        except Exception: cm = None
-        if cm is None:
-            ret = yield from _orig_loop(client, system_prompt, user_input, handler, tools_schema, *a, **kw); return ret
-        with cm as sp:
-            ret = yield from _orig_loop(client, system_prompt, user_input, handler, tools_schema, *a, **kw)
-            try: sp.update(output=ret)
-            except Exception: pass
-        try: _lf.flush()
-        except Exception: pass
-        return ret
-    agent_loop.agent_runner_loop = _patched_loop
-    for _m in list(sys.modules.values()):
-        if _m and getattr(_m, 'agent_runner_loop', None) is _orig_loop:
-            try: setattr(_m, 'agent_runner_loop', _patched_loop)
-            except Exception: pass

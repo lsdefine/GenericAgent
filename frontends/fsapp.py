@@ -1,18 +1,77 @@
-import argparse, asyncio, json, os, queue as Q, re, sys, threading, time, uuid
+import argparse, asyncio, importlib.util, json, os, queue as Q, re, sys, threading, time, uuid
+from pathlib import Path
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 os.chdir(PROJECT_ROOT)
-from path_utils import workspace_root_dir, workspace_config_dir, resolve_mykey_path
 
 import traceback
 import lark_oapi as lark
 from lark_oapi.api.im.v1 import *
 
 
+def _ensure_dir(path):
+    path = Path(path)
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _workspace_root_dir():
+    root = os.environ.get("GA_WORKSPACE_ROOT")
+    if root:
+        return _ensure_dir(Path(root).expanduser().resolve())
+    return _ensure_dir(Path(PROJECT_ROOT).resolve())
+
+
+def _workspace_config_dir(root=None):
+    base = Path(root).expanduser().resolve() if root else _workspace_root_dir()
+    if base.name == "ga_config":
+        return _ensure_dir(base)
+    return _ensure_dir(base / "ga_config")
+
+
+def _load_dict_config(path):
+    path = Path(path)
+    if not path.exists():
+        return None
+    try:
+        if path.suffix == ".py":
+            mod_name = f"_fs_mykey_{uuid.uuid4().hex}"
+            spec = importlib.util.spec_from_file_location(mod_name, path)
+            if not spec or not spec.loader:
+                return None
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            data = {k: v for k, v in vars(module).items() if not k.startswith("_")}
+        else:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        return data if isinstance(data, dict) else None
+    except Exception as e:
+        print(f"[ERROR] load config failed {path}: {e}")
+        return None
+
+
+def _resolve_mykey_path():
+    workspace_root = _workspace_root_dir()
+    config_root = _workspace_config_dir(workspace_root)
+    candidates = [
+        config_root / "mykey.json",
+        config_root / "mykey.py",
+        workspace_root / "mykey.json",
+        workspace_root / "mykey.py",
+        Path(PROJECT_ROOT) / "mykey.json",
+        Path(PROJECT_ROOT) / "mykey.py",
+    ]
+    for candidate in candidates:
+        if _load_dict_config(candidate):
+            return candidate
+    return candidates[0]
+
+
 def _ensure_runtime_paths():
-    workspace_root = workspace_root_dir()
-    config_root = workspace_config_dir(workspace_root)
+    workspace_root = _workspace_root_dir()
+    config_root = _workspace_config_dir(workspace_root)
     os.environ.setdefault("GA_WORKSPACE_ROOT", str(workspace_root))
     os.environ.setdefault("GA_USER_DATA_DIR", str(config_root))
     return str(workspace_root), str(config_root)
@@ -271,23 +330,11 @@ agent_lock = threading.Lock()
 
 
 def _load_config():
-    path = resolve_mykey_path(os.environ.get("GA_WORKSPACE_ROOT"), prefer_existing=True)
-    if not path or not os.path.exists(path):
+    path = _resolve_mykey_path()
+    if not path or not path.exists():
         return {}, str(path or "")
     try:
-        if str(path).endswith(".py"):
-            import importlib.util
-            import uuid
-            mod_name = f"_fs_mykey_{uuid.uuid4().hex}"
-            spec = importlib.util.spec_from_file_location(mod_name, path)
-            if not spec or not spec.loader:
-                return {}, str(path)
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            data = {k: v for k, v in vars(module).items() if not k.startswith("_")}
-        else:
-            with open(path, encoding="utf-8") as f:
-                data = json.load(f)
+        data = _load_dict_config(path)
         return data if isinstance(data, dict) else {}, str(path)
     except Exception as e:
         print(f"[ERROR] load mykey failed {path}: {e}")

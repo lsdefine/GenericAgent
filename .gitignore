@@ -48,6 +48,7 @@ memory/*
 !memory/L4_raw_sessions/
 memory/L4_raw_sessions/*
 !memory/L4_raw_sessions/compress_session.py
+!memory/L4_raw_sessions/salient_mining_sop.md
 
 # ljqCtrl related tools
 !memory/ljqCtrl.py
@@ -64,7 +65,10 @@ memory/L4_raw_sessions/*
 !memory/vue3_component_sop.md
 
 # Subagent SOP
-!memory/subagent_sop.md
+!memory/subagent.md
+
+# Incubator SOP
+!memory/incubator_sop.md
 
 # Supervisor SOP
 !memory/supervisor_sop.md
@@ -77,6 +81,7 @@ memory/L4_raw_sessions/*
 
 # Goal Hive Mode SOP
 !memory/goal_hive_sop.md
+!memory/goal_hive_master_duty.md
 
 # Morphling SOP
 !memory/morphling_sop.md

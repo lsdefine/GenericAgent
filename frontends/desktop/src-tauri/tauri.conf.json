@@ -18,7 +18,7 @@
         "height": 800,
         "resizable": true,
         "visible": false,
-        "url": "http://127.0.0.1:14168/"
+        "url": "loading.html"
       },
       {
         "title": "GenericAgent — Setup",

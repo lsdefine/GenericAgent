@@ -203,32 +203,32 @@ fn start_bridge_with_config(app_handle: tauri::AppHandle, python_path: String, p
     std::fs::write(&path, serde_json::to_string_pretty(&obj).unwrap())
         .map_err(|e| format!("Failed to write settings: {}", e))?;
 
-    // Start bridge
-    let py = PathBuf::from(&python_path);
-    let dir = PathBuf::from(&project_dir);
-    let script = dir.join("frontends").join("desktop_bridge.py");
-    if !script.exists() {
-        return Err(format!("desktop_bridge.py not found at {:?}", script));
-    }
+    // Start bridge only if it is not already accepting connections.
+    if !is_bridge_running() {
+        let py = PathBuf::from(&python_path);
+        let dir = PathBuf::from(&project_dir);
+        let script = dir.join("frontends").join("desktop_bridge.py");
+        if !script.exists() {
+            return Err(format!("desktop_bridge.py not found at {:?}", script));
+        }
 
-    let mut cmd = Command::new(&py);
-    cmd.arg(&script).current_dir(&dir);
-    #[cfg(windows)]
-    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-    let child = cmd.spawn().map_err(|e| format!("Failed to spawn: {}", e))?;
-    *BRIDGE_PROCESS.lock().unwrap() = Some(child);
+        let mut cmd = Command::new(&py);
+        cmd.arg(&script).current_dir(&dir);
+        #[cfg(windows)]
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        let child = cmd.spawn().map_err(|e| format!("Failed to spawn: {}", e))?;
+        *BRIDGE_PROCESS.lock().unwrap() = Some(child);
+    }
 
     // Wait for port
-    if !wait_for_port(14168, Duration::from_secs(15)) {
-        return Err("Bridge did not become ready within 15s".into());
+    if !wait_for_port(14168, Duration::from_secs(20)) {
+        return Err("Bridge did not become ready within 20s".into());
     }
 
-    // Navigate main window to bridge URL and show it, hide setup
+    // Navigate main window to bridge URL after the bridge is ready, then show it.
     if let Some(main_win) = app_handle.get_webview_window("main") {
         let url = tauri::Url::parse("http://127.0.0.1:14168/").unwrap();
         let _ = main_win.navigate(url);
-        // Small delay for page to start loading
-        thread::sleep(Duration::from_millis(300));
         let _ = main_win.show();
         let _ = main_win.set_focus();
     }
@@ -255,7 +255,6 @@ pub fn run() {
     if !bridge_ok && !no_autostart {
         // Try to start bridge with saved/discovered config
         let (py_str, dir_str) = get_or_discover_config();
-        let py = PathBuf::from(&py_str);
         let dir = PathBuf::from(&dir_str);
         let script = dir.join("frontends").join("desktop_bridge.py");
         if script.exists() {
@@ -281,14 +280,17 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![start_bridge_with_config, get_config])
         .setup(move |app| {
             let bridge_wait = if spawned_bridge {
-                Duration::from_secs(15)
+                Duration::from_secs(20)
             } else {
-                Duration::from_secs(1)
+                Duration::from_secs(2)
             };
             let bridge_ready = wait_for_port(14168, bridge_wait);
             if bridge_ready {
-                // Show main window (loads bridge HTTP)
+                // Navigate to bridge HTTP only after it is ready; the window starts on loading.html
+                // so WebView never caches an early "connection refused" error page.
                 if let Some(w) = app.get_webview_window("main") {
+                    let url = tauri::Url::parse("http://127.0.0.1:14168/").unwrap();
+                    let _ = w.navigate(url);
                     if dev_mode {
                         w.open_devtools();
                     } else {

@@ -1886,6 +1886,7 @@ class InputArea(TextArea):
         Binding("ctrl+j",      "newline", "Newline", show=False),
         Binding("ctrl+enter",  "newline", "Newline", show=False),
         Binding("shift+enter", "newline", "Newline", show=False),
+        Binding("ctrl+shift+c","copy_text", "Copy", show=False),
         Binding("ctrl+v",      "paste", "Paste", show=False),
         # macOS muscle-memory alias: most terminals swallow Cmd+V (forward via bracketed
         # paste → _on_paste); this only hits if the terminal forwards Cmd as a key.
@@ -2058,7 +2059,8 @@ class InputArea(TextArea):
         await super()._on_mouse_down(event)
 
     async def _on_click(self, event: events.Click) -> None:
-        if getattr(event, "button", 0) == 3 and not self.read_only:
+        if getattr(event, "button", 0) in (2, 3) and not self.read_only:
+            # button=2: middle-click paste; button=3: right-click paste
             self.action_paste()
             event.stop(); event.prevent_default()
 
@@ -2240,6 +2242,15 @@ class InputArea(TextArea):
                 event.stop(); event.prevent_default()
                 self.action_newline()
                 return
+
+        # Modified-enter newlines: handle explicitly (in addition to BINDINGS)
+        # because many terminals send \r for ctrl+enter/shift+enter too,
+        # making Textual see all three as plain "enter".
+        if event.key in ("ctrl+enter", "shift+enter", "ctrl+j"):
+            self._insert_via_keyboard("\n")
+            event.stop(); event.prevent_default()
+            return
+        if event.key == "enter":  # bare Enter = submit
             event.stop(); event.prevent_default()
             self.post_message(self.Submitted(self, self.text))
             return
@@ -2613,6 +2624,7 @@ class GenericAgentTUI(App[None]):
         # macOS muscle-memory aliases — only fire if the terminal forwards Cmd as a key
         # (Terminal.app / default iTerm2 swallow them; Ghostty / WezTerm / kitty can forward).
         Binding("cmd+c",      "handle_ctrl_c", "Stop/Quit", show=False, priority=True),
+        Binding("ctrl+shift+c","copy_selection","Copy", show=False),
         Binding("ctrl+n",     "new_session",   "New",   show=False),
         Binding("cmd+n",      "new_session",   "New",   show=False),
         Binding("ctrl+b",     "toggle_sidebar","Sidebar", show=False),
@@ -3011,6 +3023,25 @@ class GenericAgentTUI(App[None]):
             self._rewind_timer = None
         try: self._refresh_bottombar()
         except Exception: pass
+
+    def action_copy_selection(self) -> None:
+        """Copy selected text to clipboard (Ctrl+Shift+C)."""
+        inp = self.query_one("#input", InputArea)
+        if self.focused is inp and inp.selected_text:
+            try: self.copy_to_clipboard(inp.selected_text)
+            except Exception: pass
+            self.notify("Copied input selection", timeout=1.5)
+            return
+        try:
+            text = self.screen.get_selected_text()
+        except Exception:
+            text = None
+        if text:
+            try: self.copy_to_clipboard(text)
+            except Exception: pass
+            self.notify("Copied selection", timeout=1.5)
+            return
+        self.notify("No selection. Use /export clip", timeout=2, severity="warning")
 
     def on_key(self, event: events.Key) -> None:
         if self._quit_armed and event.key not in ("ctrl+c", "cmd+c"):

@@ -16,7 +16,8 @@ class Session:
     @property
     def url(self): return self.info.get('url', '')
     def is_active(self):
-        if self.type == 'http' and time.time() - self.connect_at > 60: self.mark_disconnected()
+        if self.type == 'http' and self.disconnect_at is None and time.time() - self.connect_at > 60:
+            self.disconnect_at = time.time()
         return self.disconnect_at is None
     def reconnect(self, client, info):
         self.info = info
@@ -29,7 +30,7 @@ class Session:
         self.connect_at = time.time()
         self.disconnect_at = None
     def mark_disconnected(self):
-        if self.is_active(): print(f"Tab disconnected: {self.url} (Session: {self.id})")
+        if self.disconnect_at is None: print(f"Tab disconnected: {self.url} (Session: {self.id})")
         self.disconnect_at = time.time()
 
 
@@ -150,7 +151,7 @@ class TMWebDriver:
                 except Exception as e:  
                     print(f"Error handling message: {e}")  
                     if hasattr(self, 'data'): print(self.data)  
-            def connected(self): (f"New connection from {self.address}")  
+            def connected(self): print(f"New WS connection from {self.address}")  
             def handle_close(self): 
                 print(f"WS Connection closed: {self.address}")
                 driver._unregister_client(self)  

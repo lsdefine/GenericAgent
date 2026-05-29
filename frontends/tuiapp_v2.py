@@ -1316,6 +1316,7 @@ COMMANDS = [
     ("/conductor", "[task]",           "调用 frontends/conductor.py 多 subagent 编排"),
     ("/scheduler", "",                 "多选启动/停止 reflect 任务（cron 由 reflect/scheduler.py 驱动）"),
     ("/continue", "[n|name]",         "列出 / 恢复历史会话"),
+    ("/todo",     "add|ls|run|del",  "个人 TODO 列表（持久化，run 自动清除）"),
     ("/resume",   "",                 "列出最近会话并恢复其中一个"),
     ("/cost",     "[all]",            "显示当前会话 token 用量（all = 所有会话）"),
     ("/export",   "clip|<file>|all",  "导出最后回复"),
@@ -2677,6 +2678,7 @@ class GenericAgentTUI(App[None]):
             "stop": self._cmd_stop, "llm": self._cmd_llm, "export": self._cmd_export,
             "restore": self._cmd_restore, "btw": self._cmd_btw, "review": self._cmd_review,
             "continue": self._cmd_continue, "cost": self._cmd_cost,
+            "todo": self._cmd_todo,
             "reload-keys": self._cmd_reload_keys,
             # slash_cmds bundle — see frontends/slash_cmds.py for the prompt
             # bodies + reflect/scheduler discovery.  All but /scheduler are
@@ -4106,6 +4108,62 @@ class GenericAgentTUI(App[None]):
             self._refresh_all()
         self.call_after_refresh(_finish)
         return result.splitlines()[0] if result else "✅ 已恢复"
+
+    def _cmd_todo(self, args, raw):
+        from frontends import todo_cmd as _tc
+        sub = (args[0] if args else '').lower()
+        if sub == 'add' and len(args) >= 2:
+            text = ' '.join(args[1:])
+            _tc.add(text)
+            self._system(f"📝 已添加: {text}")
+        elif sub == 'ls':
+            items = _tc.list_all()
+            if not items:
+                self._system("📋 TODO 列表为空"); return
+            lines = [f"   {i+1}. {it['text']}  ({it['created']})" for i, it in enumerate(items)]
+            self._system("📋 TODO 列表:\n" + "\n".join(lines))
+        elif sub == 'run':
+            items = _tc.list_all()
+            if not items:
+                self._system("📋 TODO 列表为空"); return
+            choices = [(f"{i+1}. {it['text']}  ({it['created']})", i) for i, it in enumerate(items)]
+            msg = ChatMessage(
+                role="system", content="选择要执行的 TODO (↑/↓ 移动，→/Enter 确认，Esc 取消):",
+                kind="choice", choices=choices,
+                on_select=lambda idx: self._do_todo_run(idx),
+            )
+            self.current.messages.append(msg)
+            self._refresh_messages()
+        elif sub == 'del':
+            items = _tc.list_all()
+            if not items:
+                self._system("📋 TODO 列表为空"); return
+            choices = [(f"{i+1}. {it['text']}  ({it['created']})", i) for i, it in enumerate(items)]
+            msg = ChatMessage(
+                role="system", content="选择要删除的 TODO (↑/↓ 移动，→/Enter 确认，Esc 取消):",
+                kind="choice", choices=choices,
+                on_select=lambda idx: self._do_todo_del(idx),
+            )
+            self.current.messages.append(msg)
+            self._refresh_messages()
+        else:
+            self._system("用法: /todo add <内容> | ls | run | del")
+
+    def _do_todo_del(self, idx: int):
+        from frontends import todo_cmd as _tc
+        removed = _tc.remove(idx)
+        self._system(f"🗑 已删除: {removed}")
+
+    def _do_todo_run(self, idx: int):
+        from frontends import todo_cmd as _tc
+        items = _tc.list_all()
+        if idx >= len(items):
+            self._system("❌ TODO 索引无效"); return
+        text = items[idx]["text"]
+        _tc.remove(idx)
+        self.current._cmd_text = text
+        self._system(f"▶ 执行 TODO #{idx+1}: {text}")
+        self.call_after_refresh(lambda: self.submit_user_message(text))
 
     def _cmd_cost(self, args, raw):
         try:

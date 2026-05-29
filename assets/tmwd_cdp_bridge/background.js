@@ -117,6 +117,7 @@ async function handleBatch(msg, sender) {
         const tabs = (await chrome.tabs.query({})).filter(t => isScriptable(t.url));
         R.push({ ok: true, data: tabs.map(t => ({ id: t.id, url: t.url, title: t.title, active: t.active, windowId: t.windowId })) });
       } else if (c.cmd === 'cdp') {
+        if (!chrome.debugger) { R.push({ ok: false, error: 'debugger API not available in this browser (Firefox)' }); continue; }
         const tabId = c.tabId || msg.tabId || sender.tab?.id;
         if (attached !== tabId) {
           if (attached) { await chrome.debugger.detach({ tabId: attached }); attached = null; }
@@ -139,6 +140,7 @@ async function handleBatch(msg, sender) {
 async function handleCDP(msg, sender) {
   const tabId = msg.tabId || sender.tab?.id;
   if (!tabId) return { ok: false, error: 'no tabId' };
+  if (!chrome.debugger) return { ok: false, error: 'debugger API not available in this browser (Firefox)' };
   try {
     await chrome.debugger.attach({ tabId }, '1.3');
     const result = await chrome.debugger.sendCommand({ tabId }, msg.method, msg.params || {});
@@ -292,7 +294,7 @@ async function handleWsExec(data) {
       res = { ok: false, error: { name: e.name || 'Error', message: e.message || String(e), stack: e.stack || '' }, csp: true };
     }
     // CDP fallback for CSP-restricted pages
-    if (res && !res.ok && res.csp) {
+    if (res && !res.ok && res.csp && chrome.debugger) {
       console.log('[TMWD-WS] CDP fallback for tab', tabId);
       const wrappedCode = buildCdpScript(data.code);
       try {

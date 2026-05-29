@@ -1,22 +1,22 @@
 {
   "manifest_version": 3,
-  "name": "TMWD CDP Bridge (Firefox)",
+  "name": "TMWD CDP Bridge",
   "version": "2.0",
-  "description": "Cookie viewer + Bridge for Firefox",
+  "description": "Cookie viewer + CDP bridge",
   "permissions": [
     "cookies",
     "tabs",
     "activeTab",
+    "debugger",
     "scripting",
     "alarms",
     "declarativeNetRequest",
-    "management"
+    "management",
+    "contentSettings"
   ],
   "host_permissions": ["<all_urls>"],
-  "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' ws://127.0.0.1:18765 http://127.0.0.1:18765"
-  },
   "background": {
+    "service_worker": "background.js",
     "scripts": ["background.js"]
   },
   "content_scripts": [
@@ -24,7 +24,8 @@
       "matches": ["<all_urls>"],
       "js": ["disable_dialogs.js"],
       "run_at": "document_start",
-      "all_frames": true
+      "all_frames": true,
+      "world": "MAIN"
     },
     {
       "matches": ["<all_urls>"],
@@ -33,14 +34,8 @@
       "all_frames": true
     }
   ],
-  "browser_specific_settings": {
-    "gecko": {
-      "id": "tmwd-bridge@genericagent.local",
-      "strict_min_version": "128.0"
-    }
-  },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "TMWD Bridge"
+    "default_title": "TMWD CDP Bridge"
   }
 }

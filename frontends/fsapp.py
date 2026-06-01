@@ -9,7 +9,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 os.chdir(PROJECT_ROOT)
 from agentmain import GeneraticAgent
-from frontends.chatapp_common import format_restore
+from frontends.chatapp_common import extract_files, format_restore
 from frontends.continue_cmd import handle_frontend_command as handle_continue_frontend, reset_conversation
 from llmcore import mykeys
 
@@ -116,7 +116,7 @@ def _clean(text):
 
 
 def _extract_files(text):
-    return re.findall(r"\[FILE:([^\]]+)\]", text or "")
+    return extract_files(text)
 
 
 def _strip_files(text):

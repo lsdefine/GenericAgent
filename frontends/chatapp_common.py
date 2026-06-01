@@ -57,8 +57,26 @@ def clean_reply(text):
     return re.sub(r"\n{3,}", "\n\n", text).strip() or "..."
 
 
+_FILE_PLACEHOLDERS = {
+    "filepath",
+    "<filepath>",
+    "path",
+    "<path>",
+    "file_path",
+    "<file_path>",
+    "...",
+}
+
+
 def extract_files(text):
-    return re.findall(r"\[FILE:([^\]]+)\]", text or "")
+    files, seen = [], set()
+    for fpath in re.findall(r"\[FILE:([^\]]+)\]", text or ""):
+        fpath = fpath.strip()
+        if not fpath or fpath.lower() in _FILE_PLACEHOLDERS or fpath in seen:
+            continue
+        files.append(fpath)
+        seen.add(fpath)
+    return files
 
 
 def strip_files(text):

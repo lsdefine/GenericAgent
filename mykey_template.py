@@ -252,13 +252,13 @@ mixin_config = {
 #  MiniMax 同时提供 OAI 和 Anthropic 兼容接口，同一个 key 两个端点都能用：
 #    - /v1             → chat/completions (LLMSession)
 #    - /anthropic      → Anthropic Messages (NativeClaudeSession)
-#  Anthropic 路径更简洁，OAI 路径会返回 <think> 标签（M2.7 自带思考）。
-#  温度自动修正为 (0, 1]，支持 M2.7 / M2.5 全系列，204K 上下文。
+#  Anthropic 路径更简洁，OAI 路径会返回 <think> 标签（M3/M2.7 自带思考）。
+#  温度自动修正为 (0, 1]，支持 M3 / M2.7 全系列，M3 512K 上下文。
 # native_claude_config_minimax = {
 #     'name': 'minimax-anthropic',                   # /llms 显示名
 #     'apikey': 'sk-<your-minimax-key>',             # 与 OAI 路径同一个 key
 #     'apibase': 'https://api.minimaxi.com/anthropic',  # Anthropic Messages 兼容端点
-#     'model': 'MiniMax-M2.7',
+#     'model': 'MiniMax-M3',
 #     'max_retries': 3,                              # int
 #     # 'fake_cc_system_prompt': False,              # MiniMax 不做 CC 指纹校验
 # }
@@ -355,14 +355,14 @@ native_oai_config = {
 # ══════════════════════════════════════════════════════════════════════════════
 
 # ── 4a. MiniMax OAI 路径 (/v1 chat/completions) ────────────────────────────
-#  OAI 路径会返回 <think> 标签（M2.7 自带思考）；Anthropic 路径更简洁（见 1f）。
-#  温度自动修正为 (0, 1]，支持 M2.7/M2.5 全系列，204K 上下文。
+#  OAI 路径会返回 <think> 标签（M3/M2.7 自带思考）；Anthropic 路径更简洁（见 1f）。
+#  温度自动修正为 (0, 1]，支持 M3/M2.7 全系列，M3 512K 上下文。
 # oai_config_minimax = {
 #     'name': 'minimax-oai',                           # /llms 显示名
 #     'apikey': 'sk-<your-minimax-key>',               # 形如 sk-cp-xxxxxxxxx；Bearer 鉴权
 #     'apibase': 'https://api.minimaxi.com/v1',        # OAI 兼容端点
-#     'model': 'MiniMax-M2.7',                         # 名含 'minimax' → temp 夹到 (0.01,1.0]
-#     'context_win': 50000,                            # int；MiniMax 204K 上下文，此处是裁剪阈值
+#     'model': 'MiniMax-M3',                           # 名含 'minimax' → temp 夹到 (0.01,1.0]
+#     'context_win': 50000,                            # int；MiniMax M3 512K 上下文，此处是裁剪阈值
 # }
 
 

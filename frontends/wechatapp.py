@@ -6,7 +6,6 @@ from Crypto.Cipher import AES
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _TEMP_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'temp')
 from agentmain import GeneraticAgent
-from frontends.chatapp_common import extract_files
 
 # ── WxBotClient (inline from wx_bot_client.py) ──
 for _k in ('HTTPS_PROXY', 'https_proxy'):
@@ -375,7 +374,9 @@ def on_message(bot, msg):
         rest = _clean('\n\n'.join(done[sent:] + ['\n\n[任务已完成]']).strip())
         if rest: _wx_send(rest[-3000:])
 
-        files = [f for f in extract_files(result) if (f if os.path.isabs(f) else os.path.join(_TEMP_DIR, f)) not in media_paths]
+        files = re.findall(r'\[FILE:([^\]]+)\]', result)
+        bad = {'filepath', '<filepath>', 'path', '<path>', 'file_path', '<file_path>', '...'}
+        files = [f for f in files if f.strip().lower() not in bad and (f if os.path.isabs(f) else os.path.join(_TEMP_DIR, f)) not in media_paths]
         for fpath in set(files):
             if not os.path.isabs(fpath): fpath = os.path.join(_TEMP_DIR, fpath)
             try:

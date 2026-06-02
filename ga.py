@@ -522,6 +522,59 @@ class GenericAgentHandler(BaseHandler):
         else: result = "Memory Management SOP not found. Do not update memory."
         return StepOutcome(result, next_prompt=prompt)
 
+    def do_mindflow_courseware(self, args, response):
+        '''调用 MindFlow 课件引擎。根据课题、学科、年级生成完整课件，并在浏览器打开预览。'''
+        import httpx, webbrowser, json as _json
+
+        topic = args.get("topic", "")
+        subject = args.get("subject", "math")
+        grade = args.get("grade", "8")
+        yield f"\n[Action] Calling MindFlow: {topic} ({subject}, grade {grade})\n"
+
+        api_url = "http://localhost:9900/api/v1/courseware/generate"
+        try:
+            r = httpx.post(api_url, json={
+                "topic": topic, "subject": subject, "grade": grade
+            }, timeout=180)
+            if r.status_code != 200:
+                yield f"[Error] MindFlow API returned {r.status_code}: {r.text[:300]}\n"
+                return StepOutcome({"error": f"API error {r.status_code}"},
+                                   next_prompt=f"MindFlow API 返回错误: {r.status_code}")
+
+            data = r.json()
+            cw_id = data.get("courseware_id", "?")
+            modules = data.get("modules", 0)
+            preview_path = data.get("preview_url", "")
+
+            # Build preview URL
+            if preview_path and not preview_path.startswith("http"):
+                preview_url = f"http://localhost:9900{preview_path}"
+            else:
+                preview_url = f"http://localhost:9900/api/v1/courseware/{cw_id}/html"
+
+            # Open browser
+            try:
+                webbrowser.open(preview_url)
+                yield f"[Action] Browser opened: {preview_url}\n"
+            except Exception:
+                yield f"[Info] Preview URL: {preview_url}\n"
+
+            summary = (
+                f"课件已生成（{modules}个模块）。\n"
+                f"ID: {cw_id}\n"
+                f"浏览器已打开预览页面。"
+            )
+            return StepOutcome(data, next_prompt=f"课件生成成功: {topic}, {modules} 个模块。预览已打开。")
+
+        except httpx.ConnectError:
+            yield "[Error] 无法连接 MindFlow (localhost:9900)，请确认服务已启动。\n"
+            return StepOutcome({"error": "Connection refused"},
+                               next_prompt="MindFlow 服务未运行，请先启动服务。")
+        except Exception as e:
+            yield f"[Error] {e}\n"
+            return StepOutcome({"error": str(e)},
+                               next_prompt=f"MindFlow 调用失败: {e}")
+
     def _fold_earlier(self, lines):
         FALLBACK = '直接回答了用户问题'
         parts, cnt, last = [], 0, ''

@@ -23,11 +23,69 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
 import subprocess
 import time
 from pathlib import Path
 from typing import Optional
+
+
+_USER_SHELL: tuple[list[str], str] | None = None
+
+
+def detect_user_shell() -> tuple[list[str], str]:
+    """Return `([executable, ...flags_for_-c], display_name)` for the user's
+    interactive shell.  Cached after first call.
+
+    `!cmd` in tui_v2 / tui_v3 invokes this so commands like `ls`, pipes,
+    globs, and shell builtins behave the way the user expects in whatever
+    shell launched the app, instead of hardcoding cmd.exe / /bin/sh.
+
+    Resolution order:
+      1. `$SHELL` if it points to an existing file (Unix, Git Bash, WSL)
+      2. Windows only: Git Bash at the canonical install paths
+      3. `bash` anywhere on PATH (WSL bash, Cygwin, MSYS2, etc.)
+      4. Windows only: `pwsh` then `powershell.exe` on PATH
+      5. Unix `/bin/sh` / Windows `%COMSPEC%` (cmd.exe) — last resort
+    """
+    global _USER_SHELL
+    if _USER_SHELL is not None:
+        return _USER_SHELL
+
+    s = os.environ.get("SHELL")
+    if s and os.path.exists(s):
+        name = os.path.basename(s)
+        if name.lower().endswith(".exe"):
+            name = name[:-4]
+        _USER_SHELL = ([s, "-c"], name)
+        return _USER_SHELL
+
+    if sys.platform == "win32":
+        for p in (
+            r"C:\Program Files\Git\bin\bash.exe",
+            r"C:\Program Files (x86)\Git\bin\bash.exe",
+        ):
+            if os.path.exists(p):
+                _USER_SHELL = ([p, "-c"], "bash")
+                return _USER_SHELL
+        bash = shutil.which("bash")
+        if bash:
+            _USER_SHELL = ([bash, "-c"], "bash")
+            return _USER_SHELL
+        for name in ("pwsh", "powershell"):
+            p = shutil.which(name)
+            if p:
+                # -NoProfile keeps each `!cmd` snappy + reproducible.
+                _USER_SHELL = ([p, "-NoProfile", "-Command"], name)
+                return _USER_SHELL
+        cmd = os.environ.get("COMSPEC", "cmd.exe")
+        _USER_SHELL = ([cmd, "/d", "/s", "/c"], "cmd")
+        return _USER_SHELL
+
+    _USER_SHELL = (["/bin/sh", "-c"], "sh")
+    return _USER_SHELL
+
 
 
 # Repo root = parent of frontends/.  Avoid hard-coding; both TUIs live next to
@@ -343,18 +401,20 @@ def start_service(name: str) -> tuple[bool, str]:
 def _match_service(cmdline: list[str], svc: dict) -> bool:
     """Does this OS process belong to `svc`?  Match on the trailing script
     arg (`reflect/foo.py` for reflect tasks, `frontends/bar.py` for apps),
-    which is invariant across `python` vs `pythonw` vs venv shims."""
+    which is invariant across `python` vs `pythonw` vs venv shims.
+
+    Reflect detection used to require BOTH `agentmain.py` AND the reflect
+    path in cmdline.  That rejected tasks launched directly (`python
+    reflect/scheduler.py`) by launch.pyw, dev scripts, or by an earlier
+    TUI run that used a different launcher — they showed unticked in
+    /scheduler even when alive.  Path-only match handles both styles; the
+    Python-process pre-filter in `running_services` keeps false positives
+    (greps, editors with the file open) from sneaking in."""
     if not cmdline:
         return False
     rel = svc["name"]  # 'reflect/foo.py' | 'frontends/bar.py'
-    if svc["kind"] == "reflect":
-        # agentmain.py --reflect reflect/foo.py
-        has_main = any("agentmain.py" in (a or "") for a in cmdline)
-        has_rel = any(rel.replace("/", os.sep) in (a or "") or rel in (a or "")
-                      for a in cmdline)
-        return has_main and has_rel
-    # frontend: either `python frontends/foo.py` or `python -m streamlit run frontends/stapp.py …`
-    return any(rel.replace("/", os.sep) in (a or "") or rel in (a or "")
+    rel_norm = rel.replace("/", os.sep)
+    return any(rel_norm in (a or "") or rel in (a or "")
                for a in cmdline)
 
 
@@ -503,7 +563,8 @@ PALETTE_ENTRIES: list[tuple[str, str, str]] = [
     ("/goal",      "[goal]",    "进入 Goal 模式（需 condition 约束）"),
     ("/hive",      "[target]",  "进入 Hive 多 worker 协作模式"),
     ("/conductor", "[task]",    "调用 frontends/conductor.py 多 subagent 编排"),
-    ("/scheduler", "",          "多选启动 reflect 任务 / 查看 cron"),
+    ("/scheduler", "",          "多选启动/停止 reflect 任务（cron 由 reflect/scheduler.py 驱动）"),
+    ("/resume",    "",           "列出最近会话并恢复其中一个（GA 端展开 prompt）"),
 ]
 
 

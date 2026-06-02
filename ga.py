@@ -531,7 +531,7 @@ class GenericAgentHandler(BaseHandler):
                 flush(); parts.append(line); cnt = 0; last = ''
             else: cnt += 1; last = line
         flush()
-        return "\n".join(parts[-100:])
+        return "\n".join(parts[-70:])
 
     def _get_anchor_prompt(self, skip=False):
         if skip: return "\n"

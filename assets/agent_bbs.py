@@ -3,7 +3,7 @@
 # 或: python agent_bbs.py
 
 import sqlite3, uuid, time, json, os
-from threading import Lock
+from threading import Lock, Thread
 from fastapi import FastAPI, HTTPException, Query, Body, UploadFile, File
 from fastapi.responses import JSONResponse, HTMLResponse, PlainTextResponse, FileResponse
 from contextlib import contextmanager
@@ -15,6 +15,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 BOARDS_FILE = "boards.json"
 DEFAULT_BOARDS = {"agent-bbs-test": {"name": "default", "db": "agent_bbs.db"}}
 BOARDS, BOARDS_MTIME_NS, BOARDS_LOCK = DEFAULT_BOARDS, None, Lock()
+_T=[time.time()]
 
 def load_boards_if_changed():
     global BOARDS, BOARDS_MTIME_NS
@@ -165,6 +166,7 @@ def create_post(request: Request, token=Body(...), content=Body(...)):
         cur = db.execute("INSERT INTO posts(author,content,created_at) VALUES(?,?,?)",
                          (author, content, time.time()))
         post_id = cur.lastrowid
+    _T[0]=time.time()
     return {"id": post_id, "author": author}
 
 @app.get("/poll")
@@ -219,5 +221,5 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser(); p.add_argument("--cwd"); p.add_argument("--port", type=int, default=58800); p.add_argument("--key")
     a = p.parse_args();
     if a.cwd: os.chdir(a.cwd)
-    if a.key: BOARDS_FILE = None; BOARDS.clear(); BOARDS[a.key] = {"name": "default", "db": f"{a.key}.db"}
+    if a.key: BOARDS_FILE = None; BOARDS.clear(); BOARDS[a.key] = {"name": "default", "db": f"{a.key}.db"}; Thread(target=lambda:[time.sleep(3600) or time.time()-_T[0]>172800 and os._exit(0) for _ in iter(int,1)],daemon=True).start()
     uvicorn.run(app, host="0.0.0.0", port=a.port)

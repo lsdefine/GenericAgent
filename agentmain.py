@@ -52,6 +52,7 @@ class GenericAgent:
         self.is_running = False; self.stop_sig = False; self.llm_no = 0;  
         self.inc_out = False; self.verbose = True; self.show_mode = 'text'
         self.peer_hint = True
+        self.force_non_stream = False
         self.log_path = os.path.join(script_dir, f'temp/model_responses/model_responses_{int(time.time()*1e6)%1000000:06d}.txt')
         self.load_llm_sessions()
 
@@ -133,6 +134,10 @@ class GenericAgent:
             if raw_query is None:
                 self.task_queue.task_done(); continue
             self.is_running = True
+            if len(raw_query) > 1500:
+                task_file = os.path.join(script_dir, 'temp', f'user_prompt_{int(time.time())}.md')
+                with open(task_file, 'w', encoding='utf-8') as f: f.write(raw_query)
+                raw_query = f'Long user prompt saved to {task_file}. Read and execute.'
             rquery = smart_format(raw_query.replace('\n', ' '), max_str_len=200)
             self.history.append(f"[USER]: {rquery}")
             
@@ -146,6 +151,9 @@ class GenericAgent:
                 if ps > 0: handler.working['key_info'] += f'\n[SYSTEM] 此为 {ps} 个对话前设置的key_info，若已在新任务，先更新或清除工作记忆。\n'
             self.handler = handler  # although new handler, the **full** history is in llmclient, so it is full history!
             self.llmclient.log_path = self.log_path
+            if self.force_non_stream:
+                self.llmclient.backend.stream = False
+                self.llmclient.backend.read_timeout = max(self.llmclient.backend.read_timeout, 1200)
             gen = agent_runner_loop(self.llmclient, sys_prompt, raw_query, handler, TOOLS_SCHEMA, 
                                     max_turns=80, verbose=self.verbose, yield_info=True)
             try:
@@ -198,7 +206,7 @@ if __name__ == '__main__':
             creationflags=0x08000000 if platform.system() == 'Windows' else 0,
             stdout=open(os.path.join(d, 'stdout.log'), 'w', encoding='utf-8'),
             stderr=open(os.path.join(d, 'stderr.log'), 'w', encoding='utf-8'))
-        print(p.pid); sys.exit(0)
+        print('PID:', p.pid); sys.exit(0)
 
     agent = GeneraticAgent()
     agent.next_llm(args.llm_no)
@@ -207,6 +215,7 @@ if __name__ == '__main__':
 
     if args.task:
         agent.peer_hint = False
+        agent.force_non_stream = True
         agent.task_dir = d = os.path.join(script_dir, f'temp/{args.task}'); nround = ''
         infile = os.path.join(d, 'input.txt')
         if args.input:
@@ -217,7 +226,7 @@ if __name__ == '__main__':
         with open(infile, encoding='utf-8') as f: raw = f.read()
         while True:
             dq = agent.put_task(raw, source='task')
-            while 'done' not in (item := dq.get(timeout=300)): 
+            while 'done' not in (item := dq.get(timeout=1200)): 
                 if 'next' in item and random.random() < 0.95:  # 概率写一次中间结果
                     with open(f'{d}/output{nround}.txt', 'w', encoding='utf-8') as f: f.write(item.get('next', ''))
             with open(f'{d}/output{nround}.txt', 'w', encoding='utf-8') as f: f.write(item['done'] + '\n\n[ROUND END]\n')
@@ -229,6 +238,7 @@ if __name__ == '__main__':
             nround = nround + 1 if isinstance(nround, int) else 1
     elif args.reflect:
         agent.peer_hint = False
+        agent.force_non_stream = True
         import importlib.util
         spec = importlib.util.spec_from_file_location('reflect_script', args.reflect)
         mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
@@ -242,16 +252,16 @@ if __name__ == '__main__':
                     if hasattr(mod, 'init'): mod.init(_reflect_args)
                     print('[Reflect] reloaded')
                 except Exception as e: print(f'[Reflect] reload error: {e}')
-            time.sleep(getattr(mod, 'INTERVAL', 5))
             try: task = mod.check()
             except Exception as e: 
-                print(f'[Reflect] check() error: {e}'); continue
+                print(f'[Reflect] check() error: {e}'); task = None
             if task and task == '/exit': break
-            if task is None: continue
+            if not task:
+                time.sleep(getattr(mod, 'INTERVAL', 5)); continue
             print(f'[Reflect] triggered: {task[:80]}')
             dq = agent.put_task(task, source='reflect')
             try:
-                while 'done' not in (item := dq.get(timeout=180)): pass
+                while 'done' not in (item := dq.get(timeout=1200)): pass
                 result = item['done']
                 print(result)
             except Exception as e:

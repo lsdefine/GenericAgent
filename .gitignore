@@ -81,6 +81,7 @@ memory/L4_raw_sessions/*
 
 # Goal Hive Mode SOP
 !memory/goal_hive_sop.md
+!memory/goal_hive_master_duty.md
 
 # Morphling SOP
 !memory/morphling_sop.md
@@ -105,6 +106,10 @@ memory/L4_raw_sessions/*
 # Memory management
 !memory/memory_cleanup_sop.md
 
+# Checklist/MapReduce
+!memory/checklist_helper.py
+!memory/checklist_sop.md
+
 # Code Review Principles
 !memory/code_review_principles.md
 
@@ -127,6 +132,7 @@ reflect/*
 !reflect/scheduler.py
 !reflect/agent_team_worker.py
 !reflect/goal_mode.py
+!reflect/checklist_master.py
 
 # Universal: never track __pycache__ anywhere
 **/__pycache__/

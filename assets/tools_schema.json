@@ -234,23 +234,52 @@
     "type": "function",
     "function": {
       "name": "mindflow_courseware",
-      "description": "调用 MindFlow 课件引擎生成课件。根据课题、学科、年级生成完整结构化课件，并在浏览器中打开预览。",
+      "description": "调用 MindFlow 课件引擎生成课件。支持ABT叙事弧/PBL拆解/三层脚手架/CSS图示/交互组件。自动打开浏览器预览。",
       "parameters": {
         "type": "object",
         "properties": {
           "topic": {
             "type": "string",
-            "description": "课件课题，如 '勾股定理'、'海带的生物分类'"
+            "description": "课件课题，如\"勾股定理\"、\"细胞的铝离子交互\""
           },
           "subject": {
             "type": "string",
             "description": "学科，可选: math(数学), physics(物理), biology(生物), history(历史), chemistry(化学)",
-            "default": "math"
+            "default": "math",
+            "enum": [
+              "math",
+              "physics",
+              "biology",
+              "chemistry",
+              "history",
+              "chinese",
+              "english",
+              "cross"
+            ]
           },
           "grade": {
             "type": "string",
-            "description": "年级，如 '7'、'8'、'9'",
+            "description": "年级，如\"7\"、\"10\"、\"高三\"、\"大学\"",
             "default": "8"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "课件标签，如 ['cross','lab','PBL']",
+            "default": []
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "generate",
+              "list",
+              "spec",
+              "regenerate"
+            ],
+            "description": "操作类型: generate(新生成), list(按路由列出), spec(查看接口规范), regenerate(基于上次重新生成)",
+            "default": "generate"
           }
         },
         "required": [

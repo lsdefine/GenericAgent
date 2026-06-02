@@ -522,57 +522,120 @@ class GenericAgentHandler(BaseHandler):
         else: result = "Memory Management SOP not found. Do not update memory."
         return StepOutcome(result, next_prompt=prompt)
 
-    def do_mindflow_courseware(self, args, response):
-        '''调用 MindFlow 课件引擎。根据课题、学科、年级生成完整课件，并在浏览器打开预览。'''
-        import httpx, webbrowser, json as _json
 
+    def do_mindflow_courseware(self, args, response):
+        """调用 MindFlow 课件引擎。生成/列出/查看规范。支持ABT/PBL/脚手架/图示/交互组件。自动浏览器预览。"""
+        import httpx, webbrowser, json as _json
+        
+        action = args.get("action", "generate")
+        base = "http://localhost:9900"
+        
+        # Action: spec - 显示接口规范
+        if action == "spec":
+            yield "[Action] Fetching MindFlow spec...\\n"
+            try:
+                r = httpx.get(base + "/api/v1/courseware/spec", timeout=10)
+                if r.status_code == 200:
+                    spec = r.json()
+                    eps = spec.get("endpoints", [])
+                    msg = f"[MindFlow API] {spec['service']} v{spec['version']}\\n"
+                    msg += f"  可用端点: {len(eps)}\\n"
+                    for ep in eps[:6]:
+                        msg += f"    {ep['method']} {ep['path']} - {ep['summary'][:40]}\\n"
+                    msg += f"\\n完整规范: {base}/api/v1/courseware/spec"
+                    yield msg + "\\n"
+                    return StepOutcome(spec, next_prompt=msg)
+            except Exception as e:
+                yield f"[Error] {e}\\n"
+        
+        # Action: list - 按路由列出课件
+        if action == "list":
+            level = args.get("grade", "")
+            route_url = f"{base}/api/v1/courseware/by-route/{level}" if level else f"{base}/api/v1/courseware/list"
+            try:
+                r = httpx.get(route_url, timeout=10)
+                if r.status_code == 200:
+                    data = r.json()
+                    cws = data.get("coursewares", data.get("list", []))
+                    msg = f"[课件列表] 共 {len(cws)} 个\\n"
+                    for cw in cws[:10]:
+                        t = cw.get("title","?")
+                        lv = cw.get("level_display", cw.get("route_level",""))
+                        sb = cw.get("subject_display", cw.get("route_subject",""))
+                        mods = cw.get("modules_count", "?")
+                        msg += f"  [{lv}/{sb}] {t[:35]} ({mods}模块)\\n"
+                    yield msg
+                    return StepOutcome(data, next_prompt=msg)
+            except Exception as e:
+                yield f"[Error] {e}\\n"
+        
+        # Action: generate / regenerate (默认)
         topic = args.get("topic", "")
         subject = args.get("subject", "math")
         grade = args.get("grade", "8")
-        yield f"\n[Action] Calling MindFlow: {topic} ({subject}, grade {grade})\n"
-
-        api_url = "http://localhost:9900/api/v1/courseware/generate"
+        tags = args.get("tags", [])
+        
+        yield f"[Action] Generating courseware: {topic} ({subject}, grade {grade})\\n"
+        if tags:
+            yield f"  Tags: {tags}\\n"
+        
+        api_url = base + "/api/v1/courseware/generate"
         try:
             r = httpx.post(api_url, json={
                 "topic": topic, "subject": subject, "grade": grade
             }, timeout=180)
             if r.status_code != 200:
-                yield f"[Error] MindFlow API returned {r.status_code}: {r.text[:300]}\n"
-                return StepOutcome({"error": f"API error {r.status_code}"},
-                                   next_prompt=f"MindFlow API 返回错误: {r.status_code}")
-
+                yield f"[Error] API {r.status_code}: {r.text[:300]}\\n"
+                return StepOutcome({"error": f"API {r.status_code}"},
+                                   next_prompt=f"MindFlow API 错误: {r.status_code}")
+            
             data = r.json()
             cw_id = data.get("courseware_id", "?")
-            modules = data.get("modules", 0)
-            preview_path = data.get("preview_url", "")
-
-            # Build preview URL
-            if preview_path and not preview_path.startswith("http"):
-                preview_url = f"http://localhost:9900{preview_path}"
-            else:
-                preview_url = f"http://localhost:9900/api/v1/courseware/{cw_id}/html"
-
-            # Open browser
+            route = data.get("route", {})
+            meta = data.get("metadata", {})
+            mods = data.get("modules", 0)
+            total_min = meta.get("estimated_total_minutes", 0)
+            lvl = route.get("display_level", "")
+            subj = route.get("display_subject", "")
+            
+            # 构建丰富摘要
+            summary = f"[课件已生成] {meta.get('title', topic)}\\n"
+            summary += f"  路由: {lvl}/{subj} | 时长: {total_min}分 | 模块: {mods}\\n"
+            summary += f"  ID: {cw_id}\\n"
+            
+            # 如果API返回了模块详情
+            if isinstance(mods, list) and len(mods) > 0:
+                summary += f"  模块结构:\\n"
+                for m in mods[:6]:
+                    mt = m.get("module_type","?")
+                    t = m.get("title","?")
+                    mins = m.get("estimated_minutes",0)
+                    abt = m.get("abt_part","")
+                    scaf = m.get("scaffold_level","")
+                    tags = ""
+                    if abt: tags += f"[{abt}]"
+                    if scaf: tags += f"[{scaf}]"
+                    summary += f"    {tags}{mt}: {t} ({mins}min)\\n"
+            
+            # 浏览器预览
+            preview_url = f"{base}/api/v1/courseware/{cw_id}/preview"
             try:
                 webbrowser.open(preview_url)
-                yield f"[Action] Browser opened: {preview_url}\n"
+                summary += f"  浏览器已打开预览\\n"
             except Exception:
-                yield f"[Info] Preview URL: {preview_url}\n"
-
-            summary = (
-                f"课件已生成（{modules}个模块）。\n"
-                f"ID: {cw_id}\n"
-                f"浏览器已打开预览页面。"
-            )
-            return StepOutcome(data, next_prompt=f"课件生成成功: {topic}, {modules} 个模块。预览已打开。")
-
+                summary += f"  预览: {preview_url}\\n"
+            
+            yield summary + "\\n"
+            return StepOutcome(data,
+                next_prompt=f"课件已生成: {topic}, {mods if isinstance(mods,int) else len(mods)} 模块, {total_min}分钟。路由: {lvl}/{subj}")
+            
         except httpx.ConnectError:
-            yield "[Error] 无法连接 MindFlow (localhost:9900)，请确认服务已启动。\n"
-            return StepOutcome({"error": "Connection refused"},
-                               next_prompt="MindFlow 服务未运行，请先启动服务。")
+            yield "[Error] 无法连接 MindFlow (localhost:9900)\\n"
+            return StepOutcome({"error":"ConnectError"},
+                               next_prompt="MindFlow 服务未运行")
         except Exception as e:
-            yield f"[Error] {e}\n"
-            return StepOutcome({"error": str(e)},
+            yield f"[Error] {e}\\n"
+            return StepOutcome({"error":str(e)},
                                next_prompt=f"MindFlow 调用失败: {e}")
 
     def _fold_earlier(self, lines):

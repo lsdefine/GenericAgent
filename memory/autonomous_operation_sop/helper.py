@@ -25,6 +25,7 @@ _REPORTS_DIR = _TEMP_DIR / "autonomous_reports"
 _HISTORY_FILE = _REPORTS_DIR / "history.txt"
 _TODO_FILE = _TEMP_DIR / "TODO.txt"
 
+
 def _next_report_number() -> int:
     """扫 history.txt 第一行提取最大 RXX 编号，返回下一个"""
     if not _HISTORY_FILE.exists():
@@ -40,8 +41,11 @@ def _next_report_number() -> int:
 
 def get_todo() -> str:
     """返回 TODO.txt 的内容。若文件不存在返回提示。"""
-    if not _TODO_FILE.exists(): return f"[autonomous_task] TODO.txt 不存在，路径: {_TODO_FILE}"
-    with open(_TODO_FILE, "r", encoding="utf-8") as f: return f.read()
+    if not _TODO_FILE.exists():
+        return f"[autonomous_task] TODO.txt 不存在，路径: {_TODO_FILE}"
+    with open(_TODO_FILE, "r", encoding="utf-8") as f:
+        return f.read()
+
 
 def get_history(n: int = 20) -> str:
     """返回 history.txt 的前 n 行（最新在前）。"""
@@ -57,16 +61,95 @@ def set_todo(*args, **kwargs) -> str:
     return f'路径: {str(_TODO_FILE)}'
 
 
+def _update_todo(rnum: int, taskname: str, historyline: str) -> str:
+    """
+    自动更新 TODO.txt：
+    1. 按 taskname 关键词匹配待执行项，移除匹配行
+    2. 追加 [✅] R{rnum} | {historyline核心} 到已完成区
+    """
+    if not _TODO_FILE.exists():
+        return "TODO.txt 不存在，跳过"
+
+    with open(_TODO_FILE, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    lines = content.split("\n")
+    # 提取 taskname 中的关键词（去常见停用词）
+    keywords = set(re.findall(r'[\w]+', taskname.lower()))
+    stopwords = {'修复', '实施', '设计', '改造', '集成', '优化', 'the', 'a', 'an', 'of', 'and', 'to', 'in'}
+    keywords -= stopwords
+    if not keywords:
+        keywords = set(re.findall(r'[\w]+', taskname.lower()))
+
+    # 找待执行区并匹配（只移除最高分匹配行）
+    pending_start = None
+    done_start = None
+    best_match_idx = None
+    best_match_score = 0
+    best_match_line = None
+
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("## ") and "待执行" in stripped:
+            pending_start = i
+        elif stripped.startswith("## ") and "已完成" in stripped:
+            done_start = i
+
+        if pending_start is not None and done_start is None and stripped.startswith("[ ]"):
+            line_lower = stripped.lower()
+            match_score = sum(1 for kw in keywords if kw in line_lower)
+            if match_score > best_match_score and match_score >= max(1, len(keywords) // 2):
+                best_match_score = match_score
+                best_match_idx = i
+                best_match_line = stripped
+
+    # 移除最佳匹配行
+    new_lines = [line for i, line in enumerate(lines) if i != best_match_idx]
+    removed_line = best_match_line
+
+    # 如果没匹配到，不报错，只追加到已完成
+    # 找已完成区，在第一行 [✅] 或 [x] 前插入
+    if done_start is not None:
+        insert_idx = None
+        for i in range(done_start + 1, len(new_lines)):
+            if new_lines[i].strip().startswith("[✅]") or new_lines[i].strip().startswith("[x]"):
+                insert_idx = i
+                break
+        if insert_idx is None:
+            insert_idx = done_start + 1
+
+        # 从 historyline 提取核心描述（去编号和日期）
+        core = historyline.strip()
+        core = re.sub(r'^R\d+\s*\|\s*', '', core)
+        core = re.sub(r'^\d{4}-\d{2}-\d{2}\s*\|\s*', '', core)
+        # 只保留类型|主题|结论（去掉冗长的验收详情）
+        parts = [p.strip() for p in core.split("|")]
+        if len(parts) > 3:
+            core = " | ".join(parts[:3])
+
+        done_entry = "[✅] R{} | {}".format(rnum, core)
+        new_lines.insert(insert_idx, done_entry)
+
+    with open(_TODO_FILE, "w", encoding="utf-8") as f:
+        f.write("\n".join(new_lines))
+
+    if removed_line:
+        return "移除 [{}] + 追加已完成项".format(removed_line[:40])
+    return "未匹配待执行项，仅追加已完成项"
+
+
 def complete_task(taskname: str, historyline: str, report_path: str) -> str:
     """
     完成任务的原子操作：
     1. 移动 report_path → autonomous_reports/R{XX}_{taskname}.md（自动编号）
     2. prepend historyline 到 history.txt（校验必须单行）
     3. 返回字符串指示 agent 自己去改 TODO
+
     Args:
         taskname: 任务简短名称（用于报告文件名，如 "晨间简报"）
         historyline: 历史记录内容（必须单行，日期自动添加，如 "工程 | 晨间简报 | 完成7模块聚合"）
         report_path: agent 已写好的报告文件路径（绝对或相对于cwd）
+
     Returns:
         成功消息 + 改TODO指令，或错误消息
     """
@@ -118,11 +201,13 @@ def complete_task(taskname: str, historyline: str, report_path: str) -> str:
             pass
         return f"[ERROR] 写入 history 失败: {e}（报告已回滚）"
 
-    # ── 3. 返回改 TODO 指令 ──
+    # ── 3. 自动更新 TODO ──
+    todo_msg = _update_todo(rnum, taskname, line)
+
     return (
         f"✅ 完成！报告已保存: {dest_name}\n"
         f"历史已记录: {line}\n"
-        f"👉 请在 {_TODO_FILE} 中将对应任务标记为 [x] R{rnum}，然后结束，**其他TODO下次再干**"
+        f"TODO已更新: {todo_msg}"
     )
 
 

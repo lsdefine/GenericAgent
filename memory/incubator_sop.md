@@ -1,3 +1,8 @@
+---
+version: 1.0
+last_updated: "2026-05-30"
+---
+
 # Incubator SOP — 远程部署GA实例
 自我复制到任意节点的agent网络。每个节点有独立记忆，可以通过编辑memory干预它们的行为
 

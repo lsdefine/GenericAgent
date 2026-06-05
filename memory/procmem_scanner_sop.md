@@ -1,3 +1,8 @@
+---
+version: 1.0
+last_updated: "2026-05-30"
+---
+
 # Memory Scanner SOP
 
 ## 1. 快速开始

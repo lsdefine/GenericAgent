@@ -1,4 +1,18 @@
+---
+title: 任务规划模式
+version: 1.1
+last_updated: "2026-06-05"
+tags: [sop, planning, autonomous]
+---
+
 # 任务规划模式
+
+> **用途**：本 SOP 定义了 GenericAgent 在**无待办任务**时的规划流程。核心目标是：
+> 1. 避免低价值重复劳动（通过批判性回顾history识别失败模式）
+> 2. 产出高质量 TODO（通过 subagent 第三方评审保证客观性）
+> 3. 一轮只规划不执行（保证规划专注性）
+>
+> **前置依赖**：`./autonomous_reports/history.txt` 存在、`../memory/subagent.md` 可用
 
 - **有TODO**：cwd下 `TODO.txt` 有待执行条目 → 直接跳到「执行流程」
 
@@ -39,3 +53,44 @@
 - 冲浪规则：每次≤2话题，必须读正文提炼洞察，禁标题搬运；发现好工具→下轮TODO加实测任务
 
 禁区：❌ Hacker News · 刷新闻头条 · 泛采集标题/无目标刷新闻 · 探索知名工具基础用法 · 调研弱于当前框架的AI工具 · 调研其他web自动化/computer use框架 · 读取自身代码库 · 使用im工具发送信息
+
+---
+
+## 实战示例
+
+### 示例：从零开始规划一轮任务
+
+```text
+# Step 0: 无TODO，进入规划模式
+# 设定关键信息
+update_working_checkpoint:
+  key_info: "规划模式：产出TODO后必须经过subagent评审..."
+
+# Step 1: 批判性读history，识别低价值模式
+# 发现: "R22 泛采集HackerNews标题→低价值"
+# 发现: "R30 验证静态配置→低价值模式"
+
+# Step 3: 盘点已有资产
+# ls autonomous_reports/ → 发现vision全链路可用
+# ls ../memory/ → prompt_optimization_loop_sop还是文档，未实战化
+
+# Step 4: 产出TODO（5-7条）
+# [ ] 产出 | vision+browser集成 | 7分 | Xvfb+OCR→tmwebdriver
+# [ ] 产出 | prompt_optimization_loop_sop实战化 | 8分 | ...
+
+# Step 6: 召唤subagent评审
+# python3 -c "import sys; sys.path.insert(0,'..'); from memory import subagent; ..."
+
+# Step 8: 根据评分删除低分项，调整
+# Step 9: 结束，下次执行
+```
+
+### 低价值模式识别清单（供Step1参考）
+
+| 模式 | 特征 | 应对策略 |
+|:-----|:-----|:---------|
+| 🔴 浅层验证 | 验证某工具是否存在/版本号 | 除非是前置依赖检查，否则跳过 |
+| 🔴 无假设巡检 | 漫无目的扫描系统 | 带着明确假设去验证 |
+| 🔴 重复探索 | 已经做过类似的调研 | 查history避免 |
+| 🟡 泛采集 | 收集大量信息但不提炼洞察 | 限定话题≤2，必须产出结论 |
+| 🟡 知名工具基础用法 | curl/git/ffmpeg基础用法 | 直接查文档，不做实验 |

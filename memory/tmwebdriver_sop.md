@@ -1,3 +1,8 @@
+---
+version: 1.0
+last_updated: "2026-05-30"
+---
+
 # TMWebDriver SOP
 
 - 直接用web_scan/web_execute_js工具。本文件只记录特性和坑。

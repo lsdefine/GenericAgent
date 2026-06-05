@@ -1,6 +1,34 @@
+---
+version: 1.0
+last_updated: "2026-05-30"
+---
+
 # Subagent 调用 SOP
 
-## 文件IO协议
+> 版本：2.0 | 更新：2026-05-28 — 新增白板通讯协议
+
+---
+
+## 白板通讯协议（v2 新增）
+
+对抗式解题法 v2 使用 **WHITEBOARD.md** 作为代理间共享通讯介质。
+
+**文件位置**：`temp/{task_id}/WHITEBOARD.md`
+
+**核心变更**：子代理启动后，不再只读 input.txt，而是**先读 WHITEBOARD.md 了解完整上下文**。
+
+**子代理标准启动流程**：
+1. 读 `WHITEBOARD.md`（获取任务背景、前序工作、当前进度）
+2. 读 `input.txt`（获取本次具体指令）
+3. 读取 `context.json`（获取绝对路径等元信息）
+4. 开始工作 → 每完成一步更新 WHITEBOARD.md 的进度日志
+5. 完成后更新状态字段为 ✅
+
+详见 `memory/whiteboard_protocol.md`
+
+---
+
+## 文件IO协议（v1 保留）
 
 - 目录：`temp/{task_name}/`（cwd在temp/时即`./{task_name}/`）
 - 启动：`python agentmain.py --task {name} [--input "短文本"] [--llm_no N]`（cwd=代码根）
@@ -10,7 +38,8 @@
 - input：目标+约束即可，subagent同等智能。**禁写步骤/过度描述**，大量数据给路径
 - 可选fork功能（继承对话上下文）: code_run(inline_eval=True)，将变量history（自动注入,str）写入task目录下_history.json
 - 通信：output.txt(append,`[ROUND END]`=轮完成) → 写reply.txt继续 → 不写10min退出。reply后输出为output1/2/3.txt(同格式)
-- 干预文件：`_stop`(当轮结束) | `_keyinfo`(注入working memory) | `_intervene`(追加指令)
+- **⚠ 生命周期注意**：subagent产出 `[ROUND END]` 后进程仍存活等待 reply，**不会自动退出**。若需要在同一 task 目录启动新的 subagent（如白板协议中解题者→判别者切换），必须先 `kill {PID}` 旧进程，再将新 input 写入 input.txt 后启动新 agentmain 实例
+- 干预文件：`_stop`(当轮结束退出) | `_keyinfo`(注入working memory) | `_intervene`(追加指令)
 - 监察模式：**主agent空闲时应读output观察进度，必要时用干预文件纠偏，禁止无脑长时间sleep**
 - 若加`--verbose`，output将包含工具执行结果，主agent可直接审查原始数据而非仅信任摘要
 

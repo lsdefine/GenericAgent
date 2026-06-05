@@ -1,3 +1,11 @@
+---
+version: 1.0
+last_updated: "2026-05-31"
+---
+
+> ⚠️ **DEPRECATED** — 已合并至 `goal_sop.md`
+> 本文件仅保留作为引用兼容，请勿修改。新内容请更新至 `goal_sop.md`。
+
 # Goal Mode SOP
 
 ## 何时使用

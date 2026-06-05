@@ -33,6 +33,8 @@ def _poll_bbs(data):
         return []
 
 def check():
+    check.times = getattr(check, "times", 0) + 1
+    if check.times > 1000: return '/exit'
     if not _folder: return '/exit'
     data = _load()
     if not data or data.get("closed"): return '/exit'

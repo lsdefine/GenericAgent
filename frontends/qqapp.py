@@ -3,6 +3,8 @@ from collections import deque
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _TEMP_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'temp')
+_INBOX_DIR = os.path.join(_TEMP_DIR, 'qq_inbox')  # 入站附件独立存放，便于清理
+_INBOX_TTL = 86400  # 入站附件保留秒数，超过自动清理
 from agentmain import GeneraticAgent
 from chatapp_common import AgentChatMixin, ensure_single_instance, public_access, redirect_log, require_runtime, split_text, extract_files, strip_files, clean_reply
 from llmcore import mykeys
@@ -72,13 +74,39 @@ def _kind_label(att):
     return "文件"
 
 
+def _is_inbound(path):
+    """判断路径是否落在入站目录 temp/qq_inbox/ 内（兼容相对/绝对路径）。"""
+    try:
+        ap = os.path.abspath(path)
+        base = os.path.abspath(_INBOX_DIR)
+        return os.path.commonpath([ap, base]) == base
+    except (ValueError, OSError):
+        return False
+
+
+def _cleanup_inbox():
+    """清理 temp/qq_inbox/ 下超过 TTL 的旧附件。"""
+    now = time.time()
+    try:
+        for name in os.listdir(_INBOX_DIR):
+            p = os.path.join(_INBOX_DIR, name)
+            try:
+                if now - os.path.getmtime(p) > _INBOX_TTL:
+                    os.remove(p)
+            except OSError:
+                pass
+    except FileNotFoundError:
+        pass
+
+
 async def _download_attachments(data):
-    """下载消息附件到 temp/，返回 [(kind_label, 'temp/xxx'), ...]。失败的跳过。"""
+    """下载消息附件到 temp/qq_inbox/，返回 [(kind_label, 'temp/qq_inbox/xxx'), ...]。失败的跳过。"""
     atts = getattr(data, "attachments", None) or []
     if not atts:
         return []
     import aiohttp
-    os.makedirs(_TEMP_DIR, exist_ok=True)
+    os.makedirs(_INBOX_DIR, exist_ok=True)
+    _cleanup_inbox()
     saved = []
     async with aiohttp.ClientSession() as sess:
         for att in atts:
@@ -92,15 +120,15 @@ async def _download_attachments(data):
             kind = _kind_label(att)
             ext = _guess_ext(att, kind)
             fname = f"qq_{uuid.uuid4().hex[:12]}{ext}"
-            fpath = os.path.join(_TEMP_DIR, fname)
+            fpath = os.path.join(_INBOX_DIR, fname)
             try:
                 async with sess.get(url, timeout=aiohttp.ClientTimeout(total=60)) as resp:
                     resp.raise_for_status()
                     body = await resp.read()
                 with open(fpath, "wb") as f:
                     f.write(body)
-                saved.append((kind, f"temp/{fname}"))
-                print(f"[QQ] downloaded {kind} -> temp/{fname} ({len(body)} bytes)")
+                saved.append((kind, f"temp/qq_inbox/{fname}"))
+                print(f"[QQ] downloaded {kind} -> temp/qq_inbox/{fname} ({len(body)} bytes)")
             except Exception as e:
                 print(f"[QQ] download failed {url}: {e}")
     return saved
@@ -161,6 +189,7 @@ def _make_bot_class(app):
 
 class QQApp(AgentChatMixin):
     label, source, split_limit = "QQ", "qq", 1500
+    stream_turns = True  # 逐 turn 实时心跳：每个 turn 跑完即推送该 turn 日志
 
     def __init__(self):
         super().__init__(agent, USER_TASKS)
@@ -180,17 +209,33 @@ class QQApp(AgentChatMixin):
 
     async def send_done(self, chat_id, raw_text, *, msg_id=None, is_group=False):
         # 先发清理后的文本（去掉 [FILE:] 标记），再把文件作为富媒体发出
-        files = [p for p in extract_files(raw_text) if os.path.exists(p)]
+        files = [p for p in extract_files(raw_text)
+                 if os.path.exists(p) and not _is_inbound(p)]
         body = strip_files(clean_reply(raw_text))
         if body and body != "...":
             await self.send_text(chat_id, body, msg_id=msg_id, is_group=is_group)
         for path in files:
             await self._send_file(chat_id, path, msg_id=msg_id, is_group=is_group)
 
+    async def send_done_files(self, chat_id, raw_text, *, msg_id=None, is_group=False):
+        # 流式逐 turn 模式收尾：turn 日志已实时推送完毕，这里只补发生成的文件，
+        # 不再重复汇总全部 turn 文本。
+        files = [p for p in extract_files(raw_text)
+                 if os.path.exists(p) and not _is_inbound(p)]
+        for path in files:
+            await self._send_file(chat_id, path, msg_id=msg_id, is_group=is_group)
+
     async def _send_file(self, chat_id, path, *, msg_id=None, is_group=False):
-        """QQ 富媒体出站：本地文件 -> 公网URL -> 腾讯反向拉取。失败则降级为文本提示。"""
+        """QQ 富媒体出站：本地文件 -> 公网URL -> 腾讯反向拉取。
+
+        腾讯反向拉取对文件体积有上限（实测 1MB 文档可发，2.9MB pdf / 11.5MB docx
+        会被拒，报 "download file error"）。原生富媒体发送失败时，降级为把公网下载
+        链接作为文本发出——该链接经 cloudflared 隧道直连本地文件服务，不受腾讯体积
+        限制，用户可在 TTL（默认 1 小时）内手动下载。"""
         name = os.path.basename(path)
         file_type = _qq_file_type(path)
+        size = os.path.getsize(path) if os.path.exists(path) else 0
+        url = None
         try:
             url = await asyncio.to_thread(puburl.publish, path)
             if not url:
@@ -201,10 +246,18 @@ class QQApp(AgentChatMixin):
             media = await upload(**{key: chat_id, "file_type": file_type, "url": url})
             await send(**{key: chat_id, "msg_type": 7, "media": media,
                           "msg_id": msg_id, "msg_seq": _next_msg_seq()})
-            print(f"[QQ] send_file ok ({name}, type={file_type}) via {url}")
+            print(f"[QQ] send_file ok ({name}, type={file_type}, {size}B) via {url}")
         except Exception as e:
-            print(f"[QQ] send_file failed ({name}): {e}")
-            await self.send_text(chat_id, f"⚠️ 文件「{name}」发送失败：{e}", msg_id=msg_id, is_group=is_group)
+            print(f"[QQ] send_file failed ({name}, {size}B): {e}")
+            if url:
+                # 降级：原生富媒体被腾讯拒收（多见于大文件），改发公网下载链接
+                mb = size / 1024 / 1024
+                tip = (f"📎 文件「{name}」（{mb:.1f}MB）超出 QQ 直传体积限制，"
+                       f"已转为下载链接（1 小时内有效）：\n{url}")
+                await self.send_text(chat_id, tip, msg_id=msg_id, is_group=is_group)
+                print(f"[QQ] send_file degraded to link ({name}) via {url}")
+            else:
+                await self.send_text(chat_id, f"⚠️ 文件「{name}」发送失败：{e}", msg_id=msg_id, is_group=is_group)
 
     async def on_message(self, data, is_group=False):
         try:

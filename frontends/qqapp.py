@@ -22,6 +22,9 @@ APP_ID = str(mykeys.get("qq_app_id", "") or "").strip()
 APP_SECRET = str(mykeys.get("qq_app_secret", "") or "").strip()
 ALLOWED = {str(x).strip() for x in mykeys.get("qq_allowed_users", []) if str(x).strip()}
 PROCESSED_IDS, USER_TASKS = deque(maxlen=1000), {}
+# 缓冲区：用户发来的附件先暂存，等用户发文字指令再合并触发模型
+# {chat_id: [(kind_label, 'temp/qq_inbox/xxx'), ...]}
+PENDING = {}
 SEQ_LOCK, MSG_SEQ = threading.Lock(), 1
 
 
@@ -277,8 +280,43 @@ class QQApp(AgentChatMixin):
                 return
             print(f"[QQ] message from {user_id} ({'group' if is_group else 'c2c'}): {content!r} +{len(attachments)} attach")
             if content.startswith("/"):
+                if content.strip().lower() == "/clearfiles":
+                    pend = PENDING.pop(chat_id, [])
+                    if pend:
+                        kinds = "、".join(sorted({k for k, _ in pend}))
+                        tip = f"🗑️ 已撤销缓存的 {len(pend)} 个附件（{kinds}）。"
+                    else:
+                        tip = "📭 当前没有缓存的附件。"
+                    return await self.send_text(chat_id, tip, msg_id=msg_id, is_group=is_group)
                 return await self.handle_command(chat_id, content, msg_id=msg_id, is_group=is_group)
-            prompt = _build_prompt(content, attachments)
+            # 1) 先把本条消息的附件存入缓冲（不立即触发模型）
+            if attachments:
+                PENDING.setdefault(chat_id, []).extend(attachments)
+            # 2) 并发保护：该会话已有任务在跑，拒绝新指令，提示可 /stop 中断
+            if chat_id in USER_TASKS:
+                if attachments:
+                    pend = PENDING.get(chat_id, [])
+                    kinds = "、".join(sorted({k for k, _ in pend}))
+                    tip = (f"📥 已收到本条 {len(attachments)} 个附件并缓存，当前共缓存 {len(pend)} 个（{kinds}），无需重发。"
+                           f"\n⏳ 但当前正在处理上一条指令，附件会在你下达新指令时一并带上。"
+                           f"发送 /stop 可中断当前任务后立即下达，发送 /clearfiles 可撤销已缓存的附件。")
+                else:
+                    tip = "⏳ 正在处理上一条指令。发送 /stop 可中断后再下达新指令。"
+                return await self.send_text(chat_id, tip, msg_id=msg_id, is_group=is_group)
+            # 3) 只有附件、没有文字指令 → 回执并等待文字
+            if not content:
+                pend = PENDING.get(chat_id, [])
+                if pend:
+                    kinds = "、".join(sorted({k for k, _ in pend}))
+                    return await self.send_text(
+                        chat_id,
+                        f"📥 已收到 {len(pend)} 个附件（{kinds}），已缓存。请发送文字说明要做什么，我再开始处理。"
+                        f"\n发送 /clearfiles 可撤销已缓存的附件。",
+                        msg_id=msg_id, is_group=is_group)
+                return
+            # 4) 有文字指令 → 合并缓冲的附件一起触发，清空缓冲
+            buffered = PENDING.pop(chat_id, [])
+            prompt = _build_prompt(content, buffered)
             asyncio.create_task(self.run_agent(chat_id, prompt, msg_id=msg_id, is_group=is_group))
         except Exception:
             import traceback

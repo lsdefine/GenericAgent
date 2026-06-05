@@ -26,7 +26,7 @@ if not _logger.handlers:
     _logger.addHandler(_fh)
 
 # 默认最大延迟窗口（小时），超过此时间不触发
-DEFAULT_MAX_DELAY = 6
+DEFAULT_MAX_DELAY = 24
 _l4_t = 0  # last L4 archive time
 
 def _parse_cooldown(repeat):
@@ -47,6 +47,48 @@ def _parse_cooldown(repeat):
             pass  # fall through to warning below
     _logger.warning(f'Unknown repeat type: {repeat}, fallback to 20h cooldown')
     return timedelta(hours=20)
+
+def validate_task_json(task, tid):
+    """
+    JSON Schema校验：验证task必填字段及格式。
+    返回 (is_valid, [error_msgs])
+    """
+    errors = []
+    # 0. 必须是dict
+    if not isinstance(task, dict):
+        errors.append(f'task must be a JSON object (dict), got {type(task).__name__}')
+        return (False, errors)
+    # 1. enabled: bool
+    enabled_val = task.get('enabled')
+    if not isinstance(enabled_val, bool):
+        errors.append(f'enabled must be bool, got {type(enabled_val).__name__}')
+    # 2. schedule: string 'HH:MM'
+    sched = task.get('schedule')
+    if not isinstance(sched, str):
+        errors.append(f'schedule must be string (HH:MM), got {type(sched).__name__}')
+    else:
+        try:
+            h, m = map(int, sched.split(':'))
+            if not (0 <= h <= 23 and 0 <= m <= 59):
+                errors.append(f'schedule time out of range: {sched}')
+        except:
+            errors.append(f'schedule format invalid: {sched!r}')
+    # 3. repeat: known value
+    repeat = task.get('repeat', 'daily')
+    valid_repeats = {'once', 'daily', 'weekday', 'weekly', 'monthly'}
+    if not any(repeat.startswith(p) for p in valid_repeats) and not repeat.startswith('every_'):
+        errors.append(f'repeat unknown: {repeat!r}')
+    # 4. prompt: exist and is string
+    if 'prompt' not in task:
+        errors.append(f'missing required field: prompt')
+    elif not isinstance(task.get('prompt'), str):
+        prompt_val = task.get('prompt')
+        errors.append(f'prompt must be string, got {type(prompt_val).__name__}')
+    # 5. max_delay_hours: optional int
+    if 'max_delay_hours' in task and not isinstance(task.get('max_delay_hours'), (int, float)):
+        maxdh_val = task.get('max_delay_hours')
+        errors.append(f'max_delay_hours must be number, got {type(maxdh_val).__name__}')
+    return (len(errors) == 0, errors)
 
 def _last_run(tid, done_files):
     """找最近一次执行时间"""
@@ -85,6 +127,12 @@ def check():
                 task = json.loads(fp.read())
         except Exception as e:
             _logger.error(f'JSON parse error for {f}: {e}')
+            continue
+        # JSON Schema校验
+        valid, errs = validate_task_json(task, tid)
+        if not valid:
+            for e in errs:
+                _logger.error(f'Schema validation failed for {f}: {e}')
             continue
         if not task.get('enabled', False): continue
         

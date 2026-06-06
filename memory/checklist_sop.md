@@ -1,3 +1,10 @@
+---
+version: 1.0
+last_updated: "2026-06-06"
+title: Checklist SOP
+tags: [sop, checklist]
+---
+
 # Checklist SOP
 
 ## Booter（启动者/用户）

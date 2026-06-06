@@ -5,3 +5,45 @@ R167 | 2026-06-06 | 产出 | Browserless全链路管道构建 | 创建temp/brows
 R168 | 2026-06-06 | 产出 | auto_repair运行日志分析 | Python版本冲突导致100%失败(capture_output 3.7+), 发现4个改进点, 诊断修复建议
 R220 | 2026-06-06 | 产出 | browser_click+vision_agent端到端实战 | Xvfb+Selenium截图→OCR→点击闭环验证通过, VisionAgent独立测试通过
 R221 | 2026-06-06 | 产出 | quality模块接入交付管线 | quality模块集成到pre_delivery_check, 支持--quality自动质量评分, 通过/拒绝场景测试通过 | ✅ 完成
+R169 | 2026-06-07 | 产出 | v84全面完成 | 4/4 TODO完成: 重复文件清理、去重逻辑增强、knowledge_assets注入(OpenLLM/gen_report_index)、insight同步。关键修复: knowledge_assets条目需在parser捕获区内才可被查找 | ✅ 完成
+R335 | 2026-06-07 | 产出 | v91#1 gateway_status退化修复 | 根因: find_alias_for_profile()读取uv(60MB)等大二进制文件, 修复: 跳过>4KB+仅读前200B, 基准: 3-13s→~1.15s稳定 ✅ 完成
+R336 | 2026-06-07 | 产出 | v91#3 benchmark趋势自动报警 | benchmark_viz.py新增check_and_notify()+--alert CLI, 集成到run_benchmark_daily.sh每日管线, detect_anomalies+detect_success_anomalies→notify 4通道报警 ✅ 完成
+R337 | 2026-06-07 | 环境 | v91#4 本机服务长稳健康基线 | service_health_collector.py监控6TCP服务+5min cron采集+--report趋势报告 ✅ 完成 (24h后手动运行--report出完整报告)
+R338 | 2026-06-07 | 产出 | v91#2 prompt_optimization_loop_sop实战化 | vision_describer角色prompt优化: 7.25→9.75 (+2.50)，全流程走通 ✅ 完成 | 交付: engine/roles/vision_describer_v3.prompt
+R339 | 2026-06-07 | 产出 | v91#5 SOP老旧审计v2 | 8项发现+6条可操作修复建议，覆盖frontmatter缺损/引用漂移/路径错误/版本停滞 | 交付: autonomous_reports/R339_v91_sop_audit_v2.md
+R340 | 2026-06-07 | 产出 | v92#1 SOP修复P1 — vision_sop.md路径+日期修正 | 修复2处: 日期格式+路径引用 | 1/5 done
+R341 | 2026-06-07 | 产出 | v92#2 SOP修复P2 — 6个缺frontmatter的SOP补充YAML头 | 6文件全补frontmatter | 2/5 done
+R342 | 2026-06-07 | 环境 | v92#3 监控管线检查 | 双管线正常: benchmark_trend.json(6 runs)实际在正确路径; health采集5次全up | 3/5 done
+R343 | 2026-06-07 | 产出 | v92#4 goal_sop.md存档引用更新 | 存档路径修复+goal_state.json判定为运行时模板(无需修) | 4/5 done
+R344 | 2026-06-07 | 产出 | v92#5 占位符清理 | 已无占位符残留,无需修复 | 5/5 done 🎉
+R345 | 2026-06-07 | 自判 | v92自我判别 | 5/5通过 | v92 complete ✅
+R346 | 2026-06-07 | 规划 | v93规划 | 3条: knowledge_assets日期+title审查+系统快照 | 等待执行
+R347 | 2026-06-07 | 产出 | v93维护报告 | 日期修复+title审查+系统快照 | v93 complete ✅
+R348 | 2026-06-07 | 规划 | v94规划 | 3条: memory维护+健康校验+知识注入 | 等待执行
+R349 | 2026-06-07 | 产出 | v94维护报告 | L1索引补全+健康校验+知识注入 | v94 complete ✅
+R350 | 2026-06-07 | 规划 | v95规划 | 2条: knowledge审查+系统清理 | 等待执行
+R351 | 2026-06-07 | 产出 | v95审计维护报告 | knowledge_assets 13项审查+系统清理 | v95 complete ✅
+R352 | 2026-06-07 | 产出 | v96清理报告 | 清理74个subagent会话目录 | v96 complete ✅
+R353 | 2026-06-07 | 规划 | v97规划报告 | 3条TODO经subagent评审通过: Benchmark&Health+知识注入+Memory维护 | v97规划齐 ✅
+R354 | 2026-06-07 | 产出 | v97#1 Benchmark&Health修复 | 发现管线正常运行(非断裂), 产出benchmark退化报告+service_health_report.py+KA#31注入 | v97 1/3 ✅
+R355 | 2026-06-07 | 产出 | v97#2 知识注入 | R300-R339精选提取2条教训→KA#33(HTTP读头优化)+KA#34(Prompt优化3步法) | v97 2/3 ✅
+R356 | 2026-06-07 | 产出 | v97#3 Memory维护 | KA编号修复(#28→#36,#29→#37,#30→#38,#32→#39)+archive清理(删872KB .bak)+L3索引验证完整 | v97 3/3 ✅ 全版本完成 🎉
+R357 | 2026-06-07 | 规划 | v98规划 | 3条: 服务健康趋势报告+benchmark验证+temp清理 | v98规划齐 ✅
+R358 | 2026-06-07 | 产出 | v98#1 服务健康趋势报告 | 运行service_health_report.py → JSON输出: 6服务100%UP✅, code-server峰值延迟316ms告警, 数据仅9条(需积累) | v98 1/3 ✅
+R359 | 2026-06-07 | 产出 | v98#2 benchmark管线数据验证 | benchmark_trend.json完整: 7runs(1d7h跨度), 8命令, 最新2026-06-07 02:33, 双副本一致 ✅ | v98 2/3 ✅
+R360 | 2026-06-07 | 产出 | v98#3 temp目录清理 | 无>30天文件, 删__pycache__+9个旧review目录(~500KB释放) | v98 3/3 ✅ 全版本完成 🎉
+R361 | 2026-06-07 | 规划 | v99规划 | 3条: L3索引修复+服务健康校验+KA格式审查 | v99规划齐 ✅
+R362 | 2026-06-07 | 产出 | v99#1 L3索引修复 | 验证发现insight实际完整(扫描regex误报), agentmail_sop+working-buffer均正确列出, 无需改动 | v99 1/3 ✅
+R363 | 2026-06-07 | 产出 | v99#2 服务健康数据校验 | service_health.jsonl仅9条(0.4h), 不足有效趋势; cron每日08:00单次; 需多日积累或改频次 | v99 2/3 ✅
+R??? | 2026-06-07 | 规划 | v101规划 | 3条经subagent评审通过: LLM诊断(8分)+代理持久化(8分)+内存排查(9分), 移除低价值项 | v101规划齐 ✅
+R364 | 2026-06-07 | 产出 | v101#1 nanobot LLM超时诊断 | 根因=MCP(anysearch.com)SSE循环失败+hermes模型~18s慢响应, 直连provider(gemini~1s)可用, 产出R364报告 | v101 1/3 ✅
+R405 | 2026-06-07 | 规划 | v114规划完成(经subagent评审)→5条TODO待执行: Vision监控集成/自启动修复/AgentMail定时化/知识工具链嵌入/history清理
+R406 | 2026-06-07 | 执行 | v114#1完成: health_vision.py重写为使用vision_pipeline(代替不存在的vision_integration), OCR验证44字符正常
+R407 | 2026-06-07 | 执行 | v114#2完成: 修复健康Dashboard自启动, 8099恢复+看门狗注入health_unified.sh(每2分钟自愈)
+R408 | 2026-06-07 | 执行 | v114#3完成: AgentMail指令处理器定时化, sche_task(每10m)+cron双保险, API连接正常
+R409 | 2026-06-07 | 执行 | v114#4完成: 知识工具链嵌入Agent流程, 三路注入(hook+self_discriminate+autonomous SOP), KA自动查询可用
+R410 | 2026-06-07 | 执行 | v114#5完成: history.txt清理, 修复格式粘连27行→44行, 去除空转污染
+R411 | 2026-06-07 | 规划 | v115规划完成经subagent评审: 4条TODO(知识命中率验证+延迟-成本tradeoff+服务健康加速+看门狗扩展) | 淘汰4条低值
+R412 | 2026-06-07 | 产出 | v115#1完成: knowledge_lookup匹配算法修复(分词匹配), 自然语言查询80%→可用, RateLimit#42+OOM#43可检索 | 3 TODO待下次
+R413 | 2026-06-07 | 产出 | v115#2完成: Hermes延迟-成本tradeoff分析, 4个provider数据(gh/gpt-4o-mini 1.6s/bash.000085, gh/gpt-4.1 1.4s, kr/auto 2.2s, kr/claude-haiku 1.5s) | 2 TODO待下次
+R414 | 2026-06-07 | 产出 | v115#3完成: 服务健康采集加速(cron 0 */2 + sche_task every_2h + service_health 75条) | 1 TODO待下次

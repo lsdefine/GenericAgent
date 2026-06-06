@@ -1,5 +1,5 @@
 ---
-version: 1.3
+version: 1.4
 last_updated: "2026-06-07"
 ---
 
@@ -10,6 +10,7 @@ last_updated: "2026-06-07"
 1. **先枚举窗口**：调用 vision 前必须先用 `pygetwindow` 枚举窗口标题，确认目标窗口存在且已激活到前台。窗口不存在就不要截图。
 2. **🚫 禁止全屏截图**：必须先利用ljqCtrl截取窗口区域。能截局部（如标题栏）就不截整窗口，能截窗口就绝不全屏。全屏截图在任何场景下都不允许。
 3. **能不用 vision 就不用**：如果窗口标题/本地 OCR（`ocr_utils.py`）能获取所需信息，就不要调用 vision API，省 token 且更可靠。Vision 是最后手段。
+4. **🚫 TMWebDriver master 未启动时无法使用 CDP 桥功能** — CDP 管道模式依赖 TMWebDriver master 在 :18766 运行，启动方式: `python3 scripts/start_tmwd_master.py`
 
 ---
 
@@ -174,7 +175,7 @@ result = ask_vision(image, prompt="描述图片内容", backend="claude", timeou
 ```
 
 **设置:**
-1. 复制 `memory/vision_api.template.py` → `memory/vision_api.py`
+1. 复制 `memory/vision_api.template.py` → `scripts/vision_api.py`
 2. 在 `mykey.py` 中扫描可用 API Key 变量名
 3. 填入 `CLAUDE_CONFIG_KEY` / `OPENAI_CONFIG_KEY`，设置 `DEFAULT_BACKEND`
 4. 无可用配置时去 `https://modelscope.cn/my/myaccesstoken` 申请 token
@@ -188,5 +189,123 @@ result = ask_vision(image, prompt="描述图片内容", backend="claude", timeou
 旧版用法（仅作参考）:
 ```bash
 # CDP 管道模式（已弃用，建议使用 vision_browser_pipeline）
+⚠ **前置条件: TMWebDriver master 必须在后台运行(:18766)** — 见 tmwebdriver_sop §48
 web_execute_js script='Page.captureScreenshot' | python3 scripts/browser-vision.py --cdp-screenshot --expect "期望文本"
 ```
+
+---
+
+## 7. 对抗鲁棒性 (Adversarial Robustness)
+
+> 基于 R306 (v86#2) 对抗训练循环实测数据，提升 OCR 管线在攻击/退化条件下的准确率。
+
+### 7.1 威胁模型
+
+OCR 管线可能遇到的 5 种退化/攻击类型（经 R306 验证）:
+
+| 攻击类型 | 参数 | 基线准确率 | 最致命? |
+|:---------|:-----|:----------:|:-------:|
+| Gaussian Noise | intensity=0.3 | 100% | ❌ Tesseract 抗噪强 |
+| **Gaussian Blur** | **radius=2.0** | **0%** | **✅ 最致命** |
+| Crop | margin=12% | 72.7% | 部分 |
+| Rotate | angle=3° | 100% | ❌ 无影响 |
+| Scale Down | scale=0.5 | 95.5% | 轻微 |
+
+**关键发现**: Gaussian Blur 是唯一能使 OCR 完全失效的攻击（0% 准确率），必须在管线中防御。
+
+### 7.2 防御方法
+
+`vision_preprocessor.py` 提供以下防御函数:
+
+```python
+from vision_preprocessor import (
+    to_grayscale,           # 灰度化
+    contrast_stretch,       # 对比度拉伸
+    binarize_otsu,          # Otsu 二值化
+    denoise_median,         # 中值去噪 (size=3)
+    sharpen,                # 锐化 (radius=2, percent=150)
+    enhance_contrast,       # 对比度增强 (factor=2.0)
+)
+```
+
+### 7.3 攻击-防御映射（R3 Optimized Defense）
+
+基于 R306 对抗训练 3 轮迭代得出的最优防御策略:
+
+| 检测到攻击 | 推荐防御 | 恢复准确率 | 提升 |
+|:-----------|:---------|:----------:|:----:|
+| 噪声 → | `denoise_median(size=3)` | 100% | 0%→100% |
+| 模糊 → | `sharpen(radius=2, percent=150)` | 77.3% | 0%→77.3% |
+| 裁切 → | **best_pipeline** | 86.4% | 72.7%→86.4% |
+| 旋转 → | **best_pipeline** | 100% | →100% |
+| 缩放 → | **best_pipeline** | 100% | 95.5%→100% |
+
+### 7.4 best_pipeline — 通用最优防御
+
+**best_pipeline** 是 R306 验证的通用最强防御管线（4/5 攻击有效）:
+
+```python
+from PIL import Image, ImageEnhance
+
+def best_pipeline(img: Image.Image) -> Image.Image:
+    """放大2x → 灰度 → 对比度增强 (R306 最优管线)"""
+    # 1. 2x 放大（抗裁切/缩放）
+    w, h = img.size
+    img = img.resize((w * 2, h * 2), Image.LANCZOS)
+    # 2. 灰度化（简化色彩噪声）
+    img = img.convert('L')
+    # 3. 对比度增强（突出文本边缘）
+    enhancer = ImageEnhance.Contrast(img)
+    img = enhancer.enhance(2.0)
+    return img
+```
+
+**性能**: 基线 73.6% → R2 91.8% → R3 92.7%，累计提升 **+19.1 个百分点**。
+
+### 7.5 使用建议
+
+1. **未知来源截图** → 默认应用 `best_pipeline` 作为预处理（`preprocess='best'`）
+2. **已知模糊场景**（低分辨率摄像头/老旧 UI）→ 额外追加 `sharpen`
+3. **高噪声环境** → 先 `denoise_median` 再 `sharpen`
+4. **性能开销**: best_pipeline 约 <50ms 额外耗时（2x 放大后 OCR 时间略增），在可接受范围内
+5. **对抗训练循环**可复用脚本: `temp/run_adversarial_loop.py`
+
+### 7.6 集成到 `ocr_image`
+
+```python
+from vision_browser_pipeline import ocr_image
+from vision_preprocessor import best_pipeline
+
+# 方式一: 调用时指定预处理
+text = ocr_image(img, lang='eng', preprocess='best')  # 自动调用 best_pipeline
+
+# 方式二: 手动预处理
+img_defended = best_pipeline(img)
+text = ocr_image(img_defended, lang='eng')
+```
+
+---
+## 8. ⚠️ 系统内存约束（本机 1.8GB RAM, ~650MB 可用）
+
+**行动验证的发现，避免 OOM 陷阱:**
+
+1. **🚫 rapidocr (~500MB) → OOM killed** — 不可用
+2. **🚫 pytesseract → 子进程 SIGKILL(-9)** — Python 内存开销导致 OOM
+3. **🚫 chi_sim+eng 语言包 → tesseract OOM** — 仅 `eng` 可用
+4. **🚫 浏览器截图全部不可用** — CDP WS/Selenium/pyppeteer/chromium-screenshot 均 OOM/挂起
+
+**✅ 唯一可行的 OCR 方法:**
+```python
+import subprocess
+result = subprocess.run(['tesseract', image_path, 'stdout', '-l', 'eng'],
+                       capture_output=True, text=True, timeout=15)
+text = result.stdout.strip()
+```
+
+**已封装的模块:**
+```python
+from scripts.vision_integration import ocr_image
+text = ocr_image("screenshot.png")           # eng (默认)
+```
+
+**关键: 可用内存 <700MB 时，仅使用 `eng` 且优先子进程调用。**

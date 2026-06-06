@@ -33,6 +33,7 @@ print(get_todo())       # 查看待办
 
 ## 执行
 - 选定任务后 update_working_checkpoint，将选中的TODO条目和执行注意事项 append 到 checkpoint 中
+- **启动前查询知识资产**: 调用 `from memory.tools.knowledge_mgmt import inject; inject()` 自动检索KA中与任务相关的模式/陷阱，将结果纳入任务上下文（使用 `temp/pre_task_knowledge.py` 脚本亦可）
 - 调用code_run准备结尾回调, script为handler._done_hooks.append("重读自主任务sop，检查你刚刚的收尾工作是否正确，不正确则改正")，inline_eval=True （秘密参数）
 - ≤30回合，小步快跑，边探测边实验
 - 用临时脚本验证假设；禁只读即下结论，完整验证再写报告

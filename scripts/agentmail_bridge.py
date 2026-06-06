@@ -22,6 +22,19 @@ from typing import Optional, List, Dict, Any
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("agentmail_bridge")
 
+# 本地文件交换 fallback (v110#1)
+_HAVE_LOCAL = False
+try:
+    from scripts.agentmail_local import LocalMailBox, send_alert as local_alert, send_report as local_report
+    _HAVE_LOCAL = True
+except ImportError:
+    try:
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+        from scripts.agentmail_local import LocalMailBox, send_alert as local_alert, send_report as local_report
+        _HAVE_LOCAL = True
+    except Exception:
+        log.debug("agentmail_local 未安装，禁用本地 fallback")
+
 
 class AgentMailBridge:
     """AgentMail 程序化桥接"""
@@ -63,8 +76,7 @@ class AgentMailBridge:
 
     def send_alert(self, alert_type: str, message: str, severity: str = "warning",
                     to: Optional[str] = None) -> Dict[str, Any]:
-        """发送告警消息（供 auto_repair 调用）"""
-        client = self._get_client()
+        """发送告警消息（供 auto_repair 调用）. AgentMail 失败时自动 fallback 到本地文件交换"""
         to_addr = to or self.DEFAULT_INBOX
         subject = f"[GA-{severity.upper()}] {alert_type}"
         text = (
@@ -73,30 +85,56 @@ class AgentMailBridge:
             f"📊 严重度: {severity}\n"
             f"📝 详情: {message}\n"
         )
-        log.info(f"Sending alert: {subject} → {to_addr}")
-        resp = client.inboxes.messages.send(
-            inbox_id=self.DEFAULT_INBOX,
-            to=[to_addr],
-            subject=subject,
-            text=text,
-        )
-        return {"ok": True, "message_id": getattr(resp, "message_id", None), "to": to_addr}
+
+        # Try AgentMail API first
+        try:
+            client = self._get_client()
+            log.info(f"Sending alert via AgentMail: {subject} → {to_addr}")
+            resp = client.inboxes.messages.send(
+                inbox_id=self.DEFAULT_INBOX,
+                to=[to_addr],
+                subject=subject,
+                text=text,
+            )
+            return {"ok": True, "message_id": getattr(resp, "message_id", None), "to": to_addr, "via": "agentmail"}
+        except Exception as e:
+            err_str = str(e)
+            if '429' in err_str or 'RateLimit' in err_str or 'rate' in err_str.lower():
+                log.warning(f"⚠️ AgentMail RateLimit, fallback to local: {e}")
+                if _HAVE_LOCAL:
+                    result = local_alert(alert_type, message, severity, to_addr.replace('@agentmail.to', ''))
+                    result["via"] = "local"
+                    return result
+            log.error(f"❌ AgentMail send failed (no fallback): {e}")
+            raise
 
     def send_report(self, title: str, body: str, to: Optional[str] = None,
                     tags: Optional[List[str]] = None) -> Dict[str, Any]:
-        """发送格式化报告"""
-        client = self._get_client()
+        """发送格式化报告. AgentMail 失败时自动 fallback 到本地文件交换"""
         to_addr = to or self.DEFAULT_INBOX
         subject = f"[GA-Report] {title}"
         text = f"📋 {title}\n{'=' * 40}\n\n{body}\n\n---\nGA AgentMail Bridge | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-        log.info(f"Sending report: {subject} → {to_addr}")
-        resp = client.inboxes.messages.send(
-            inbox_id=self.DEFAULT_INBOX,
-            to=[to_addr],
-            subject=subject,
-            text=text,
-        )
-        return {"ok": True, "message_id": getattr(resp, "message_id", None), "to": to_addr}
+
+        try:
+            client = self._get_client()
+            log.info(f"Sending report via AgentMail: {subject} → {to_addr}")
+            resp = client.inboxes.messages.send(
+                inbox_id=self.DEFAULT_INBOX,
+                to=[to_addr],
+                subject=subject,
+                text=text,
+            )
+            return {"ok": True, "message_id": getattr(resp, "message_id", None), "to": to_addr, "via": "agentmail"}
+        except Exception as e:
+            err_str = str(e)
+            if '429' in err_str or 'RateLimit' in err_str or 'rate' in err_str.lower():
+                log.warning(f"⚠️ AgentMail RateLimit, fallback to local: {e}")
+                if _HAVE_LOCAL:
+                    result = local_report(title, body, to_addr.replace('@agentmail.to', ''))
+                    result["via"] = "local"
+                    return result
+            log.error(f"❌ AgentMail send failed (no fallback): {e}")
+            raise
 
     def list_inboxes(self) -> List[Dict[str, str]]:
         """列出所有 inbox"""

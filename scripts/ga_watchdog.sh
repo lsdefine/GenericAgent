@@ -18,6 +18,17 @@ log() {
 
 need_restart=0
 
+# ── 0. 前置: idle_guard 自愈信号 ─────────────────
+# 若本轮任何服务重启，结束后记录行动→idle_guard可感知"系统刚恢复"
+record_action_if_restarted() {
+    if [ "$need_restart" -eq 1 ]; then
+        if [ -f "$GA_HOME/scripts/idle_guard.sh" ]; then
+            bash "$GA_HOME/scripts/idle_guard.sh" record
+            log "✅ idle_guard: 已记录恢复行动"
+        fi
+    fi
+}
+
 # ── 1. fsapp (飞书前端) ──────────────────────────
 if ! pgrep -f "python3.*frontends/fsapp.py" > /dev/null 2>&1; then
     log "⚠️  fsapp 未运行，正在启动..."
@@ -78,5 +89,8 @@ if [ "$need_restart" -eq 1 ]; then
 scheduler=$(pgrep -f 'agentmain.py.*--reflect.*scheduler' >/dev/null 2>&1 && echo 'RUN' || echo 'DOWN') \
 autonomous=$(pgrep -f 'agentmain.py.*--reflect.*autonomous' >/dev/null 2>&1 && echo 'RUN' || echo 'DOWN')"
 fi
+
+# ── 4. 后置: idle_guard联动 ──────────────────────
+record_action_if_restarted
 
 exit 0

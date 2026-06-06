@@ -8,7 +8,7 @@ except NameError:
     _lock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
     _lock.bind(('127.0.0.1', 45762)); _lock.listen(1)
 
-INTERVAL = 120
+INTERVAL = 1800
 ONCE = False
 
 _dir = os.path.dirname(os.path.abspath(__file__))

@@ -279,7 +279,7 @@ class Conductor:
         unread = sum(1 for m in chat_messages if m.get("role") == "user" and not m.get("read"))
         done_count = sum(1 for e in events if e.get("type") == "subagent_done")
         summary = f"subagents: {running} running, {stopped} stopped | {unread}条用户未读消息, {done_count}个subagent完成报告"
-        summary += "".join(f"\n[IM信号] {e['source']} 有新消息（GET /im_prompt/{e['source']} 取采集prompt）" for e in events if e.get("type") == "im_signal")
+        summary += "".join(f"\n[IM信号] {e['source']} 有新消息（GET /im_prompt/{e['source']} 取采集prompt），尽量复用已有subagent" for e in events if e.get("type") == "im_signal")
         base = f"http://{HOST}:{PORT}"
         return f"""你是agent总管。用户只和你对话，你负责调度、验收、交付，目标是降低用户管理多个agent的负担。
 API: {base}；先requests，GET /readme查用法，GET /chat读未读对话，GET /subagent看状态；POST /chat是唯一对用户说话方式。

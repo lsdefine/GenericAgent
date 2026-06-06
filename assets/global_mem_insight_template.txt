@@ -7,7 +7,8 @@ L3: memory_cleanup_sop(记忆整理) | skill_search | ui_detect.py | ocr_utils.p
 L4: L4_raw_sessions/ 历史会话
 
 浏览器特殊操作: tmwebdriver_sop(文件上传/图搜/PDF blob/物理坐标/HttpOnly Cookie/autofill突破/跨域iframe/CDP/跨tab)
-键鼠: ljqCtrl_sop(禁pyautogui/先activate) 截图/视觉: ocr/vision_sop | 禁全屏截图，优先窗口
+键鼠: ljqCtrl_sop(禁pyautogui/先activate)
+UI操作/截图/视觉: computer_use.md | vision_sop | 窗口截图必用ljqCtrl
 定时:scheduled_task_sop | 自主:autonomous_operation_sop | watchdog/反射:agentmain --reflect
 手机:adb_ui.py
 

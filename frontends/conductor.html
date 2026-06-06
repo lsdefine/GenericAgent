@@ -459,7 +459,7 @@
       ws.send(JSON.stringify({msg})); inputEl.value=''; inputEl.focus();
     }
     sendBtn.addEventListener('click', send);
-    inputEl.addEventListener('keydown', e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send(); } });
+    inputEl.addEventListener('keydown', e=>{ if(e.key==='Enter' && !e.shiftKey && !e.isComposing && e.keyCode!==229){ e.preventDefault(); send(); } });
 
     /* 接通后端: hello 推送 cards/chat/log 快照, approval 由 /approval 推送 */
     connect();

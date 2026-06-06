@@ -1,0 +1,53 @@
+v58#1 ✅ AgentMail桥接集成 完成 (2026-06-06)
+  - agentmail_bridge.py: 程序化API(send_alert/send_report/list_inboxes/read_messages/daily_summary)
+  - auto_repair.py: diagnose自动发送AgentMail告警(磁盘/内存/OOM)
+  - health_server.py: /api/agentmail端点(alert/report/summary/inboxes)
+  - Git: bca6855
+
+v58#2 ✅ 调度任务历史看板 完成 (2026-06-06) R195
+v58#3 ✅ 磁盘清理自动化脚本 完成 (2026-06-06) R194
+v58#4 ✅ 系统快照→健康趋势融合 完成 (2026-06-06)
+  - /api/trend端点: query_trend_data()从SQLite快照提取7d/30d趋势
+  - /trend趋势页: Chart.js可视化, 7天/30天切换
+  - 修复: load_history()多格式兼容, root页面refresh_script误删, disk_pct手动计算
+  - sche_tasks/system_snapshot.json: 每6h自动采集快照
+  - 验收: 所有端点(///api/trend/trend/schedule) HTTP 200
+v58#5 ✅ 自主模式自省报告v2 完成 (2026-06-06)
+  - R190 4项改进方案0/4落地, 深度待命44%(改善归因有TODO非结构性)
+  - 报告: temp/self_reflection_v58_report.md
+
+v59#1 ✅ idle_guard.sh创建 完成 (2026-06-06)
+  - scripts/idle_guard.sh: 预检守卫, 3场景验证(有待办唤醒/无待办跳过/3次退避)
+  - 状态: temp/idle_counter.txt, temp/idle_last_action.txt
+  - SOP集成建议: 待用户审查
+v59#2 ✅ 飞书消息集成 完成 (2026-06-06)
+  - scripts/feishu_bridge.py: 基于lark-cli封装(send_message/send_alert/list_chats/list_unread)
+  - auto_repair.py集成: _send_alert自动尝试Feishu通道
+  - 阻塞: 需用户执行 lark-cli config bind 绑定身份
+v59#3 ✅ health_server systemd服务化 完成 (2026-06-06)
+  - scripts/svc.py: GA服务管理脚本(enable/disable/status/restart)
+  - /etc/systemd/system/health-server.service: Restart=always, User=admin, port 8081
+  - 验证: systemctl active, HTTP 200, 开机自启
+v59#4 ✅ 58脚本统一CLI入口 完成 (2026-06-06)
+  - scripts/ga_tool.py: list(10域/56脚本)/run/help/completion
+  - bash auto-complete生成, 动态分类
+v59#5 ✅ drift_detector状态审计 完成 (2026-06-06)
+  - drift_detector.py正常, memory_drift_check.json调度就绪(每周五06:00)
+  - 当前2 drift<3阈值, 18项已验证, check→apply→verify闭环完好
+v59#6 ✅ cleanup_disk调度接入 完成 (2026-06-06)
+  - disk_cleanup.json升级v2: 阈值≥90%自动触发+on_high_disk紧急清理
+  - health_server同步生效, 当前72%<90%跳过(预期行为)
+v59#7 ✅ 下载目录分析 完成 (2026-06-06)
+  - 发现: ~/Downloads不存在(无头服务器), 替代分析home目录
+  - projects(1.2G)/9router(716M)/GA(684M), 无大面积可清理文件
+  - 用户画像: 纯CLI工作流, 依赖包管理器, 无传统下载行为
+---
+
+## v60 规划完成 (2026-06-06)
+4条TODO, subagent评审精选
+[ ] idle_guard集成watchdog (8/10)
+[ ] adversarial_training_loop首跑 (8/10)
+[ ] Vision实战管线 (5/10)
+[ ] AgentMail实测 (5/10)
+⛔ 删除: CLI工具挖掘(4/10), global_mem过期项审查(4/10)
+👉 下次自主行动进入执行模式

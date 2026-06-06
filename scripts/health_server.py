@@ -33,6 +33,10 @@ from scripts.health_dashboard import (
 from scripts.alert_manager import AlertManager, ALERT_LOG
 from scripts.system_utils import ps_info, disk_info  # 孤儿工具整合
 
+# ── FileWatcher 事件存储 ───────────────────────────
+FW_EVENT_LOG = "/tmp/file_watcher_events.json"
+FW_MAX_EVENTS = 200  # 保留最近200条
+
 
 def _parse_size(val):
     """Parse health_dashboard size strings like '27.4GB' → float (GB).
@@ -91,6 +95,8 @@ class HealthHandler(BaseHTTPRequestHandler):
                 self._handle_api_code_dep()
             elif path == "/api/agentmail":
                 self._handle_api_agentmail()
+            elif path == "/api/file_watcher":
+                self._handle_api_file_watcher()
             elif path == "/code_dep":
                 self._handle_code_dep_html()
             elif path == "/":
@@ -375,6 +381,79 @@ class HealthHandler(BaseHTTPRequestHandler):
         except Exception as e:
             self._send_json(500, {"error": str(e)})
     
+    def _handle_api_file_watcher(self):
+        """处理 file_watcher 事件（GET 查询 / POST 接收）"""
+        if self.command == "POST":
+            self._handle_fw_post()
+        else:
+            self._handle_fw_get()
+
+    def _handle_fw_post(self):
+        """接收 file_watcher 推送的事件"""
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            if length == 0:
+                self._send_json(400, {"error": "Empty body"})
+                return
+            body = self.rfile.read(length).decode("utf-8")
+            event = json.loads(body)
+            event["_received_at"] = datetime.now().isoformat()
+
+            # 存储到事件日志
+            events = []
+            if os.path.exists(FW_EVENT_LOG):
+                try:
+                    events = json.loads(open(FW_EVENT_LOG).read())
+                except (json.JSONDecodeError, Exception):
+                    events = []
+            events.append(event)
+            # 只保留最近 N 条
+            if len(events) > FW_MAX_EVENTS:
+                events = events[-FW_MAX_EVENTS:]
+            with open(FW_EVENT_LOG, "w") as f:
+                json.dump(events, f, indent=2, ensure_ascii=False)
+
+            self._send_json(200, {"status": "ok", "event": event.get("event"), "path": event.get("path")})
+        except Exception as e:
+            self._send_json(500, {"error": str(e)})
+
+    def _handle_fw_get(self):
+        """返回最近的 file_watcher 事件列表"""
+        events = []
+        if os.path.exists(FW_EVENT_LOG):
+            try:
+                events = json.loads(open(FW_EVENT_LOG).read())
+            except (json.JSONDecodeError, Exception):
+                pass
+        # 支持 ?limit= 参数
+        parsed = urlparse(self.path)
+        qs = parse_qs(parsed.query)
+        limit = None
+        if "limit" in qs:
+            try:
+                limit = int(qs["limit"][0])
+            except ValueError:
+                pass
+        if limit and limit > 0:
+            events = events[-limit:]
+        self._send_json(200, {
+            "total": len(events),
+            "events": events,
+            "endpoint": "/api/file_watcher",
+        })
+
+    def do_POST(self):
+        """处理 POST 请求"""
+        parsed = urlparse(self.path)
+        path = parsed.path.rstrip("/") or "/"
+        try:
+            if path == "/api/file_watcher":
+                self._handle_fw_post()
+            else:
+                self._send_json(404, {"error": "Not Found", "path": path})
+        except Exception as e:
+            self._send_json(500, {"error": str(e)})
+
     def _send_json(self, status, data):
         """发送 JSON 响应"""
         self.send_response(status)
@@ -398,6 +477,7 @@ def main():
     print(f"  ├ 历史趋势:   http://{args.host}:{args.port}/api/history")
     print(f"  ├ 异常检测:   http://{args.host}:{args.port}/api/anomalies")
     print(f"  ├ AgentMail:  http://{args.host}:{args.port}/api/agentmail?action=alert&body=test")
+    print(f"  ├ 文件监控:   http://{args.host}:{args.port}/api/file_watcher (POST接收/GET查询)")
     print(f"  └ 代码依赖:   http://{args.host}:{args.port}/api/code_dep")
     print("  按 Ctrl+C 停止服务")
     

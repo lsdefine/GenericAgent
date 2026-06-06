@@ -1,0 +1,7 @@
+R164 | 2026-06-06 | 产出 | Hermes CLI能力地图探索 | 发现11个未利用能力(≥3验收通过), 产出能力地图文档R164, Skills Hub 850+, Cron/Gateway/MCP等高价值待接入
+R165 | 2026-06-06 | 产出 | SOP分类处置计划 | 57个SOP全量引用分析, 废弃9个, 合并6组16个, 保留22个, 集成10个, 产出Mermaid依赖图
+R166 | 2026-06-06 | 产出 | Vision API Pipeline实战化 | scripts/vision_api.py 已就绪(4后端), AUXILIARY_VISION环境变量发现, mock+真实API双测试通过, 创建temp/vision_pipeline.py可复用管道
+R167 | 2026-06-06 | 产出 | Browserless全链路管道构建 | 创建temp/browser_pipeline.py(192行)统一入口, 截图+Vision+OCR全链路, headless/visible双模式, JSON/文本输出
+R168 | 2026-06-06 | 产出 | auto_repair运行日志分析 | Python版本冲突导致100%失败(capture_output 3.7+), 发现4个改进点, 诊断修复建议
+R220 | 2026-06-06 | 产出 | browser_click+vision_agent端到端实战 | Xvfb+Selenium截图→OCR→点击闭环验证通过, VisionAgent独立测试通过
+R221 | 2026-06-06 | 产出 | quality模块接入交付管线 | quality模块集成到pre_delivery_check, 支持--quality自动质量评分, 通过/拒绝场景测试通过 | ✅ 完成

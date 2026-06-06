@@ -1,0 +1,326 @@
+#!/usr/bin/env python3
+"""
+prompt-optimize — 提示词优化循环 CLI
+======================================
+
+"实战化" prompt_optimization_loop_sop，将文档描述的优化循环转为可执行工具。
+
+功能:
+  score    — 评分（等效于 metrics_aggregator）
+  loop     — 单轮优化循环：评分 → 分析 → 显示建议 → 重新评分
+  diff     — 对比两个 prompt 文件的评分差异 (A/B 测试)
+  history  — 查看历史趋势
+  watch    — 监控目录，文件变化时自动重新评分
+"""
+
+import argparse
+import hashlib
+import json
+import os
+import sys
+import time
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Optional
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from engine.metrics.metrics_aggregator import (
+    score_prompt,
+    scan_directory,
+    format_report,
+    format_json,
+    save_history,
+    show_history,
+    suggest_improvements,
+    score_structure,
+    score_content,
+    score_consistency,
+    score_usability,
+)
+
+
+def cmd_score(args):
+    """评分子命令"""
+    if args.file:
+        from engine.metrics.metrics_aggregator import score_prompt
+        fpath = Path(args.file)
+        if not fpath.exists():
+            print(f"❌ 文件不存在: {args.file}")
+            sys.exit(1)
+        text = fpath.read_text(encoding="utf-8")
+        results = {str(fpath): score_prompt(text, str(fpath))}
+    else:
+        results = scan_directory(args.dir, args.pattern)
+
+    if "error" in results:
+        print(f"❌ {results['error']}")
+        sys.exit(1)
+
+    if args.save:
+        save_history(results)
+
+    if args.json:
+        print(format_json(results))
+    else:
+        print(format_report(results, detailed=args.report))
+
+    if args.suggest:
+        weak_map = {f: suggest_improvements(r["weak_tags"])
+                    for f, r in results.items() if "error" not in r and r["weak_tags"]}
+        if weak_map:
+            print(f"\n{'─' * 60}\n💡 改进建议：")
+            for fname, suggestions in weak_map.items():
+                print(f"\n  📄 {fname}")
+                for s in suggestions[:5]:
+                    print(f"    → {s}")
+        else:
+            print("\n✅ 没有弱项。")
+
+    scores = [v["total"] for v in results.values() if "error" not in v]
+    if scores:
+        avg = sum(scores) / len(scores)
+        verdict = "🎉 优秀！" if avg >= 4.5 else "👍 可优化。" if avg >= 3.5 else "⚠ 需改进。" if avg >= 2.5 else "❌ 急需修复。"
+        print(f"\n📊 平均分: {avg:.2f} {verdict}")
+
+
+def cmd_loop(args):
+    """优化循环：评分 → 显示建议 → 等待修复 → 重新评分"""
+    print("=" * 60)
+    print("  PROMPT OPTIMIZATION LOOP")
+    print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("=" * 60)
+
+    # 第1轮评分
+    print("\n🔍 第1轮: 评分中...")
+    if args.file:
+        fpath = Path(args.file)
+        text = fpath.read_text(encoding="utf-8")
+        round1 = {str(fpath): score_prompt(text, str(fpath))}
+    else:
+        round1 = scan_directory(args.dir, args.pattern)
+
+    print(format_report(round1, detailed=True))
+
+    # 分析弱项
+    weak_summary = {}
+    for fname, result in round1.items():
+        if "error" not in result and result["weak_tags"]:
+            weak_summary[fname] = {
+                "weak_tags": result["weak_tags"],
+                "suggestions": suggest_improvements(result["weak_tags"]),
+            }
+
+    if weak_summary:
+        print(f"\n{'─' * 60}")
+        print(f"📋 需要优化的文件 ({len(weak_summary)}个):")
+        for fname, info in weak_summary.items():
+            print(f"\n  📄 {fname}")
+            print(f"    弱项: {', '.join(info['weak_tags'])}")
+            for s in info["suggestions"]:
+                print(f"    → {s}")
+
+        # 自动模式: 生成修复建议报告
+        report_path = Path("optimization_plan.md")
+        with open(report_path, "w") as f:
+            f.write(f"# 优化计划 ({datetime.now().strftime('%Y-%m-%d %H:%M')})\n\n")
+            for fname, info in weak_summary.items():
+                f.write(f"## {fname}\n")
+                f.write(f"- 弱项: {', '.join(info['weak_tags'])}\n")
+                for s in info["suggestions"]:
+                    f.write(f"- [ ] {s}\n")
+                f.write("\n")
+        print(f"\n📝 优化计划已写入: {report_path}")
+
+    # 第2轮评分 (如果指定 --auto)
+    if args.auto:
+        print(f"\n{'─' * 60}")
+        print("🔍 第2轮: 重新评分（验证修复效果）...")
+        if args.file:
+            text = Path(args.file).read_text(encoding="utf-8")
+            round2 = {str(args.file): score_prompt(text, str(args.file))}
+        else:
+            round2 = scan_directory(args.dir, args.pattern)
+
+        print(format_report(round2, detailed=True))
+
+        # 对比
+        changes = []
+        for fname in round1:
+            if fname in round2 and "error" not in round1[fname] and "error" not in round2[fname]:
+                diff = round2[fname]["total"] - round1[fname]["total"]
+                changes.append((fname, round1[fname]["total"], round2[fname]["total"], diff))
+
+        if changes:
+            print(f"\n{'─' * 40}")
+            print("📊 前后对比:")
+            print(f"{'文件':<45} {'之前':>6} {'之后':>6} {'变化':>6}")
+            print("-" * 65)
+            for fname, before, after, diff in changes:
+                arrow = "▲" if diff > 0 else "▼" if diff < 0 else "─"
+                print(f"{fname:<45} {before:>5.1f} {after:>5.1f} {arrow}{diff:>+5.1f}")
+        save_history(round2)
+    else:
+        save_history(round1)
+
+    print("\n✅ 优化循环完成。")
+
+
+def cmd_diff(args):
+    """A/B 对比两个 prompt 文件"""
+    f1, f2 = Path(args.file1), Path(args.file2)
+    if not f1.exists():
+        print(f"❌ 文件不存在: {f1}")
+        sys.exit(1)
+    if not f2.exists():
+        print(f"❌ 文件不存在: {f2}")
+        sys.exit(1)
+
+    t1, t2 = f1.read_text(encoding="utf-8"), f2.read_text(encoding="utf-8")
+    r1, r2 = score_prompt(t1, str(f1)), score_prompt(t2, str(f2))
+
+    print("=" * 60)
+    print("  A/B PROMPT COMPARISON")
+    print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("=" * 60)
+
+    print(f"\n{'维度':<10} {'A':>8} {'B':>8} {'差异':>8}")
+    print("-" * 40)
+    dims = ["total", "grade"] + list("ABCD")
+    for dim in dims:
+        if dim == "grade":
+            va, vb = r1.get("grade", "?"), r2.get("grade", "?")
+            diff_s = "─" if va == vb else "→"
+            print(f"{dim:<10} {va:>8} {vb:>8} {diff_s:>8}")
+        elif dim in r1.get("dimensions", {}):
+            va = r1["dimensions"][dim]
+            vb = r2["dimensions"][dim]
+            d = vb - va
+            arrow = "▲" if d > 0 else "▼" if d < 0 else "─"
+            print(f"{dim:<10} {va:>8.1f} {vb:>8.1f} {arrow}{d:>+5.1f}")
+
+    # 弱项对比
+    for label, r, f in [("A", r1, f1), ("B", r2, f2)]:
+        issues = r.get("all_issues", [])
+        print(f"\n{label} ({f.name}) 弱项:")
+        if issues:
+            for i in issues:
+                print(f"  ⚠ {i}")
+        else:
+            print("  ✅ 无弱项")
+
+    # 建议
+    all_issues_a_b = set(r1.get("weak_tags", [])) | set(r2.get("weak_tags", []))
+    if all_issues_a_b:
+        print(f"\n💡 改进建议:")
+        for tag in sorted(all_issues_a_b):
+            from engine.metrics.metrics_aggregator import IMPROVEMENT_MAP
+            if tag in IMPROVEMENT_MAP:
+                print(f"  {tag}: {IMPROVEMENT_MAP[tag]}")
+
+
+def cmd_history(args):
+    """查看历史趋势"""
+    print(show_history())
+
+
+def cmd_watch(args):
+    """监控目录，文件变化时自动重新评分"""
+    import time as _time
+
+    print(f"👀 监控目录: {args.dir} (Ctrl+C 退出)")
+    print(f"   模式: {args.pattern}")
+
+    dir_path = Path(args.dir)
+    if not dir_path.exists():
+        print(f"❌ 目录不存在: {dir_path}")
+        sys.exit(1)
+
+    # 初始哈希
+    known = {}
+    try:
+        while True:
+            files = list(dir_path.rglob(args.pattern)) + list(dir_path.rglob("*.prompt"))
+            changed = []
+            for fpath in files:
+                if fpath.name.startswith("."):
+                    continue
+                try:
+                    h = hashlib.md5(fpath.read_bytes()).hexdigest()
+                    if fpath not in known:
+                        known[fpath] = h
+                        changed.append(fpath)
+                    elif known[fpath] != h:
+                        known[fpath] = h
+                        changed.append(fpath)
+                except Exception:
+                    pass
+
+            if changed:
+                print(f"\n[{_time.strftime('%H:%M:%S')}] {len(changed)} 个文件变化:")
+                for fpath in changed:
+                    text = fpath.read_text(encoding="utf-8")
+                    result = score_prompt(text, str(fpath))
+                    print(f"  📄 {fpath} → {result['grade']} ({result['total']:.1f})")
+
+            _time.sleep(args.interval)
+
+    except KeyboardInterrupt:
+        print("\n👋 监控停止。")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="提示词优化循环 CLI — prompt_optimization_loop_sop 实战化",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sub = parser.add_subparsers(dest="command", help="子命令")
+
+    # score
+    p_score = sub.add_parser("score", help="评分 (等效 metrics_aggregator)")
+    p_score.add_argument("--dir", "-d", default=".", help="扫描目录")
+    p_score.add_argument("--file", "-f", help="单个文件")
+    p_score.add_argument("--report", "-r", action="store_true", help="详细报告")
+    p_score.add_argument("--json", "-j", action="store_true", help="JSON 输出")
+    p_score.add_argument("--save", "-s", action="store_true", help="保存历史")
+    p_score.add_argument("--suggest", "-S", action="store_true", help="改进建议")
+    p_score.add_argument("--pattern", "-p", default="*.md", help="扫描模式")
+
+    # loop
+    p_loop = sub.add_parser("loop", help="单轮优化循环")
+    p_loop.add_argument("--dir", "-d", default=".", help="扫描目录")
+    p_loop.add_argument("--file", "-f", help="单个文件")
+    p_loop.add_argument("--pattern", "-p", default="*.md", help="扫描模式")
+    p_loop.add_argument("--auto", "-a", action="store_true", help="自动执行第二轮回评")
+
+    # diff
+    p_diff = sub.add_parser("diff", help="A/B 对比两个 prompt 文件")
+    p_diff.add_argument("file1", help="文件 A")
+    p_diff.add_argument("file2", help="文件 B")
+
+    # history
+    p_hist = sub.add_parser("history", help="查看历史趋势")
+
+    # watch
+    p_watch = sub.add_parser("watch", help="监控目录，变化时自动评分")
+    p_watch.add_argument("--dir", "-d", default=".", help="监控目录")
+    p_watch.add_argument("--pattern", "-p", default="*.md", help="监控模式")
+    p_watch.add_argument("--interval", "-i", type=int, default=5, help="轮询间隔(秒)")
+
+    args = parser.parse_args()
+
+    if args.command == "score":
+        cmd_score(args)
+    elif args.command == "loop":
+        cmd_loop(args)
+    elif args.command == "diff":
+        cmd_diff(args)
+    elif args.command == "history":
+        cmd_history(args)
+    elif args.command == "watch":
+        cmd_watch(args)
+    else:
+        parser.print_help()
+
+
+if __name__ == "__main__":
+    main()

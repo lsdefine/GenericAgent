@@ -1,6 +1,6 @@
 ---
-version: 1.0
-last_updated: "2026-05-30"
+version: 1.1
+last_updated: "2026-06-06"
 tags: [sop, autonomous, operation]
 ---
 
@@ -39,12 +39,13 @@ print(get_todo())       # 查看待办
 - 即使失败也记录实验过程和结果，失败报告同样有价值
 - 用户不在线，遇到需要决策的问题写入报告待审，不要卡住
 
-**收尾（4件事缺一不可）**：
+**收尾（5件事缺一不可）**：
 0. 重读本sop
 1. 在cwd写报告（文件名任意），若有记忆更新建议，附在报告末尾
 2. `from/import helper; complete_task(tasktitle, historyline, report_path)` → 自动编号+移报告到 autonomous_reports/+prepend history（historyline 格式：`类型 | 主题 | 结论`，严格单行）
 3. `set_todo()` 获取TODO路径 → 将已完成条目标记为 `[x]`（注意前缀）
-4. 结束，剩余TODO留到下次再做
+4. **自动触发 Digest**：`from memory.tools.report_digest import append_digest; append_digest(report_path)` 将报告摘要追加到当前报告末尾（若失败则忽略）
+5. 结束，剩余TODO留到下次再做
 
 ## 权限边界
 
@@ -64,3 +65,24 @@ print(get_todo())       # 查看待办
 
 ## 等待用户审查
 - 用户归来后审查报告，决定批准、修改或拒绝方案
+
+## 上下文恢复（Compaction Recovery）
+
+当检测到上下文被压缩（`<summary>` 开头、`[Previous session resumed]` 标记、上下文使用率警告），
+请执行 **上下文压缩恢复流程**：
+
+1. 读 `./temp/SESSION-STATE.md` — 了解当前任务、关键决定
+2. 执行 `bash scripts/agent_resume.sh --status` — 检查 reflect 服务状态
+3. 必要时执行 `bash scripts/agent_resume.sh` — 启动服务
+4. 按 `../memory/compaction_recovery_sop.md` 的 7 步流程完整恢复
+
+> 📋 完整恢复 SOP 见 `memory/compaction_recovery_sop.md`
+
+## 集成检查清单
+
+部署/更新后验证：
+
+- [ ] `./temp/SESSION-STATE.md` — 存在且内容正确
+- [ ] `scripts/agent_resume.sh` — 存在且可执行
+- [ ] `../memory/compaction_recovery_sop.md` — 存在
+- [ ] 每日 crontab 包含 benchmark + liveness 检查

@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>系统健康看板 (离线模式)</title>
+<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #e2e8f0; padding: 20px; }
+#app { max-width: 1200px; margin: 0 auto; }
+.header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; flex-wrap: wrap; }
+.header h1 { font-size: 24px; font-weight: 600; color: #f1f5f9; }
+.header .meta { font-size: 13px; color: #94a3b8; }
+.header .mode-tag { font-size: 11px; padding: 2px 8px; border-radius: 4px; background: #334155; color: #94a3b8; margin-left: 8px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-bottom: 24px; }
+.card { background: #1e293b; border-radius: 12px; padding: 20px; border: 1px solid #334155; transition: border-color .2s; }
+.card:hover { border-color: #475569; }
+.card .label { font-size: 13px; color: #94a3b8; margin-bottom: 8px; text-transform: uppercase; letter-spacing: .5px; }
+.card .value { font-size: 28px; font-weight: 700; color: #f1f5f9; }
+.card .sub { font-size: 13px; color: #64748b; margin-top: 4px; }
+.bar-bg { background: #334155; border-radius: 6px; height: 8px; margin-top: 12px; overflow: hidden; }
+.bar-fill { height: 100%; border-radius: 6px; transition: width .6s ease; }
+.green .bar-fill { background: linear-gradient(90deg, #22c55e, #4ade80); }
+.yellow .bar-fill { background: linear-gradient(90deg, #eab308, #facc15); }
+.red .bar-fill { background: linear-gradient(90deg, #ef4444, #f87171); }
+.disk-list { margin-top: 12px; }
+.disk-item { display: flex; justify-content: space-between; font-size: 14px; padding: 6px 0; border-bottom: 1px solid #1e293b; }
+.disk-item:last-child { border-bottom: none; }
+.disk-mount { color: #94a3b8; }
+.disk-used { color: #e2e8f0; }
+.process-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+.process-table th { text-align: left; color: #64748b; padding: 8px 4px; border-bottom: 1px solid #334155; }
+.process-table td { padding: 6px 4px; border-bottom: 1px solid #1e293b; color: #e2e8f0; }
+.process-table tr:hover td { background: #1e293b; }
+.status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+.dot-green { background: #22c55e; }
+.dot-yellow { background: #eab308; }
+.dot-red { background: #ef4444; }
+.loading { text-align: center; padding: 60px; color: #64748b; }
+.error { text-align: center; padding: 40px; color: #f87171; }
+.section-title { font-size: 16px; font-weight: 600; color: #f1f5f9; margin: 24px 0 12px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div v-if="loading" class="loading">
+    <p>🔄 加载系统数据...</p>
+  </div>
+  <div v-else-if="error" class="error">
+    <p>❌ {{ error }}</p>
+    <p style="font-size:13px;margin-top:8px;color:#94a3b8">提示: 运行 <code>python3 scripts/health_collector.py</code> 生成离线快照</p>
+  </div>
+  <template v-else>
+    <div class="header">
+      <h1>📊 系统健康看板 <span class="mode-tag">{{ mode === 'live' ? '实时' : '离线' }}</span></h1>
+      <div class="meta">
+        <span>{{ health.uptime || '-' }}</span> ·
+        <span>{{ health.timestamp ? health.timestamp.slice(0,19).replace('T',' ') : '-' }}</span> ·
+        <span>{{ health.process_count || '?' }} 进程</span>
+      </div>
+    </div>
+
+    <div class="grid">
+      <!-- CPU -->
+      <div class="card" :class="cpuBarClass">
+        <div class="label">🧠 CPU 使用率</div>
+        <div class="value">{{ safePct(health?.cpu?.percent) }}%</div>
+        <div class="sub">{{ health?.cpu?.model || 'CPU' }} · {{ health?.cpu?.count || '?' }}核</div>
+        <div class="bar-bg"><div class="bar-fill" :style="{width: safePct(health?.cpu?.percent) + '%'}"></div></div>
+      </div>
+      <!-- 内存 -->
+      <div class="card" :class="memBarClass">
+        <div class="label">💾 内存</div>
+        <div class="value">{{ safePct(health?.memory?.percent) }}%</div>
+        <div class="sub">{{ safeGb(health?.memory?.used_gb) }}GB / {{ safeGb(health?.memory?.total_gb) }}GB</div>
+        <div class="bar-bg"><div class="bar-fill" :style="{width: safePct(health?.memory?.percent) + '%'}"></div></div>
+      </div>
+      <!-- 负载 -->
+      <div class="card">
+        <div class="label">📈 系统负载</div>
+        <div class="value">{{ safeLoad(0) }}</div>
+        <div class="sub">1m: {{ safeLoad(0) }} · 5m: {{ safeLoad(1) }} · 15m: {{ safeLoad(2) }}</div>
+      </div>
+      <!-- 进程 -->
+      <div class="card">
+        <div class="label">⚙️ 总进程数</div>
+        <div class="value">{{ health?.process_count ?? '?' }}</div>
+        <div class="sub">{{ mode === 'live' ? '实时' : '快照' }}数据</div>
+      </div>
+    </div>
+
+    <!-- 磁盘 -->
+    <div class="section-title">💽 磁盘使用</div>
+    <div class="grid">
+      <div class="card" v-for="disk in (health?.disk || [])" :key="disk.mount">
+        <div class="label">{{ disk.mount }}</div>
+        <div class="value">{{ safePct(disk.percent) }}%</div>
+        <div class="sub">{{ safeGb(disk.used_gb) }}GB / {{ safeGb(disk.total_gb) }}GB</div>
+        <div class="bar-bg"><div class="bar-fill" :style="{width: Math.min(safePct(disk.percent), 100) + '%'}"></div></div>
+      </div>
+    </div>
+
+    <!-- 服务状态 -->
+    <div class="section-title" v-if="hasServices">🔌 服务状态</div>
+    <div class="card" v-if="hasServices">
+      <table class="process-table">
+        <tr><th>服务名</th><th>状态</th></tr>
+        <tr v-for="(status, name) in (health?.services || {})" :key="name">
+          <td>{{ name }}</td>
+          <td>
+            <span class="status-dot" :class="status === 'running' ? 'dot-green' : 'dot-red'"></span>
+            {{ status }}
+          </td>
+        </tr>
+      </table>
+    </div>
+  </template>
+</div>
+
+<script>
+const { createApp } = Vue;
+
+createApp({
+  data() {
+    return {
+      health: null,
+      loading: true,
+      error: null,
+      timer: null,
+      mode: 'offline'
+    };
+  },
+  computed: {
+    cpuBarClass() {
+      if (!this.health) return '';
+      const pct = this.health.cpu?.percent ?? 0;
+      if (pct > 80) return 'red';
+      if (pct > 50) return 'yellow';
+      return 'green';
+    },
+    memBarClass() {
+      if (!this.health) return '';
+      const pct = this.health.memory?.percent ?? 0;
+      if (pct > 80) return 'red';
+      if (pct > 60) return 'yellow';
+      return 'green';
+    },
+    hasServices() {
+      return this.health?.services && Object.keys(this.health.services).length > 0;
+    }
+  },
+  methods: {
+    safePct(v) { return (v ?? 0).toFixed(1); },
+    safeGb(v) { return (v ?? 0).toFixed(1); },
+    safeLoad(i) { return ((this.health?.load_avg || [])[i] ?? 0).toFixed(2); },
+    async fetchData() {
+      // 从URL参数解析mode
+      const params = new URLSearchParams(window.location.search);
+      const forcedMode = params.get('mode');
+
+      // 尝试实时API
+      if (forcedMode !== 'offline') {
+        try {
+          const resp = await fetch('/api/health');
+          if (resp.ok) {
+            this.health = await resp.json();
+            this.mode = 'live';
+            this.error = null;
+            this.loading = false;
+            return;
+          }
+        } catch(e) { /* fall through to offline */ }
+      }
+
+      // 离线模式: 从JSON文件加载
+      if (forcedMode !== 'live') {
+        try {
+          const jsonPath = params.get('data') || 'temp/health_snapshot.json';
+          const resp = await fetch(jsonPath);
+          if (resp.ok) {
+            this.health = await resp.json();
+            this.mode = 'offline';
+            this.error = null;
+            this.loading = false;
+            return;
+          }
+          throw new Error(`HTTP ${resp.status}`);
+        } catch(e) {
+          this.error = `离线数据加载失败: ${e.message}`;
+          this.loading = false;
+        }
+      }
+    }
+  },
+  mounted() {
+    this.fetchData();
+    // 实时模式每15s刷新, 离线模式不刷新
+    this.timer = setInterval(() => {
+      if (this.mode === 'live') this.fetchData();
+    }, 15000);
+  },
+  beforeUnmount() {
+    if (this.timer) clearInterval(this.timer);
+  }
+}).mount('#app');
+</script>
+</body>
+</html>

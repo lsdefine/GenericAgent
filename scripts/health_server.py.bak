@@ -1,0 +1,583 @@
+#!/usr/bin/env python3
+"""
+health_server.py — 系统健康看板 HTTP 服务 📡
+
+将 health_dashboard 从静态 HTML 文件转为 HTTP 服务，
+支持实时刷新 + JSON API。
+
+用法:
+  python scripts/health_server.py --port 8080     # 启动服务（默认 8899）
+  curl http://localhost:8899/api/health           # 获取 JSON 指标
+  curl http://localhost:8899/api/history          # 获取历史趋势
+  curl http://localhost:8899/                     # 获取完整 HTML 看板
+
+依赖: Python 标准库（无需额外安装）
+"""
+
+import os, sys, json, time
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from datetime import datetime
+from urllib.parse import urlparse, parse_qs
+
+# 添加项目根到 sys.path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from scripts.health_dashboard import (
+    collect_data,
+    load_history,
+    detect_anomalies,
+    generate_html,
+    check_alerts,
+    DATA_LOG_PATH,
+)
+from scripts.system_snapshot_db import query_trend_data
+from scripts.alert_manager import AlertManager, ALERT_LOG
+from scripts.system_utils import ps_info, disk_info  # 孤儿工具整合
+
+import sys; print('health_server disabled by admin - reducing memory usage'); sys.exit(0)
+
+
+def _parse_size(val):
+    """Parse health_dashboard size strings like '27.4GB' → float (GB).
+    Also accepts raw numbers (treated as GB)."""
+    if isinstance(val, (int, float)):
+        return float(val)
+    s = str(val).strip().upper()
+    if not s:
+        return 0.0
+    multipliers = {"KB": 1/1024/1024, "MB": 1/1024, "GB": 1.0, "TB": 1024.0,
+                   "K": 1/1024/1024, "M": 1/1024, "G": 1.0, "T": 1024.0}
+    for unit, factor in multipliers.items():
+        if s.endswith(unit):
+            try:
+                return float(s[:-len(unit)]) * factor
+            except ValueError:
+                return 0.0
+    if s.endswith("B"):
+        try:
+            return float(s[:-1]) / (1024**3)
+        except ValueError:
+            return 0.0
+    try:
+        return float(s)
+    except ValueError:
+        return 0.0
+
+
+class HealthHandler(BaseHTTPRequestHandler):
+    """HTTP 请求处理器"""
+    
+    # 禁用日志缓冲
+    def log_message(self, format, *args):
+        sys.stderr.write(f"[{datetime.now().strftime('%H:%M:%S')}] {format % args}\n")
+    
+    def do_GET(self):
+        parsed = urlparse(self.path)
+        path = parsed.path.rstrip("/") or "/"
+        
+        try:
+            if path == "/api/health":
+                self._handle_api_health()
+            elif path == "/api/history":
+                self._handle_api_history()
+            elif path == "/api/anomalies":
+                self._handle_api_anomalies()
+            elif path == "/api/alerts":
+                self._handle_api_alerts()
+            elif path == "/api/trend":
+                self._handle_api_trend()
+            elif path == "/trend":
+                self._handle_trend_html()
+            elif path == "/vue" or path == "/dashboard":
+                self._handle_vue_dashboard()
+            elif path == "/api/scheduler":
+                self._handle_api_scheduler()
+            elif path == "/schedule":
+                self._handle_scheduler_html()
+            elif path == "/api/code_dep":
+                self._handle_api_code_dep()
+            elif path == "/api/agentmail":
+                self._handle_api_agentmail()
+            elif path == "/code_dep":
+                self._handle_code_dep_html()
+            elif path == "/":
+                self._handle_html()
+            else:
+                self._send_json(404, {"error": "Not Found", "path": path})
+        except Exception as e:
+            self._send_json(500, {"error": str(e)})
+    
+    def _collect_data(self):
+        """收集数据并触发告警"""
+        data = collect_data()
+        # 触发 alert_manager 告警
+        try:
+            AlertManager().check_and_dispatch(data)
+        except Exception:
+            pass
+        return data
+    
+    def _handle_html(self):
+        """返回完整 HTML 看板"""
+        data = self._collect_data()
+        history = load_history()
+        anomalies = detect_anomalies(collect_data(), history) if history else []
+        html = generate_html(data, report_path="")
+        
+        # 注入自动刷新 JS 和导航链接
+        refresh_script = """
+        <script>
+        window.addEventListener('DOMContentLoaded', function() {
+            setTimeout(function() { location.reload(); }, 30000);
+        });
+        </script>
+        """
+        nav_links = """
+        <div style="position:fixed;top:10px;right:10px;display:flex;gap:8px;z-index:999">
+          <a href="/trend" style="background:#7c3aed;color:#fff;padding:8px 14px;text-decoration:none;border-radius:6px;font-size:13px">📈 趋势</a>
+          <a href="/schedule" style="background:#2a2a3e;color:#aaa;padding:8px 14px;text-decoration:none;border-radius:6px;font-size:13px">📋 调度</a>
+        </div>
+        """
+        if "</body>" in html:
+            html = html.replace("</body>", nav_links + refresh_script + "\n</body>")
+        else:
+            html += refresh_script
+        
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Refresh", "30")
+        self.end_headers()
+        self.wfile.write(html.encode("utf-8"))
+    
+    def _handle_api_health(self):
+        """返回 JSON 格式的当前健康指标"""
+        data = self._collect_data()
+        
+        # 简化数据
+        result = {
+            "timestamp": datetime.now().isoformat(),
+            "cpu": {
+                "percent": float(data.get("cpu_percent", 0)),
+                "count": int(data.get("cpu_count", 0)),
+                "model": str(data.get("cpu_model", "")),
+            },
+            "memory": {
+                "percent": float(data.get("mem_percent", 0)),
+                "used_gb": _parse_size(data.get("mem_used", 0)),
+                "total_gb": _parse_size(data.get("mem_total", 0)),
+                "available_gb": _parse_size(data.get("mem_available", 0)),
+            },
+            "disk": [
+                {
+                    "mount": d.get("mount", ""),
+                    "percent": float(d.get("percent", 0)),
+                    "used_gb": _parse_size(d.get("used", 0)),
+                    "total_gb": _parse_size(d.get("total", 0)),
+                }
+                for d in data.get("disks", [])
+            ],
+            "uptime": str(data.get("uptime", "")),
+            "load_avg": [float(x) for x in data.get("load_avg", [0, 0, 0])],
+            "services": data.get("services", {}),
+            "process_count": int(data.get("process_count", 0)),
+        }
+        self._send_json(200, result)
+    
+    def _handle_api_history(self):
+        """返回历史趋势数据"""
+        history = load_history()
+        limit = None
+        parsed = urlparse(self.path)
+        qs = parse_qs(parsed.query)
+        if "limit" in qs:
+            try:
+                limit = int(qs["limit"][0])
+            except ValueError:
+                pass
+        
+        if limit and limit > 0:
+            history = history[-limit:]
+        
+        # 提取趋势字段
+        trend = []
+        for snap in history:
+            entry = {
+                "timestamp": snap.get("timestamp", ""),
+                "cpu_percent": snap.get("cpu_percent", 0),
+                "mem_percent": snap.get("mem_percent", 0),
+            }
+            disks = snap.get("disks", [])
+            if disks:
+                entry["disk_percent"] = max(d["percent"] for d in disks)
+            else:
+                entry["disk_percent"] = 0
+            trend.append(entry)
+        
+        result = {
+            "total": len(trend),
+            "data": trend,
+        }
+        self._send_json(200, result)
+    
+    def _handle_api_anomalies(self):
+        """返回异常检测结果"""
+        try:
+            current_data = self._collect_data()
+            history = load_history()
+            if not history:
+                self._send_json(200, {"anomalies": [], "message": "历史数据不足，无法进行异常检测"})
+                return
+            
+            anomalies = detect_anomalies(current_data, history)
+            result = {
+                "timestamp": datetime.now().isoformat(),
+                "current": {
+                    "cpu_percent": current_data.get("cpu_percent", 0),
+                    "mem_percent": current_data.get("mem_percent", 0),
+                    "disk_percent": max(d.get("percent", 0) for d in current_data.get("disks", [{}])),
+                },
+                "anomalies": anomalies,
+                "anomaly_count": len(anomalies),
+            }
+            self._send_json(200, result)
+        except Exception as e:
+            self._send_json(500, {"error": str(e)})
+    
+    def _handle_api_alerts(self):
+        """返回告警历史"""
+        import json
+        from pathlib import Path
+        try:
+            alert_log = Path(ALERT_LOG)
+            if alert_log.exists():
+                alerts = json.loads(alert_log.read_text())
+            else:
+                alerts = []
+            self._send_json(200, {
+                "timestamp": datetime.now().isoformat(),
+                "alert_count": len(alerts),
+                "alerts": alerts[-50:]  # 返回最近50条
+            })
+        except Exception as e:
+            self._send_json(500, {"error": str(e)})
+    
+    def _handle_api_trend(self):
+        """返回快照数据库趋势数据 (支持 ?range=7d|30d)"""
+        parsed = urlparse(self.path)
+        qs = parse_qs(parsed.query)
+        range_days = int(qs.get("range", ["7"])[0].replace("d", ""))
+        try:
+            data = query_trend_data(days=range_days)
+            self._send_json(200, {
+                "range": f"{range_days}d",
+                "total": len(data),
+                "data": data,
+            })
+        except Exception as e:
+            self._send_json(500, {"error": str(e)})
+    
+    def _handle_trend_html(self):
+        """返回趋势图HTML页面 (Chart.js)"""
+        html = '''<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="utf-8">
+<title>系统资源趋势 - Snapshot DB</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,'Segoe UI',sans-serif;background:#0f0f1a;color:#e0e0e0;padding:20px}
+h1{color:#7c3aed;margin-bottom:20px}
+.controls{display:flex;gap:10px;margin-bottom:20px}
+.controls button{padding:8px 20px;border:none;border-radius:6px;cursor:pointer;font-size:14px}
+.controls button.active{background:#7c3aed;color:#fff}
+.controls button:not(.active){background:#2a2a3e;color:#aaa}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+.card{background:#1a1a2e;border-radius:12px;padding:16px}
+.card h3{color:#7c3aed;margin-bottom:10px}
+canvas{max-height:300px}
+</style>
+</head>
+<body>
+<h1>📈 系统资源趋势</h1>
+<div class="controls">
+  <button onclick="setRange(7)" class="active">7天</button>
+  <button onclick="setRange(30)">30天</button>
+</div>
+<div class="grid">
+  <div class="card"><h3>💾 内存使用率</h3><canvas id="memChart"></canvas></div>
+  <div class="card"><h3>💿 磁盘使用率</h3><canvas id="diskChart"></canvas></div>
+  <div class="card"><h3>⚙ 进程数</h3><canvas id="procChart"></canvas></div>
+  <div class="card"><h3>📊 运行时长</h3><canvas id="uptimeChart"></canvas></div>
+</div>
+<script>
+let charts = {};
+async function loadData(range=7){
+  const r = await fetch('/api/trend?range='+range+'d');
+  const d = await r.json();
+  const labels = d.data.map(p=>p.timestamp);
+  renderChart('memChart','内存使用率 %','mem_pct',labels,d.data,'#7c3aed');
+  renderChart('diskChart','磁盘使用率 %','disk_pct',labels,d.data,'#f59e0b');
+  renderChart('procChart','进程数','proc_count',labels,d.data,'#10b981');
+  renderChart('uptimeChart','运行天数','uptime_days',labels,d.data,'#3b82f6');
+}
+function renderChart(id,label,key,labels,data,color){
+  const vals = data.map(p=>p[key]);
+  if(charts[id]) charts[id].destroy();
+  charts[id] = new Chart(document.getElementById(id), {
+    type:'line',
+    data:{labels:labels, datasets:[{label:label, data:vals, borderColor:color, fill:false, tension:0.3}]},
+    options:{responsive:true, plugins:{legend:{display:false}}, scales:{y:{beginAtZero:true, grid:{color:'#333'}}, x:{grid:{display:false}}}}
+  });
+}
+function setRange(d){
+  document.querySelectorAll('.controls button').forEach(b=>b.classList.remove('active'));
+  event.target.classList.add('active');
+  loadData(d);
+}
+loadData(7);
+</script>
+</body>
+</html>'''
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(html.encode("utf-8"))
+    
+    def _handle_vue_dashboard(self):
+        """返回 Vue 3 健康看板页面"""
+        import os
+        vue_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vue_health_dashboard.html")
+        if os.path.exists(vue_path):
+            with open(vue_path, "r", encoding="utf-8") as f:
+                html = f.read()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(html.encode("utf-8"))
+        else:
+            self._send_json(404, {"error": "Vue dashboard not found"})
+    
+    def _parse_scheduler_log(self, sche_dir):
+        """从 scheduler.log + done/ 目录解析每个任务的执行历史"""
+        import re
+        from collections import defaultdict
+        log_path = os.path.join(sche_dir, "scheduler.log")
+        history = defaultdict(list)
+        # 1) 从 scheduler.log 解析 TRIGGER/ERROR 事件
+        if os.path.exists(log_path):
+            try:
+                with open(log_path) as f:
+                    for line in f:
+                        line = line.strip()
+                        m = re.match(r'^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2})\s+(INFO|ERROR|WARN)\s+(.*)', line)
+                        if not m:
+                            continue
+                        ts, level, msg = m.groups()
+                        tm = re.match(r'TRIGGER\s+(\S+)', msg)
+                        if tm:
+                            history[tm.group(1)].append({
+                                'timestamp': ts, 'status': 'success', 'message': msg[:80]
+                            })
+                            continue
+                        em = re.match(r'Schema validation failed for\s+(\S+)', msg)
+                        if em:
+                            task_name = em.group(1).replace('.json', '')
+                            history[task_name].append({
+                                'timestamp': ts, 'status': 'error', 'message': msg[:80]
+                            })
+            except:
+                pass
+        # 2) 从 done/ 目录解析执行完成报告（补充更准确的完成状态）
+        done_dir = os.path.join(sche_dir, "done")
+        if os.path.isdir(done_dir):
+            try:
+                for fname in os.listdir(done_dir):
+                    if not fname.endswith('.md'):
+                        continue
+                    # 文件名格式: YYYY-MM-DD_HHMM_taskname.md
+                    m = re.match(r'^(\d{4}-\d{2}-\d{2})_(\d{4})_(.+)\.md$', fname)
+                    if not m:
+                        continue
+                    date_str, time_str, task_name = m.groups()
+                    ts = f"{date_str} {time_str[:2]}:{time_str[2:]}"
+                    # 读文件头判断执行状态
+                    status = 'success'
+                    try:
+                        with open(os.path.join(done_dir, fname), encoding='utf-8') as df:
+                            head = df.read(500)
+                            if '失败' in head or 'ERROR' in head or 'FAIL' in head.upper():
+                                status = 'error'
+                    except:
+                        pass
+                    history[task_name].append({
+                        'timestamp': ts,
+                        'status': status,
+                        'message': f'完成报告 {fname}'
+                    })
+            except:
+                pass
+        log_mtime = os.path.getmtime(log_path) if os.path.exists(log_path) else 0
+        return history, log_mtime
+
+    def _handle_api_scheduler(self):
+        """返回调度任务状态 JSON（含执行历史）"""
+        import os, json
+        from pathlib import Path
+        sche_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sche_tasks")
+        # 解析执行历史
+        history, log_mtime = self._parse_scheduler_log(sche_dir)
+        tasks = []
+        try:
+            for f in sorted(os.listdir(sche_dir)):
+                if not f.endswith('.json') or f in ('scheduler.log', 'budget_log.log.bak', 'health_history.json'):
+                    continue
+                fp = os.path.join(sche_dir, f)
+                try:
+                    with open(fp) as fh:
+                        data = json.load(fh)
+                except:
+                    tasks.append({"name": f.replace('.json',''), "error": "parse failed"})
+                    continue
+                if not isinstance(data, dict):
+                    tasks.append({"name": f.replace('.json',''), "error": "not a valid task JSON (must be object)"})
+                    continue
+                task_name = f.replace('.json', '')
+                task_history = history.get(task_name, [])
+                # 按时间降序排列
+                recent = sorted(task_history, key=lambda x: x['timestamp'], reverse=True)
+                last_run = recent[0]['timestamp'] if recent else None
+                error_count = sum(1 for h in recent if h['status'] == 'error')
+                tasks.append({
+                    "name": task_name,
+                    "schedule": data.get('schedule', '?'),
+                    "repeat": data.get('repeat', '?'),
+                    "enabled": data.get('enabled', False),
+                    "commands": data.get('commands', data.get('command', '')),
+                    "last_run": last_run or "N/A",
+                    "error_count": error_count,
+                    "recent_runs": recent[:3],  # 最近3次
+                    "description": data.get('description', ''),
+                })
+        except Exception as e:
+            self._send_json(500, {"error": str(e)})
+            return
+        self._send_json(200, {
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "total": len(tasks),
+            "enabled": sum(1 for t in tasks if t.get('enabled')),
+            "tasks": tasks,
+        })
+    
+    def _handle_scheduler_html(self):
+        """返回调度任务看板 HTML"""
+        import os
+        html_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scheduler_dashboard.html")
+        if os.path.exists(html_path):
+            with open(html_path, "r", encoding="utf-8") as f:
+                html = f.read()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(html.encode("utf-8"))
+        else:
+            self._send_json(404, {"error": "Scheduler dashboard not found"})
+    
+    def _handle_api_code_dep(self):
+        """返回代码依赖图 JSON"""
+        try:
+            import sys, os
+            sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            from scripts.dep_scanner import build_graph
+            graph = build_graph()
+            self._send_json(200, graph)
+        except Exception as e:
+            self._send_json(500, {"error": str(e)})
+    
+    def _handle_code_dep_html(self):
+        """返回代码依赖图 HTML 看板"""
+        import os
+        html_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "code_dep_dashboard.html")
+        if os.path.exists(html_path):
+            with open(html_path, "r", encoding="utf-8") as f:
+                html = f.read()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(html.encode("utf-8"))
+        else:
+            self._send_json(404, {"error": "Code dep dashboard not found"})
+    
+    def _handle_api_agentmail(self):
+        """AgentMail 桥接 API — 发送报告/告警"""
+        from urllib.parse import parse_qs
+        import sys, os
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        
+        params = parse_qs(urlparse(self.path).query)
+        action = (params.get("action") or [""])[0]
+        to = (params.get("to") or [""])[0]
+        subject = (params.get("subject") or [""])[0]
+        body = (params.get("body") or [""])[0]
+        
+        if not action:
+            self._send_json(400, {"error": "Missing ?action= (alert|report|summary)"})
+            return
+        
+        try:
+            from scripts.agentmail_bridge import AgentMailBridge
+            bridge = AgentMailBridge()
+            
+            if action == "alert":
+                r = bridge.send_alert(params.get("type", ["generic"])[0], body or "Alert", params.get("severity", ["info"])[0])
+                self._send_json(200, {"sent": True, "result": str(r)})
+            elif action == "report":
+                r = bridge.send_report(subject or "Report", body or "(empty)", to or None)
+                self._send_json(200, {"sent": True, "result": str(r)})
+            elif action == "summary":
+                import json
+                metrics = json.loads(body) if body else {}
+                r = bridge.daily_summary(metrics)
+                self._send_json(200, {"sent": True, "result": str(r)})
+            elif action == "inboxes":
+                inboxes = bridge.list_inboxes()
+                self._send_json(200, {"inboxes": inboxes})
+            else:
+                self._send_json(400, {"error": f"Unknown action: {action}"})
+        except Exception as e:
+            self._send_json(500, {"error": str(e)})
+    
+    def _send_json(self, status, data):
+        """发送 JSON 响应"""
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8"))
+
+
+def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="系统健康看板 HTTP 服务")
+    parser.add_argument("--port", "-p", type=int, default=8899, help="监听端口 (默认: 8899)")
+    parser.add_argument("--host", default="0.0.0.0", help="监听地址 (默认: 0.0.0.0)")
+    args = parser.parse_args()
+    
+    server = HTTPServer((args.host, args.port), HealthHandler)
+    print(f"📡 系统健康看板服务启动 ├ 地址: http://{args.host}:{args.port}")
+    print(f"  ├ HTML 看板:  http://{args.host}:{args.port}/")
+    print(f"  ├ JSON 指标:  http://{args.host}:{args.port}/api/health")
+    print(f"  ├ 历史趋势:   http://{args.host}:{args.port}/api/history")
+    print(f"  ├ 异常检测:   http://{args.host}:{args.port}/api/anomalies")
+    print(f"  ├ AgentMail:  http://{args.host}:{args.port}/api/agentmail?action=alert&body=test")
+    print(f"  └ 代码依赖:   http://{args.host}:{args.port}/api/code_dep")
+    print("  按 Ctrl+C 停止服务")
+    
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\n🛑 服务已停止")
+        server.server_close()
+
+
+if __name__ == "__main__":
+    main()

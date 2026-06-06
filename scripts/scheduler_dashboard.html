@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>调度任务看板</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f0f2f5; color: #333; padding: 20px; }
+h1 { font-size: 24px; margin-bottom: 16px; color: #1a1a2e; }
+.header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.last-update { color: #888; font-size: 13px; }
+table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,.08); }
+th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid #eee; font-size: 14px; }
+th { background: #1a1a2e; color: #fff; font-weight: 600; white-space: nowrap; }
+tr:hover { background: #f8f9ff; }
+.enabled { color: #22c55e; font-weight: 600; }
+.disabled { color: #ef4444; }
+.status-ok { background: #dcfce7; color: #166534; padding: 2px 8px; border-radius: 4px; font-size: 12px; }
+.status-err { background: #fee2e2; color: #991b1b; padding: 2px 8px; border-radius: 4px; font-size: 12px; }
+.status-na { background: #f3f4f6; color: #6b7280; padding: 2px 8px; border-radius: 4px; font-size: 12px; }
+.summary { display: flex; gap: 16px; margin-bottom: 16px; }
+.card { background: #fff; border-radius: 8px; padding: 16px 20px; box-shadow: 0 2px 8px rgba(0,0,0,.08); flex: 1; }
+.card-num { font-size: 28px; font-weight: 700; }
+.card-label { font-size: 12px; color: #888; margin-top: 4px; }
+.tag-daily { background: #dbeafe; color: #1e40af; padding: 2px 6px; border-radius: 3px; font-size: 11px; }
+.tag-weekly { background: #fef3c7; color: #92400e; padding: 2px 6px; border-radius: 3px; font-size: 11px; }
+.filter-bar { margin-bottom: 12px; }
+.filter-bar button { padding: 6px 14px; border: 1px solid #ddd; background: #fff; border-radius: 4px; cursor: pointer; margin-right: 6px; font-size: 13px; }
+.filter-bar button.active { background: #1a1a2e; color: #fff; border-color: #1a1a2e; }
+.history-badge { display: inline-block; padding: 1px 5px; border-radius: 3px; font-size: 11px; margin-right: 3px; white-space: nowrap; }
+.history-ok { background: #dcfce7; color: #166534; }
+.history-err { background: #fee2e2; color: #991b1b; }
+.error-count { font-weight: 700; }
+.error-count-0 { color: #22c55e; }
+.error-count-n { color: #ef4444; }
+.last-run-na { color: #999; font-style: italic; }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>📋 调度任务看板</h1>
+  <span class="last-update" id="lastUpdate">加载中...</span>
+</div>
+<div class="summary" id="summary"></div>
+<div class="filter-bar">
+  <button class="active" data-filter="all" onclick="setFilter('all')">全部</button>
+  <button data-filter="daily" onclick="setFilter('daily')">每日</button>
+  <button data-filter="weekly" onclick="setFilter('weekly')">每周</button>
+  <button data-filter="enabled" onclick="setFilter('enabled')">已启用</button>
+  <button data-filter="disabled" onclick="setFilter('disabled')">已禁用</button>
+</div>
+<table>
+<thead><tr>
+  <th>任务名称</th>
+  <th>调度时间</th>
+  <th>周期</th>
+  <th>状态</th>
+  <th>上次执行</th>
+  <th>失败次数</th>
+  <th>最近3次执行</th>
+  <th>命令</th>
+</tr></thead>
+<tbody id="tbody"></tbody>
+</table>
+<script>
+let allTasks = [];
+let currentFilter = 'all';
+
+function setFilter(f) {
+  currentFilter = f;
+  document.querySelectorAll('.filter-bar button').forEach(b => b.classList.toggle('active', b.dataset.filter === f));
+  render();
+}
+
+function render() {
+  const tbody = document.getElementById('tbody');
+  const rows = allTasks.filter(t => {
+    if (currentFilter === 'all') return true;
+    if (currentFilter === 'enabled') return t.enabled;
+    if (currentFilter === 'disabled') return !t.enabled;
+    if (currentFilter === 'daily') return t.repeat === 'daily';
+    if (currentFilter === 'weekly') return t.repeat === 'weekly';
+    return true;
+  });
+  tbody.innerHTML = rows.map(t => {
+    const statusClass = t.enabled ? 'status-ok' : 'status-na';
+    const statusText = t.enabled ? '✅ 已启用' : '⏸️ 已暂停';
+    const repeatClass = t.repeat === 'daily' ? 'tag-daily' : 'tag-weekly';
+    const cmd = Array.isArray(t.commands) ? t.commands.join('; ').substring(0, 50) : String(t.commands||'').substring(0, 50);
+    const lastRun = t.last_run && t.last_run !== 'N/A' ? t.last_run : '<span class="last-run-na">从未执行</span>';
+    const errCount = t.error_count || 0;
+    const errClass = errCount === 0 ? 'error-count-0' : 'error-count-n';
+    
+    // Build history badges
+    let historyHtml = '';
+    if (t.recent_runs && t.recent_runs.length > 0) {
+      historyHtml = t.recent_runs.map(r => {
+        const cls = r.status === 'success' ? 'history-ok' : 'history-err';
+        const icon = r.status === 'success' ? '✅' : '❌';
+        // Show just time portion (HH:MM) for brevity
+        const time = r.timestamp ? r.timestamp.substring(5) : '?';
+        return `<span class="history-badge ${cls}" title="${r.message || ''}">${icon} ${time}</span>`;
+      }).join('');
+    } else {
+      historyHtml = '<span class="last-run-na">无记录</span>';
+    }
+    
+    return `<tr>
+      <td><strong>${t.name}</strong></td>
+      <td>${t.schedule || '?'}</td>
+      <td><span class="${repeatClass}">${t.repeat||'?'}</span></td>
+      <td><span class="${statusClass}">${statusText}</span></td>
+      <td style="white-space:nowrap;">${lastRun}</td>
+      <td><span class="error-count ${errClass}">${errCount}</span></td>
+      <td style="white-space:nowrap;">${historyHtml}</td>
+      <td style="font-size:12px;color:#666;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${cmd}</td>
+    </tr>`;
+  }).join('');
+  
+  // Empty state
+  if (rows.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#999;padding:30px;">没有匹配的任务</td></tr>';
+  }
+  
+  const summary = document.getElementById('summary');
+  const total = allTasks.length;
+  const enabled = allTasks.filter(t => t.enabled).length;
+  const daily = allTasks.filter(t => t.repeat === 'daily').length;
+  const weekly = allTasks.filter(t => t.repeat === 'weekly').length;
+  const withErrors = allTasks.filter(t => (t.error_count || 0) > 0).length;
+  summary.innerHTML = `
+    <div class="card"><div class="card-num">${total}</div><div class="card-label">总任务数</div></div>
+    <div class="card"><div class="card-num">${enabled}</div><div class="card-label">已启用</div></div>
+    <div class="card"><div class="card-num">${daily}</div><div class="card-label">每日任务</div></div>
+    <div class="card"><div class="card-num" style="${withErrors > 0 ? 'color:#ef4444' : ''}">${withErrors}</div><div class="card-label">有异常任务</div></div>
+  `;
+}
+
+async function load() {
+  try {
+    const resp = await fetch('/api/scheduler');
+    const data = await resp.json();
+    document.getElementById('lastUpdate').textContent = '更新时间: ' + (data.timestamp || '?');
+    allTasks = data.tasks || [];
+    render();
+  } catch(e) {
+    document.getElementById('tbody').innerHTML = '<tr><td colspan="8" style="text-align:center;color:red;">加载失败: ' + e.message + '</td></tr>';
+  }
+}
+load();
+setInterval(load, 30000);
+</script>
+</body>
+</html>

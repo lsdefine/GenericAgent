@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GA 代码依赖关系图</title>
+<script src="https://unpkg.com/vis-network@9.1.6/dist/vis-network.min.js"></script>
+<link href="https://unpkg.com/vis-network@9.1.6/dist/vis-network.min.css" rel="stylesheet" type="text/css" />
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:sans-serif;background:#0f172a;color:#e2e8f0}
+#header{padding:12px 20px;background:#1e293b;border-bottom:1px solid #334155;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
+#header h1{font-size:18px}
+#header .info{font-size:13px;color:#94a3b8}
+#header .controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+#header input{padding:4px 8px;border-radius:4px;border:1px solid #334155;background:#0f172a;color:#e2e8f0;font-size:13px;width:200px}
+#header button{padding:4px 12px;border-radius:4px;border:1px solid #334155;background:#1e293b;color:#e2e8f0;cursor:pointer;font-size:13px}
+#header button:hover{background:#334155}
+#mynetwork{width:100%;height:calc(100vh - 100px)}
+.legend{position:fixed;bottom:20px;right:20px;background:#1e293b;border:1px solid #334155;border-radius:8px;padding:12px;font-size:12px;z-index:999}
+.legend-item{display:flex;align-items:center;gap:6px;margin:4px 0}
+.legend-dot{width:10px;height:10px;border-radius:2px}
+#stats{font-size:12px;color:#94a3b8;padding:4px 20px;background:#1e293b}
+</style>
+</head>
+<body>
+<div id="header">
+  <h1>📊 GA 代码依赖关系图</h1>
+  <div class="controls">
+    <input id="searchBox" placeholder="🔍 搜索文件名..." oninput="filterGraph()">
+    <span class="info" id="lastUpdate"></span>
+    <button onclick="loadData()">🔄 刷新</button>
+  </div>
+</div>
+<div id="stats"></div>
+<div id="mynetwork"></div>
+<div class="legend">
+  <div class="legend-item"><div class="legend-dot" style="background:#3b82f6"></div>scripts/</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#22c55e"></div>engine/</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#f59e0b"></div>root</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#8b5cf6"></div>frontends/</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#ec4899"></div>其他</div>
+</div>
+<script>
+var network = null;
+var allNodes = [];
+var allEdges = [];
+
+function filterGraph() {
+  var q = document.getElementById('searchBox').value.trim().toLowerCase();
+  if (!network) return;
+  if (!q) {
+    network.setSelection({nodes:[],edges:[]});
+    return;
+  }
+  var matched = allNodes.filter(function(n) { return n.label && n.label.toLowerCase().includes(q); }).map(function(n) { return n.id; });
+  network.setSelection({nodes:matched,edges:[]});
+  if (matched.length > 0) network.focus(matched[0], {scale:1.5});
+}
+
+async function loadData() {
+  try {
+    var resp = await fetch('/api/code_dep');
+    var data = await resp.json();
+    allNodes = data.nodes || [];
+    allEdges = data.edges || [];
+    var stats = data.stats || {};
+    document.getElementById('lastUpdate').textContent = stats.timestamp || '?';
+    document.getElementById('stats').textContent = '📁 ' + (stats.total_files || 0) + ' 文件 · 🔗 ' + (stats.total_edges || 0) + ' 依赖关系 · 拖拽/缩放';
+    
+    var container = document.getElementById('mynetwork');
+    var nodes = new vis.DataSet(allNodes);
+    var edges = new vis.DataSet(allEdges);
+    var visData = {nodes:nodes, edges:edges};
+    var options = {
+      nodes: {
+        shape: 'box',
+        font: {color:'#e2e8f0', size:11},
+        borderWidth: 1,
+        color: {border:'#334155', background:'#1e293b', highlight:{border:'#3b82f6', background:'#1e3a5f'}},
+        scaling: {label:{enabled:true, min:10, max:16}}
+      },
+      edges: {
+        color: {color:'#475569', highlight:'#3b82f6'},
+        arrows: {to:{enabled:true, scaleFactor:0.5}},
+        smooth: {type:'curvedCW'},
+        width: 1
+      },
+      physics: {
+        solver: 'forceAtlas2Based',
+        forceAtlas2Based: {gravitationalConstant:-40, centralGravity:0.005, springLength:200, springConstant:0.02},
+        stabilization: {iterations:100}
+      },
+      groups: {
+        scripts: {color:{background:'#1e3a5f', border:'#3b82f6'}},
+        engine: {color:{background:'#14532d', border:'#22c55e'}},
+        root: {color:{background:'#713f12', border:'#f59e0b'}},
+        frontends: {color:{background:'#3b0764', border:'#8b5cf6'}},
+        quality: {color:{background:'#1b1b2f', border:'#ec4899'}},
+        memory: {color:{background:'#1f2937', border:'#10b981'}},
+        ga_cli: {color:{background:'#1e3a5f', border:'#3b82f6'}}
+      },
+      interaction: {hover:true, tooltipDelay:200, navigationButtons:true, keyboard:true}
+    };
+    if (network) network.destroy();
+    network = new vis.Network(container, visData, options);
+  } catch(e) {
+    document.getElementById('stats').textContent = '❌ 加载失败: ' + e.message;
+  }
+}
+loadData();
+setInterval(loadData, 60000);
+</script>
+</body>
+</html>

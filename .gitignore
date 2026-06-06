@@ -37,6 +37,9 @@ tasks/
 memory/*
 !memory/memory_management_sop.md
 
+# Allow tracking archive (archived SOPs)
+!memory/archive/
+
 # Allow tracking of specific SOPs
 !memory/web_setup_sop.md
 !memory/autonomous_operation_sop.md
@@ -68,20 +71,13 @@ memory/L4_raw_sessions/*
 # Subagent SOP
 !memory/subagent.md
 
-# Incubator SOP
-!memory/incubator_sop.md
-
 # Supervisor SOP
 !memory/supervisor_sop.md
 
 # Plan SOP
 !memory/plan_sop.md
 
-# Goal Mode SOP
-!memory/goal_mode_sop.md
-
 # Goal Hive Mode SOP
-!memory/goal_hive_sop.md
 !memory/goal_hive_master_duty.md
 
 # Morphling SOP
@@ -105,9 +101,6 @@ memory/L4_raw_sessions/*
 !memory/vision_api.template.py
 
 # Memory management
-!memory/memory_cleanup_sop.md
-
-# Checklist/MapReduce
 !memory/checklist_helper.py
 !memory/checklist_sop.md
 

@@ -11,9 +11,9 @@ UI元素检测 - YOLO + RapidOCR
 依赖: ultralytics, rapidocr-onnxruntime, pillow, numpy
 """
 from pathlib import Path
-from ultralytics import YOLO
 from PIL import Image, ImageDraw
 import numpy as np
+import json, urllib.request, subprocess, sys, time
 
 print('[UI DETECT] 截图分析后必须使用物理坐标，ljqCtrl也使用物理坐标！')
 
@@ -22,19 +22,42 @@ DEFAULT_MODEL = str(Path(__file__).resolve().parent.parent / 'temp' / 'weights' 
 try:
     from rapidocr_onnxruntime import RapidOCR
     _ocr = RapidOCR()
-except ImportError:
-    _ocr = None
+except ImportError: _ocr = None
 
-def _yolo(image_path, model_path=None, conf=0.25):
-    """YOLO检测 → list of [x1,y1,x2,y2,conf]"""
-    model = YOLO(model_path or DEFAULT_MODEL)
-    res = model(image_path, conf=conf, verbose=False)
+_YOLO = None
+_YOLO_PORT = 31876
+
+def _yolo_local(image_path, conf=0.25):
+    global _YOLO
+    if _YOLO is None:
+        from ultralytics import YOLO
+        _YOLO = YOLO(DEFAULT_MODEL)
+    res = _YOLO(image_path, conf=conf, verbose=False)
     boxes = []
     for r in res:
         for b in r.boxes:
             x1, y1, x2, y2 = map(int, b.xyxy[0].cpu().numpy())
             boxes.append([x1, y1, x2, y2, float(b.conf[0])])
     return boxes
+
+
+def _ping_yolo_daemon():
+    try: return urllib.request.urlopen(f'http://127.0.0.1:{_YOLO_PORT}/ping', timeout=0.1).read() == b'ui_detect_yolo'
+    except Exception: return False
+
+def _yolo(image_path, conf=0.25):
+    """YOLO检测 → list of [x1,y1,x2,y2,conf]；默认模型走跨进程daemon cache，失败回退本地"""
+    if not _ping_yolo_daemon():
+        kw = {'creationflags': getattr(subprocess, 'CREATE_NO_WINDOW', 0)} if sys.platform == 'win32' else {}
+        subprocess.Popen([sys.executable, __file__, '--yolo-daemon'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **kw)
+        for _ in range(15):
+            if _ping_yolo_daemon(): break
+            time.sleep(0.5)
+    try:
+        data = json.dumps({'path': str(image_path), 'conf': conf}).encode('utf-8')
+        req = urllib.request.Request(f'http://127.0.0.1:{_YOLO_PORT}/yolo', data=data, headers={'Content-Type': 'application/json'})
+        return json.loads(urllib.request.urlopen(req, timeout=3).read().decode('utf-8'))['boxes']
+    except Exception: return _yolo_local(image_path, conf)
 
 def _ocr_full(image_path):
     """全图OCR → list of [x1,y1,x2,y2,text,conf]"""
@@ -87,7 +110,7 @@ def _iou(a, b):
     area_b = (b[2]-b[0]) * (b[3]-b[1])
     return inter / area_b if area_b > 0 else 0
 
-def detect(image_path, mode='match', model_path=None, conf=0.25, iou_thresh=0.5):
+def detect(image_path, mode='match', conf=0.25, iou_thresh=0.5):
     """
     统一检测入口，返回元素列表:
     [{'bbox':[x1,y1,x2,y2], 'type':'icon'|'text', 'label':str|None, 'confidence':float}]
@@ -102,7 +125,7 @@ def detect(image_path, mode='match', model_path=None, conf=0.25, iou_thresh=0.5)
         image_path = tmp.name
     img = Image.open(image_path)
 
-    yolo_boxes = _yolo(image_path, model_path, conf)
+    yolo_boxes = _yolo(image_path, conf)
     elements = []
 
     if mode == 'crop':
@@ -133,7 +156,7 @@ def detect(image_path, mode='match', model_path=None, conf=0.25, iou_thresh=0.5)
     #if [x for x in elements if x['label'] is None]: print('[TIPS] crop grid + VLM to identify target no text icon if needed')
     return elements
 
-def visualize(image_path, elements, output_path=None):
+def visualize_for_debug(image_path, elements, output_path=None):
     """调试用: 可视化元素列表"""
     from PIL import ImageFont
     img = Image.open(image_path)
@@ -151,4 +174,26 @@ def visualize(image_path, elements, output_path=None):
     if output_path: img.save(output_path)
     return img
 
+def _serve_yolo_daemon():
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *args): pass
+        def handle_one_request(self): self.server.last=time.time(); return super().handle_one_request()
+        def do_GET(self):
+            if self.path == '/ping':
+                self.send_response(200); self.end_headers(); self.wfile.write(b'ui_detect_yolo')
+            else:
+                self.send_response(404); self.end_headers()
+        def do_POST(self):
+            try:
+                d = json.loads(self.rfile.read(int(self.headers.get('Content-Length', 0))))
+                body = json.dumps({'boxes': _yolo_local(d['path'], d.get('conf', 0.25))}).encode('utf-8')
+                self.send_response(200); self.end_headers(); self.wfile.write(body)
+            except Exception as e:
+                body = json.dumps({'error': repr(e)}).encode('utf-8')
+                self.send_response(500); self.end_headers(); self.wfile.write(body)
+    s=HTTPServer(('127.0.0.1', _YOLO_PORT), H); s.timeout=60; s.last=time.time()
+    while time.time()-s.last < 3600: s.handle_request()
 
+if __name__ == '__main__' and '--yolo-daemon' in sys.argv:
+    _serve_yolo_daemon()

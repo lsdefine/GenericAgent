@@ -258,7 +258,7 @@ _js_ime_fix = ("" if os.name == 'nt' else
     "e.key==='Enter'&&!e.shiftKey&&(e.isComposing||c||e.keyCode===229)&&"
     "(e.stopImmediatePropagation(),e.preventDefault())},!0))})}"
     "f();new MutationObserver(f).observe(d.body,{childList:1,subtree:1})}()")
-_embed_html(f'<script>{_js_scroll_fix};{_js_ime_fix}</script>', height=0)
+_embed_html(f'<script>{_js_ime_fix}</script>', height=0)
 
 _injected = st.session_state.pop('_inject_prompt', None)
 prompt = st.chat_input("any task?") or _injected

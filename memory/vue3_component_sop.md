@@ -1,3 +1,8 @@
+---
+version: 1.0
+last_updated: "2026-05-30"
+---
+
 # Vue 3 自定义组件 JS 操作 SOP
 
 ## 问题

@@ -1,0 +1,15 @@
+
+```json
+{
+  "status": "ok",
+  "time_range": {"from": "2026-06-07 04:01:49", "to": "2026-06-07 04:25:01", "hours": 0.4},
+  "samples": 9,
+  "services": {
+    "9router":      {"avg_latency_ms": 9.9,  "max_latency_ms": 17.2,  "uptime_pct": 100.0, "alerts": []},
+    "chromedriver": {"avg_latency_ms": 0.1,  "max_latency_ms": 0.2,  "uptime_pct": 100.0, "alerts": []},
+    "code-server":  {"avg_latency_ms": 41.5, "max_latency_ms": 316.5,"uptime_pct": 100.0, "alerts": ["峰值延迟316ms"]},
+    "nanobot-api":  {"avg_latency_ms": 3.5,  "max_latency_ms": 11.9,  "uptime_pct": 100.0, "alerts": []},
+    "nanobot-gateway":{"avg_latency_ms":2.2, "max_latency_ms": 5.5,  "uptime_pct": 100.0, "alerts": []},
+    "openllm":      {"avg_latency_ms": 5.8,  "max_latency_ms": 7.8,  "uptime_pct": 100.0, "alerts": []}
+  }
+}

@@ -1,4 +1,13 @@
+---
+version: 1.0
+last_updated: "2026-06-06"
+title: Goal Hive Master Duty
+tags: [sop, goal, hive, master]
+---
+
 # Goal Hive Master 工作 SOP
+
+> ⚙️ 启动操作参数(PORT/BOARD_KEY/BBS_CWD)见 `goal_sop.md` §第二部分 - 启动节。本文档聚焦Master工作方法论。
 
 Master 是 Hive 的总体设计部：不亲自生产子任务产物，只负责**拆解子任务、判断、汇总**，靠调度 worker 把核心交付物在给定时间内稳定推向用户满意。Master 无权停止自己，不得设计自停条件。
 

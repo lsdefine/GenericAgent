@@ -1,0 +1,16 @@
+{
+  "created_at": 1780691649.1825063,
+  "versions": [
+    {
+      "id": 1,
+      "name": "v51-auto-test",
+      "source": "memory/autonomous_operation_sop/task_planning.md",
+      "content_len": 2818,
+      "content_hash": "c7133abf0f16",
+      "created_at": 1780691680.5436335,
+      "path": "/home/admin/GenericAgent/scripts/_prompt_lab/v1_v51-auto-test.prompt"
+    }
+  ],
+  "next_id": 2,
+  "project": "_prompt_lab"
+}

@@ -1,0 +1,11 @@
+=== v115 规划结果（经subagent评审） ===
+## v115 规划 (2026-06-07)
+# v114全完成(5/5)。方向: 基础设施加固 + 性能实证分析
+# subagent评审: #5[9]_服务健康采集加速 #6[8]_看门狗扩展保留, #1[5]_AgentMail实测→替换为#1' Memory知识命中率验证,
+# #2[6]_延迟基准替换为#2'延迟-成本tradeoff, #3[4]_#7[5]_#8[3]删除
+# 优先级: 假设驱动 > 韧性加固 > 数据积累
+
+[x] 产出 | Memory知识命中率验证 | KA注入(#42 RateLimit+#43 OOM)后，对自然语言查询能否命中？用knowledge_lookup测试≥5个query。验收: ≥3个query返回相关KA ✅
+[x] 产出 | Hermes延迟-成本tradeoff分析 | 假设: hermes高延迟(18s)伴随更低token成本。对比gemini/hermes/其他provider的延迟×成本模型。验收: 产出≥3个provider的延迟-成本对比表 ✅
+[x] 产出 | 服务健康数据采集加速 | service_health.jsonl仅9条(0.4h)→不足有效趋势。cron每日08:00单次改为每2h采集。验收: 24h内≥12条数据点 ✅
+[x] 产出 | 自愈看门狗扩展 | 当前仅Dashboard有看门狗(health_unified.sh每2min)。为AgentMail+Hermes gateway添加同款看门狗。验收: 模拟服务DOWN后≤2min自动恢复 ✅

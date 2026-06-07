@@ -1,9 +1,13 @@
+---
+version: 1.0
+last_updated: "2026-05-30"
+---
+
 # Plan Mode SOP
 
 **触发**：3步以上有依赖/多文件协同/条件分支/需并行 | **禁用**：1-2步简单任务直接做
 任务开始前必须先创建工作目录 `./plan_XXX/`（XXX=任务英文短名）
 单独使用一个code_run({'inline_eval':True, 'script':'handler.enter_plan_mode("./plan_XXX/plan.md")'})进入plan模式
-handler是inline_eval自动注入的变量
 
 ---
 
@@ -93,12 +97,12 @@ handler是inline_eval自动注入的变量
 
 ## 执行计划
 1. [ ] 步骤1简述
-   SOP: xxx_sop.md
+   SOP: research_sop.md
 2. [D] 步骤2简述（委托subagent执行）
-   SOP: yyy_sop.md
+   SOP: subagent.md
    依赖：1
 3. [P] 步骤3简述（并行，读subagent.md执行Map模式）
-   SOP: yyy_sop.md
+   SOP: subagent.md
 4. [?] 步骤4（条件分支）
    SOP: (无) ← 高风险
    条件：X成功→4.1，否则→4.2

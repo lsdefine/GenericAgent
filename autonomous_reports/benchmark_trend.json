@@ -1,0 +1,562 @@
+{
+  "description": "Hermes Benchmark \u6027\u80fd\u8d8b\u52bf\u8ffd\u8e2a",
+  "created": "2026-06-06T23:09:36.672157",
+  "updated": "2026-06-06T23:38:33.087913",
+  "runs": [
+    {
+      "timestamp": "2026-06-05T19:01:59.751280",
+      "hermes_path": "/home/admin/.local/bin/hermes",
+      "rounds_per_test": 2,
+      "results": {
+        "status": {
+          "avg_duration_s": 1.242,
+          "min_duration_s": 1.224,
+          "max_duration_s": 1.26,
+          "success_rate": 100.0,
+          "runs": 2,
+          "exit_codes": [
+            0,
+            0
+          ]
+        },
+        "doctor": {
+          "avg_duration_s": 13.2,
+          "min_duration_s": 13.131,
+          "max_duration_s": 13.27,
+          "success_rate": 100.0,
+          "runs": 2,
+          "exit_codes": [
+            0,
+            0
+          ]
+        },
+        "chat_short": {
+          "avg_duration_s": 0.8,
+          "min_duration_s": 0.662,
+          "max_duration_s": 0.937,
+          "success_rate": 0.0,
+          "runs": 2,
+          "exit_codes": [
+            2,
+            2
+          ]
+        },
+        "chat_medium": {
+          "avg_duration_s": 0.702,
+          "min_duration_s": 0.669,
+          "max_duration_s": 0.734,
+          "success_rate": 0.0,
+          "runs": 2,
+          "exit_codes": [
+            2,
+            2
+          ]
+        },
+        "gateway_status": {
+          "avg_duration_s": 1.718,
+          "min_duration_s": 1.181,
+          "max_duration_s": 2.256,
+          "success_rate": 100.0,
+          "runs": 2,
+          "exit_codes": [
+            0,
+            0
+          ]
+        },
+        "model_help": {
+          "avg_duration_s": 0.639,
+          "min_duration_s": 0.639,
+          "max_duration_s": 0.639,
+          "success_rate": 100.0,
+          "runs": 2,
+          "exit_codes": [
+            0,
+            0
+          ]
+        }
+      },
+      "summary_stats": {
+        "total_commands": 6,
+        "total_runs": 12,
+        "overall_success_rate": 66.7,
+        "avg_response_time": 3.05
+      }
+    },
+    {
+      "timestamp": "2026-06-05T19:04:52.339498",
+      "hermes_path": "/home/admin/.local/bin/hermes",
+      "rounds_per_test": 2,
+      "results": {
+        "status": {
+          "avg_duration_s": 1.286,
+          "min_duration_s": 1.246,
+          "max_duration_s": 1.326,
+          "success_rate": 100.0,
+          "runs": 2,
+          "exit_codes": [
+            0,
+            0
+          ]
+        },
+        "doctor": {
+          "avg_duration_s": 11.611,
+          "min_duration_s": 11.063,
+          "max_duration_s": 12.16,
+          "success_rate": 100.0,
+          "runs": 2,
+          "exit_codes": [
+            0,
+            0
+          ]
+        },
+        "chat_short": {
+          "avg_duration_s": 21.525,
+          "min_duration_s": 20.821,
+          "max_duration_s": 22.228,
+          "success_rate": 100.0,
+          "runs": 2,
+          "exit_codes": [
+            0,
+            0
+          ]
+        },
+        "chat_medium": {
+          "avg_duration_s": 42.382,
+          "min_duration_s": 41.951,
+          "max_duration_s": 42.812,
+          "success_rate": 100.0,
+          "runs": 2,
+          "exit_codes": [
+            0,
+            0
+          ]
+        },
+        "gateway_status": {
+          "avg_duration_s": 1.675,
+          "min_duration_s": 1.151,
+          "max_duration_s": 2.199,
+          "success_rate": 100.0,
+          "runs": 2,
+          "exit_codes": [
+            0,
+            0
+          ]
+        },
+        "model_help": {
+          "avg_duration_s": 0.651,
+          "min_duration_s": 0.649,
+          "max_duration_s": 0.653,
+          "success_rate": 100.0,
+          "runs": 2,
+          "exit_codes": [
+            0,
+            0
+          ]
+        }
+      },
+      "summary_stats": {
+        "total_commands": 6,
+        "total_runs": 12,
+        "overall_success_rate": 100.0,
+        "avg_response_time": 13.188
+      }
+    },
+    {
+      "timestamp": "2026-06-06T22:43:42.359450",
+      "hermes_path": "/home/admin/.local/bin/hermes",
+      "rounds_per_test": 2,
+      "results": {
+        "status": {
+          "avg_duration_s": 1.321,
+          "min_duration_s": 1.251,
+          "max_duration_s": 1.391,
+          "success_rate": 100.0,
+          "runs": 2,
+          "exit_codes": [
+            0,
+            0
+          ]
+        },
+        "doctor": {
+          "avg_duration_s": 15.084,
+          "min_duration_s": 15.048,
+          "max_duration_s": 15.12,
+          "success_rate": 0.0,
+          "runs": 2,
+          "exit_codes": [
+            -1,
+            -1
+          ]
+        },
+        "chat_short": {
+          "avg_duration_s": 22.755,
+          "min_duration_s": 21.602,
+          "max_duration_s": 23.908,
+          "success_rate": 100.0,
+          "runs": 2,
+          "exit_codes": [
+            0,
+            0
+          ]
+        },
+        "chat_medium": {
+          "avg_duration_s": 44.313,
+          "min_duration_s": 44.15,
+          "max_duration_s": 44.476,
+          "success_rate": 100.0,
+          "runs": 2,
+          "exit_codes": [
+            0,
+            0
+          ]
+        },
+        "gateway_status": {
+          "avg_duration_s": 13.555,
+          "min_duration_s": 12.083,
+          "max_duration_s": 15.026,
+          "success_rate": 50.0,
+          "runs": 2,
+          "exit_codes": [
+            0,
+            -1
+          ]
+        },
+        "model_help": {
+          "avg_duration_s": 1.366,
+          "min_duration_s": 0.659,
+          "max_duration_s": 2.073,
+          "success_rate": 100.0,
+          "runs": 2,
+          "exit_codes": [
+            0,
+            0
+          ]
+        }
+      },
+      "summary_stats": {
+        "total_commands": 6,
+        "total_runs": 12,
+        "overall_success_rate": 75.0,
+        "avg_response_time": 16.399
+      }
+    },
+    {
+      "timestamp": "2026-06-06T22:57:31.231000",
+      "hermes_path": "/home/admin/.local/bin/hermes",
+      "rounds_per_test": 2,
+      "results": {
+        "status": {
+          "avg_duration_s": 1.475,
+          "min_duration_s": 1.327,
+          "max_duration_s": 1.623,
+          "success_rate": 100.0,
+          "runs": 2,
+          "exit_codes": [
+            0,
+            0
+          ]
+        },
+        "doctor": {
+          "avg_duration_s": 26.594,
+          "min_duration_s": 25.141,
+          "max_duration_s": 28.047,
+          "success_rate": 100.0,
+          "runs": 2,
+          "exit_codes": [
+            0,
+            0
+          ]
+        },
+        "chat_short": {
+          "avg_duration_s": 22.226,
+          "min_duration_s": 21.715,
+          "max_duration_s": 22.737,
+          "success_rate": 100.0,
+          "runs": 2,
+          "exit_codes": [
+            0,
+            0
+          ]
+        },
+        "chat_medium": {
+          "avg_duration_s": 44.654,
+          "min_duration_s": 41.692,
+          "max_duration_s": 47.615,
+          "success_rate": 100.0,
+          "runs": 2,
+          "exit_codes": [
+            0,
+            0
+          ]
+        },
+        "gateway_status": {
+          "avg_duration_s": 12.124,
+          "min_duration_s": 10.902,
+          "max_duration_s": 13.346,
+          "success_rate": 100.0,
+          "runs": 2,
+          "exit_codes": [
+            0,
+            0
+          ]
+        },
+        "model_help": {
+          "avg_duration_s": 0.869,
+          "min_duration_s": 0.697,
+          "max_duration_s": 1.042,
+          "success_rate": 100.0,
+          "runs": 2,
+          "exit_codes": [
+            0,
+            0
+          ]
+        }
+      },
+      "summary_stats": {
+        "total_commands": 6,
+        "total_runs": 12,
+        "overall_success_rate": 100.0,
+        "avg_response_time": 17.99
+      }
+    },
+    {
+      "timestamp": "2026-06-06T23:23:32.535707",
+      "hermes_path": "/home/admin/.local/bin/hermes",
+      "rounds_per_test": 2,
+      "results": {
+        "status": {
+          "avg_duration_s": 1.385,
+          "min_duration_s": 1.206,
+          "max_duration_s": 1.565,
+          "success_rate": 100.0,
+          "runs": 2,
+          "exit_codes": [
+            0,
+            0
+          ]
+        },
+        "doctor": {
+          "avg_duration_s": 23.898,
+          "min_duration_s": 18.973,
+          "max_duration_s": 28.822,
+          "success_rate": 100.0,
+          "runs": 2,
+          "exit_codes": [
+            0,
+            0
+          ]
+        },
+        "chat_short": {
+          "avg_duration_s": 22.152,
+          "min_duration_s": 21.995,
+          "max_duration_s": 22.31,
+          "success_rate": 100.0,
+          "runs": 2,
+          "exit_codes": [
+            0,
+            0
+          ]
+        },
+        "chat_medium": {
+          "avg_duration_s": 43.781,
+          "min_duration_s": 43.317,
+          "max_duration_s": 44.244,
+          "success_rate": 100.0,
+          "runs": 2,
+          "exit_codes": [
+            0,
+            0
+          ]
+        },
+        "gateway_status": {
+          "avg_duration_s": 7.123,
+          "min_duration_s": 4.771,
+          "max_duration_s": 9.475,
+          "success_rate": 100.0,
+          "runs": 2,
+          "exit_codes": [
+            0,
+            0
+          ]
+        },
+        "model_help": {
+          "avg_duration_s": 0.76,
+          "min_duration_s": 0.644,
+          "max_duration_s": 0.877,
+          "success_rate": 100.0,
+          "runs": 2,
+          "exit_codes": [
+            0,
+            0
+          ]
+        }
+      },
+      "summary_stats": {
+        "total_commands": 6,
+        "total_runs": 12,
+        "overall_success_rate": 100.0,
+        "avg_response_time": 16.517
+      }
+    },
+    {
+      "timestamp": "2026-06-06T23:38:33.011849",
+      "hermes_path": "/home/admin/.local/bin/hermes",
+      "rounds_per_test": 2,
+      "results": {
+        "status": {
+          "avg_duration_s": 1.389,
+          "min_duration_s": 1.196,
+          "max_duration_s": 1.583,
+          "success_rate": 100.0,
+          "runs": 2,
+          "exit_codes": [
+            0,
+            0
+          ]
+        },
+        "doctor": {
+          "avg_duration_s": 23.169,
+          "min_duration_s": 22.184,
+          "max_duration_s": 24.154,
+          "success_rate": 100.0,
+          "runs": 2,
+          "exit_codes": [
+            0,
+            0
+          ]
+        },
+        "chat_short": {
+          "avg_duration_s": 22.401,
+          "min_duration_s": 21.816,
+          "max_duration_s": 22.986,
+          "success_rate": 100.0,
+          "runs": 2,
+          "exit_codes": [
+            0,
+            0
+          ]
+        },
+        "chat_medium": {
+          "avg_duration_s": 39.84,
+          "min_duration_s": 39.655,
+          "max_duration_s": 40.025,
+          "success_rate": 100.0,
+          "runs": 2,
+          "exit_codes": [
+            0,
+            0
+          ]
+        },
+        "gateway_status": {
+          "avg_duration_s": 12.573,
+          "min_duration_s": 9.82,
+          "max_duration_s": 15.326,
+          "success_rate": 100.0,
+          "runs": 2,
+          "exit_codes": [
+            0,
+            0
+          ]
+        },
+        "model_help": {
+          "avg_duration_s": 1.144,
+          "min_duration_s": 0.702,
+          "max_duration_s": 1.586,
+          "success_rate": 100.0,
+          "runs": 2,
+          "exit_codes": [
+            0,
+            0
+          ]
+        }
+      },
+      "summary_stats": {
+        "total_commands": 6,
+        "total_runs": 12,
+        "overall_success_rate": 100.0,
+        "avg_response_time": 16.753
+      }
+    },
+    {
+      "timestamp": "2026-06-07T02:33:57",
+      "run_id": "v85-2026-06-07",
+      "results": {
+        "hermes_gateway": {
+          "avg_duration_s": 0.7805495071411133,
+          "p50": 0.7728179693222046,
+          "p95": 0.9593747496604919,
+          "p99": 1.0342896080017088,
+          "success_rate": 100.0,
+          "n": 50
+        },
+        "vision_ocr": {
+          "avg_duration_s": 0.6647662830352783,
+          "p50": 0.6460649967193604,
+          "p95": 0.7622160553932189,
+          "p99": 0.8484519267082211,
+          "success_rate": 100.0,
+          "n": 50
+        }
+      }
+    }
+  ],
+  "summary": {
+    "total_runs": 6,
+    "first_run": "2026-06-05T19:01:59.751280",
+    "last_run": "2026-06-06T23:38:33.011849",
+    "commands": {
+      "status": {
+        "latest_avg": 1.389,
+        "min_avg": 1.242,
+        "max_avg": 1.475,
+        "latest_ts": "2026-06-06T23:38:33.011849",
+        "trend": "stable"
+      },
+      "doctor": {
+        "latest_avg": 23.169,
+        "min_avg": 11.611,
+        "max_avg": 26.594,
+        "latest_ts": "2026-06-06T23:38:33.011849",
+        "trend": "regressing"
+      },
+      "chat_short": {
+        "latest_avg": 22.401,
+        "min_avg": 0.8,
+        "max_avg": 22.755,
+        "latest_ts": "2026-06-06T23:38:33.011849",
+        "trend": "regressing"
+      },
+      "chat_medium": {
+        "latest_avg": 39.84,
+        "min_avg": 0.702,
+        "max_avg": 44.654,
+        "latest_ts": "2026-06-06T23:38:33.011849",
+        "trend": "regressing"
+      },
+      "gateway_status": {
+        "latest_avg": 12.573,
+        "min_avg": 1.675,
+        "max_avg": 13.555,
+        "latest_ts": "2026-06-06T23:38:33.011849",
+        "trend": "regressing"
+      },
+      "model_help": {
+        "latest_avg": 1.144,
+        "min_avg": 0.639,
+        "max_avg": 1.366,
+        "latest_ts": "2026-06-06T23:38:33.011849",
+        "trend": "regressing"
+      },
+      "hermes_gateway": {
+        "runs": [
+          "2026-06-07T02:33:57"
+        ]
+      },
+      "vision_ocr": {
+        "runs": [
+          "2026-06-07T02:33:57"
+        ]
+      }
+    }
+  }
+}

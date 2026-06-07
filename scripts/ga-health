@@ -1,0 +1,114 @@
+#!/usr/bin/env python3
+"""GA系统健康采集脚本 — 采集CPU/内存/磁盘/网络趋势数据"""
+import os, sys, json, time
+from datetime import datetime
+
+GA_HOME = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+TREND_FILE = os.path.join(GA_HOME, 'temp', 'health_history.json')
+
+def collect_stats():
+    """采集系统健康指标"""
+    stats = {
+        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'unix_ts': int(time.time()),
+    }
+    # CPU
+    try:
+        with open('/proc/loadavg') as f:
+            load = f.read().strip().split()
+            stats['load1'] = float(load[0])
+            stats['load5'] = float(load[1])
+            stats['load15'] = float(load[2])
+    except: pass
+    # Memory
+    try:
+        with open('/proc/meminfo') as f:
+            meminfo = {}
+            for line in f:
+                parts = line.split(':')
+                if len(parts) == 2:
+                    meminfo[parts[0].strip()] = parts[1].strip()
+        total = int(meminfo.get('MemTotal', '0').split()[0]) // 1024
+        avail = int(meminfo.get('MemAvailable', '0').split()[0]) // 1024
+        stats['mem_total_mb'] = total
+        stats['mem_avail_mb'] = avail
+        stats['mem_percent'] = round((total - avail) / total * 100, 1)
+    except: pass
+    # Disk
+    try:
+        st = os.statvfs('/')
+        total_bytes = st.f_frsize * st.f_blocks
+        free_bytes = st.f_frsize * st.f_bfree
+        used_percent = round((total_bytes - free_bytes) / total_bytes * 100, 1)
+        stats['disk_total_gb'] = round(total_bytes / (1024**3), 1)
+        stats['disk_used_percent'] = used_percent
+    except: pass
+    # Network
+    try:
+        with open('/proc/net/dev') as f:
+            lines = f.readlines()
+            for line in lines:
+                if 'eth0' in line or 'ens' in line or 'wlan' in line:
+                    parts = line.strip().split()
+                    stats['net_rx_bytes'] = int(parts[1])
+                    stats['net_tx_bytes'] = int(parts[9])
+                    break
+    except: pass
+    return stats
+
+def record_trend(stats):
+    """记录到趋势文件"""
+    history = []
+    if os.path.exists(TREND_FILE):
+        try:
+            with open(TREND_FILE) as f:
+                history = json.load(f)
+                if not isinstance(history, list):
+                    history = []
+        except: history = []
+    history.append(stats)
+    # 保留最近1000条
+    if len(history) > 1000:
+        history = history[-1000:]
+    os.makedirs(os.path.dirname(TREND_FILE), exist_ok=True)
+    with open(TREND_FILE, 'w') as f:
+        json.dump(history, f, indent=2)
+
+def show_trend():
+    """显示趋势摘要"""
+    if not os.path.exists(TREND_FILE):
+        print("无趋势数据")
+        return
+    with open(TREND_FILE) as f:
+        history = json.load(f)
+    if not history:
+        print("趋势数据为空")
+        return
+    print(f"趋势记录: {len(history)} 条")
+    print(f"最早: {history[0]['timestamp']}")
+    print(f"最新: {history[-1]['timestamp']}")
+    if len(history) >= 2:
+        cpu_vals = [h.get('load1', 0) for h in history]
+        mem_vals = [h.get('mem_percent', 0) for h in history]
+        print(f"CPU负载范围: {min(cpu_vals):.2f} ~ {max(cpu_vals):.2f}")
+        print(f"内存占用范围: {min(mem_vals):.1f}% ~ {max(mem_vals):.1f}%")
+
+if __name__ == '__main__':
+    import argparse
+    parser = argparse.ArgumentParser(description='GA健康采集')
+    parser.add_argument('--trend', action='store_true', help='采集并记录趋势')
+    parser.add_argument('--record', action='store_true', help='记录到历史文件(与--trend同用)')
+    parser.add_argument('--show', action='store_true', help='显示趋势摘要')
+    args = parser.parse_args()
+    
+    if args.show:
+        show_trend()
+    elif args.trend:
+        stats = collect_stats()
+        if args.record:
+            record_trend(stats)
+        print(json.dumps(stats, indent=2))
+    else:
+        # 默认: 简单输出
+        stats = collect_stats()
+        print(json.dumps(stats))

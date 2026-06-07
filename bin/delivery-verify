@@ -1,0 +1,442 @@
+#!/usr/bin/env python3
+"""
+delivery-verify — 交付验证 CLI
+=================================
+
+"实战化" delivery_verification_sop，将交付质量门禁 SOP 转为可执行工具。
+
+功能:
+  check      — 执行交付验证清单
+  verify-url — HTTP 可达性验证
+  verify-module — Python 模块导入验证
+  verify-plan    — 实施计划交叉验证
+  checklist      — 生成 SOP 验证清单模板
+"""
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import urllib.request
+import urllib.error
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
+
+# ── 颜色工具 ──────────────────────────────────────────
+
+def green(s): return f"\033[32m{s}\033[0m"
+def red(s): return f"\033[31m{s}\033[0m"
+def yellow(s): return f"\033[33m{s}\033[0m"
+def bold(s): return f"\033[1m{s}\033[0m"
+
+
+# ── 文件检查 ──────────────────────────────────────────
+
+def check_file_exists(path: str, min_size: int = 0) -> Dict:
+    """检查文件是否存在且大小满足阈值"""
+    result = {"path": path, "exists": False, "size": 0, "pass": False, "detail": ""}
+    try:
+        p = Path(path)
+        if p.exists():
+            result["exists"] = True
+            result["size"] = p.stat().st_size
+            if result["size"] >= min_size:
+                result["pass"] = True
+                result["detail"] = f"存在 ({result['size']} bytes)"
+            else:
+                result["detail"] = f"存在但过小 ({result['size']} < {min_size})"
+        else:
+            result["detail"] = "文件不存在"
+    except Exception as e:
+        result["detail"] = str(e)
+    return result
+
+
+def check_content_keywords(path: str, keywords: List[str]) -> Dict:
+    """检查文件是否包含关键内容"""
+    result = {"path": path, "keywords": keywords, "found": [], "missing": [], "pass": False}
+    try:
+        text = Path(path).read_text(encoding="utf-8", errors="ignore")
+        for kw in keywords:
+            if kw in text:
+                result["found"].append(kw)
+            else:
+                result["missing"].append(kw)
+        result["pass"] = len(result["missing"]) == 0
+    except Exception as e:
+        result["detail"] = str(e)
+    return result
+
+
+def check_init_files(directory: str) -> Dict:
+    """检查 Python 子包是否有 __init__.py"""
+    result = {"directory": directory, "packages": [], "missing": [], "pass": True}
+    base = Path(directory)
+    for d in base.rglob("*"):
+        if d.is_dir() and not d.name.startswith(".") and not d.name.startswith("_"):
+            # Check if it looks like a Python package (has .py files)
+            py_files = list(d.glob("*.py"))
+            if py_files:
+                init = d / "__init__.py"
+                has_init = init.exists()
+                result["packages"].append({"dir": str(d), "has_init": has_init})
+                if not has_init:
+                    result["missing"].append(str(d))
+                    result["pass"] = False
+    return result
+
+
+# ── HTTP 验证 ─────────────────────────────────────────
+
+def verify_url(url: str, expect_code: int = 200, min_body: int = 0,
+               no_cache: bool = False, timeout: int = 10) -> Dict:
+    """验证 URL 的可达性"""
+    result = {"url": url, "status": -1, "body_size": 0, "pass": False, "detail": ""}
+    try:
+        req = urllib.request.Request(url)
+        if no_cache:
+            req.add_header("Cache-Control", "no-cache")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            result["status"] = resp.status
+            body = resp.read()
+            result["body_size"] = len(body)
+            if resp.status == expect_code and len(body) >= min_body:
+                result["pass"] = True
+                result["detail"] = f"HTTP {resp.status} ({len(body)} bytes)"
+            else:
+                result["detail"] = (f"HTTP {resp.status} (期望 {expect_code}), "
+                                    f"body {len(body)} bytes (期望 ≥ {min_body})")
+    except urllib.error.HTTPError as e:
+        result["status"] = e.code
+        result["body_size"] = len(e.read())
+        result["detail"] = f"HTTP {e.code}: {e.reason}"
+    except urllib.error.URLError as e:
+        result["detail"] = f"连接失败: {e.reason}"
+    except Exception as e:
+        result["detail"] = str(e)
+    return result
+
+
+def verify_urls_batch(urls: List[str], **kwargs) -> List[Dict]:
+    """批量验证 URL"""
+    return [verify_url(url, **kwargs) for url in urls]
+
+
+# ── 模块导入验证 ─────────────────────────────────────
+
+def verify_module_import(module_path: str, root_dir: str = ".") -> Dict:
+    """验证 Python 模块可导入"""
+    result = {"module": module_path, "importable": False, "error": ""}
+    try:
+        code = f"import {module_path}"
+        subprocess.run(
+            [sys.executable, "-c", code],
+            cwd=root_dir,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        )
+        result["importable"] = True
+        result["detail"] = "导入成功"
+    except subprocess.CalledProcessError as e:
+        result["error"] = e.stderr.strip()
+        result["detail"] = f"导入失败: {e.stderr.strip()[:200]}"
+    except Exception as e:
+        result["error"] = str(e)
+        result["detail"] = str(e)
+    return result
+
+
+def verify_modules_batch(modules: List[str], root_dir: str = ".") -> List[Dict]:
+    """批量验证模块导入"""
+    return [verify_module_import(m, root_dir) for m in modules]
+
+
+# ── 实施计划交叉验证 ────────────────────────────────
+
+def parse_plan_outputs(plan_file: str) -> List[str]:
+    """从实施计划文件解析产出列表 (简单解析 -lines)"""
+    outputs = []
+    try:
+        text = Path(plan_file).read_text(encoding="utf-8")
+        for line in text.split("\n"):
+            # 匹配 - output: path/to/file 或 - file: path/to/file 或产出行
+            line = line.strip()
+            if line.startswith("- `"):
+                # - `path/to/file`
+                p = line.strip("- ").strip("`")
+                outputs.append(p)
+            elif line.startswith("- **"):
+                # - **产出**: path
+                if "产出" in line or "文件" in line or "生成" in line:
+                    parts = line.split(":", 1)
+                    if len(parts) > 1:
+                        outputs.append(parts[1].strip().strip("`").strip())
+    except Exception:
+        pass
+    return outputs
+
+
+def cross_verify_plan(plan_file: str, base_dir: str = ".") -> Dict:
+    """交叉验证实施计划的产出文件是否实际存在"""
+    result = {"plan_file": plan_file, "expected": [], "found": [], "missing": [],
+              "unexpected": [], "pass": False}
+
+    expected = parse_plan_outputs(plan_file)
+    result["expected"] = expected
+
+    for ep in expected:
+        # Try relative to base_dir
+        full = Path(base_dir) / ep
+        if full.exists():
+            result["found"].append(ep)
+        else:
+            result["missing"].append(ep)
+
+    result["pass"] = len(result["missing"]) == 0
+    return result
+
+
+# ── 清单生成 ──────────────────────────────────────────
+
+CHECKLIST_TEMPLATE = """---
+type: delivery_checklist
+generated_by: delivery-verify
+generated_at: {timestamp}
+---
+
+## 交付验证清单
+
+### 1. 文件存在性
+{checks}
+
+### 2. HTTP 可用性
+{http_checks}
+
+### 3. 模块导入验证
+{module_checks}
+
+### 4. 常见陷阱检查
+- [ ] 空文件陷阱: 验证每个文件 size > 0
+- [ ] HTTP 200 但 body 空: 验证 response body > 阈值
+- [ ] 部分成功陷阱: 抽检所有变更文件
+- [ ] CDN 缓存陷阱: 使用 Cache-Control: no-cache
+"""
+
+
+def generate_checklist_outputs(outputs: List[str]) -> str:
+    lines = []
+    for o in outputs:
+        lines.append(f"- [ ] `{o}` 存在且 size > 0")
+    return "\n".join(lines)
+
+
+# ── 主 CLI ────────────────────────────────────────────
+
+def cmd_check(args):
+    """执行标准交付验证"""
+    results = []
+
+    print(bold("\n🔍 交付验证"))
+    print("=" * 50)
+
+    # 文件存在性检查
+    if args.files:
+        print(bold("\n📄 文件存在性:"))
+        for f in args.files:
+            r = check_file_exists(f, args.min_size)
+            status = green("✅") if r["pass"] else red("❌")
+            print(f"  {status} {f}: {r['detail']}")
+            results.append(r)
+
+    # 内容关键词检查
+    if args.keywords:
+        print(bold("\n🔑 关键内容检查:"))
+        for f in args.files or []:
+            r = check_content_keywords(f, args.keywords)
+            if r["missing"]:
+                print(f"  {red('❌')} {f}: 缺失 {', '.join(r['missing'])}")
+            else:
+                print(f"  {green('✅')} {f}: 全部命中")
+            results.append(r)
+
+    # __init__.py 检查
+    if args.check_init:
+        print(bold("\n📦 __init__.py 检查:"))
+        r = check_init_files(args.dir)
+        if r["pass"]:
+            print(f"  {green('✅')} 所有 {len(r['packages'])} 个子包均有 __init__.py")
+        else:
+            for m in r["missing"]:
+                print(f"  {red('❌')} {m} 缺少 __init__.py")
+        results.append(r)
+
+    # HTTP 检查
+    if args.urls:
+        print(bold("\n🌐 URL 验证:"))
+        for url in args.urls:
+            r = verify_url(url, args.expect_code, args.min_body,
+                          args.no_cache, args.timeout)
+            status = green("✅") if r["pass"] else red("❌")
+            print(f"  {status} {url}: {r['detail']}")
+            results.append(r)
+
+    # 汇总
+    passed = sum(1 for r in results if r.get("pass"))
+    total = len(results)
+    print(f"\n{'=' * 50}")
+    if passed == total:
+        print(f"  {green('✅')} 全部通过 ({passed}/{total})")
+    else:
+        print(f"  {red(f'❌ {total - passed}/{total} 未通过')}")
+
+    return 0 if passed == total else 1
+
+
+def cmd_verify_url(args):
+    """验证单个 URL"""
+    r = verify_url(args.url, args.expect, args.min_body, args.no_cache, args.timeout)
+    status = green("✅") if r["pass"] else red("❌")
+    print(f"{status} {args.url}")
+    print(f"  状态: {r['status']}")
+    print(f"  Body: {r['body_size']} bytes")
+    if r["detail"]:
+        print(f"  详情: {r['detail']}")
+    return 0 if r["pass"] else 1
+
+
+def cmd_verify_module(args):
+    """验证模块导入"""
+    r = verify_module_import(args.module, args.root)
+    status = green("✅") if r["importable"] else red("❌")
+    print(f"{status} {args.module}")
+    if r.get("detail"):
+        print(f"  {r['detail']}")
+    return 0 if r["importable"] else 1
+
+
+def cmd_verify_plan(args):
+    """验证实施计划"""
+    print(bold(f"\n📋 交叉验证: {args.plan}"))
+    print("=" * 50)
+
+    result = cross_verify_plan(args.plan, args.base_dir)
+
+    print(f"\n预期产出: {len(result['expected'])} 个文件")
+    for ep in result["expected"]:
+        status = green("✅") if ep not in result["missing"] else red("❌")
+        print(f"  {status} {ep}")
+
+    if result["missing"]:
+        print(f"\n{red('❌ 缺失文件:')}")
+        for m in result["missing"]:
+            print(f"  - {m}")
+    else:
+        print(f"\n{green('✅ 所有文件存在')}")
+    return 0 if result["pass"] else 1
+
+
+def cmd_checklist(args):
+    """生成验证清单模板"""
+    checks = []
+    if args.files:
+        for f in args.files:
+            checks.append(f)
+
+    http_checks = []
+    if args.urls:
+        for url in args.urls:
+            http_checks.append(url)
+
+    module_checks = []
+    if args.modules:
+        for m in args.modules:
+            module_checks.append(m)
+
+    content = CHECKLIST_TEMPLATE.format(
+        timestamp=__import__("datetime").datetime.now().isoformat(),
+        checks="\n".join(f"- [ ] `{c}` 存在且 size > 0" for c in checks) or "- [ ] (未指定)",
+        http_checks="\n".join(f"- [ ] `{u}` HTTP 200, body > 0" for u in http_checks) or "- [ ] (未指定)",
+        module_checks="\n".join(f"- [ ] `{m}` 可导入" for m in module_checks) or "- [ ] (未指定)",
+    )
+
+    if args.output:
+        Path(args.output).write_text(content)
+        print(f"✅ 清单已写入: {args.output}")
+    else:
+        print(content)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="交付验证 CLI — delivery_verification_sop 实战化",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sub = parser.add_subparsers(dest="command")
+
+    # check
+    p_check = sub.add_parser("check", help="执行标准交付验证")
+    p_check.add_argument("--files", "-f", nargs="+", help="待检查文件")
+    p_check.add_argument("--urls", "-u", nargs="+", help="待验证 URL")
+    p_check.add_argument("--keywords", "-k", nargs="+", help="关键内容检查")
+    p_check.add_argument("--dir", "-d", default=".", help="目标目录")
+    p_check.add_argument("--min-size", type=int, default=0, help="最小文件大小")
+    p_check.add_argument("--min-body", type=int, default=0, help="最小 HTTP body")
+    p_check.add_argument("--expect-code", type=int, default=200, help="期望 HTTP 状态码")
+    p_check.add_argument("--no-cache", action="store_true", help="跳过 CDN 缓存")
+    p_check.add_argument("--check-init", action="store_true", help="检查 __init__.py")
+    p_check.add_argument("--timeout", type=int, default=10, help="HTTP 超时(秒)")
+
+    # verify-url
+    p_url = sub.add_parser("verify-url", help="验证单个 URL 可达性")
+    p_url.add_argument("url", help="待验证 URL")
+    p_url.add_argument("--expect", type=int, default=200, help="期望状态码")
+    p_url.add_argument("--min-body", type=int, default=0, help="最小 body 大小")
+    p_url.add_argument("--no-cache", action="store_true", help="跳过 CDN 缓存")
+    p_url.add_argument("--timeout", type=int, default=10, help="超时(秒)")
+
+    # verify-module
+    p_mod = sub.add_parser("verify-module", help="验证 Python 模块导入")
+    p_mod.add_argument("module", help="模块路径 (如 engine.metrics.metrics_aggregator)")
+    p_mod.add_argument("--root", "-r", default=".", help="项目根目录")
+
+    # verify-plan
+    p_plan = sub.add_parser("verify-plan", help="实施计划交叉验证")
+    p_plan.add_argument("plan", help="实施计划文件路径")
+    p_plan.add_argument("--base-dir", "-d", default=".", help="项目根目录")
+
+    # checklist
+    p_cl = sub.add_parser("checklist", help="生成交付验证清单模板")
+    p_cl.add_argument("--files", "-f", nargs="+", help="产出文件列表")
+    p_cl.add_argument("--urls", "-u", nargs="+", help="URL 列表")
+    p_cl.add_argument("--modules", "-m", nargs="+", help="模块列表")
+    p_cl.add_argument("--output", "-o", help="输出文件路径")
+
+    # history (JSONL 记录相同)
+    p_hist = sub.add_parser("history", help="查看验证历史")
+
+    args = parser.parse_args()
+
+    if args.command == "check":
+        return cmd_check(args)
+    elif args.command == "verify-url":
+        return cmd_verify_url(args)
+    elif args.command == "verify-module":
+        return cmd_verify_module(args)
+    elif args.command == "verify-plan":
+        return cmd_verify_plan(args)
+    elif args.command == "checklist":
+        return cmd_checklist(args)
+    elif args.command == "history":
+        print("查看 ~/.delivery_verify_history.jsonl")
+        return 0
+    else:
+        parser.print_help()
+        return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,3 +1,8 @@
+---
+version: 1.0
+last_updated: "2026-05-30"
+---
+
 # 定时任务 SOP
 
 目录：`../sche_tasks/` 放任务定义JSON，`../sche_tasks/done/` 放执行报告

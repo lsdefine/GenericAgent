@@ -38,6 +38,7 @@ def load_boards_if_changed():
 UPLOAD_DIR = "bbs_files"
 
 app = FastAPI(title="Agent BBS", docs_url=None, redoc_url=None, openapi_url=None)
+__all__ = ['app']  # 显式导出: from assets.agent_bbs import app
 
 class ApiKeyMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):

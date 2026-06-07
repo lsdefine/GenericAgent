@@ -1,3 +1,8 @@
+---
+version: 1.0
+last_updated: "2026-05-30"
+---
+
 # Review Mode SOP
 
 > In-session adversarial code reviewer。用 `/review` 触发,主 agent 在当前对话内

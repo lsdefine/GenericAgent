@@ -1,0 +1,37 @@
+#!/bin/bash
+# health_watchdog.sh — health_server自愈看门狗
+# 每5分钟检查一次(由crontab控制)，若health_server未响应则重启
+# 增强: 先用curl探测HTTP响应，再用ss查端口(绝对路径)，双重保险
+# 用法: crontab添加: */5 * * * * cd /home/admin/GenericAgent && bash scripts/health_watchdog.sh
+
+GA_HOME="/home/admin/GenericAgent"
+LOG_FILE="$GA_HOME/temp/health_watchdog.log"
+PORT="${HEALTH_PORT:-8081}"
+HEALTH_URL="http://localhost:${PORT}/api/health"
+SS_CMD="/usr/sbin/ss"
+
+# 检测方法: curl优先(真实HTTP可达性) → ss后备(端口监听)
+health_alive() {
+    # 方法1: HTTP健康检查(最可靠,验证服务真实可用)
+    if command -v curl &>/dev/null; then
+        curl -s -o /dev/null -w '%{http_code}' "$HEALTH_URL" 2>/dev/null | grep -q '200' && return 0
+    fi
+    # 方法2: 端口检测(使用绝对路径避免cron PATH问题)
+    if [ -x "$SS_CMD" ]; then
+        $SS_CMD -tlnp 2>/dev/null | grep -q ":${PORT} " && return 0
+    fi
+    return 1
+}
+
+if ! health_alive; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ⚠️ health_server (port $PORT) 未响应，正在启动..." >> "$LOG_FILE"
+    cd "$GA_HOME"
+    nohup python3 scripts/health_server.py --port "$PORT" >> "$GA_HOME/temp/health_server.log" 2>&1 &
+    PID=$!
+    sleep 3
+    if health_alive; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✅ health_server 已启动 (PID=$PID, port=$PORT)" >> "$LOG_FILE"
+    else
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] ❌ health_server 启动失败 (PID=$PID)" >> "$LOG_FILE"
+    fi
+fi

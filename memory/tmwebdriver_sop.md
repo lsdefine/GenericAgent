@@ -1,3 +1,8 @@
+---
+version: 1.0
+last_updated: "2026-05-30"
+---
+
 # TMWebDriver SOP
 
 - 直接用web_scan/web_execute_js工具。本文件只记录特性和坑。
@@ -41,6 +46,7 @@ fetch('PDF_URL').then(r=>r.blob()).then(b=>{
 - 某些SPA页面需CDP `Page.bringToFront`切到前台才会加载数据
 
 ## CDP桥(tmwd_cdp_bridge扩展) ⭐首选
+⚠**前置条件: 确保 TMWebDriver master 运行中(:18766)** — master未启动时CDP桥无法通信。启动方式: `python3 scripts/start_tmwd_master.py` 或 `from TMWebDriver import TMWebDriver; TMWebDriver()`。
 扩展路径：`assets/tmwd_cdp_bridge/`(需安装，含debugger权限)
 ⚠TID约定标识：首次运行自动生成到`assets/tmwd_cdp_bridge/config.js`(已gitignore)，扩展通过manifest引用
 调用：`web_execute_js` script直传JSON字符串（工具层自动识别对象格式，走WS→background.js cmd路由）

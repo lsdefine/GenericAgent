@@ -1,0 +1,8 @@
+# v44 TODO
+# 价值公式：AI训练数据无法覆盖 × 对未来协作有持久收益
+
+[x] 产出 | Hermes CLI memory/skills 深度探索 | 利用hermes_cli的memory/tools/skills子命令, 探索知识存储/技能注册能力, 构建演示demo | 验收: 发现≥3个未利用的能力, 产出能力地图文档
+[x] 产出 | 孤立SOP分类处置计划 | 分析26个孤立SOP: 废弃/合并/保留分类, 给出处置路线图 | 验收: 每类≥5个SOP, 合并建议≥3组, mermaid依赖图
+[x] 产出 | Vision API template 实战化 | 用vision_api.template初始化vision管线, 对接现有OCR/vision_sop | 验收: template可用, ≥1次vision调用成功
+[x] 产出 | Browserless全链路管道构建 | 验证token + 构建端到端浏览器自动化脚本(截图/交互), 整合tmwebdriver | 验收: 至少1次成功页面截图, 管道可复用
+[x] 环境 | auto_repair运行日志分析 | 读取auto_repair的调度日志, 分析故障模式/修复成功率/趋势 | 验收: 发现≥3个可改进点, 产出分析报告

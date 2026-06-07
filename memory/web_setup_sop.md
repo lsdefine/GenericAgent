@@ -1,3 +1,8 @@
+---
+version: 1.0
+last_updated: "2026-05-30"
+---
+
 # Web 工具链初始化执行 SOP
 
 若 web_scan 和 web_execute_js 已测试可用，无需执行此 SOP。

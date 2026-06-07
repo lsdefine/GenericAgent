@@ -1,3 +1,10 @@
+---
+version: 1.0
+last_updated: "2026-06-06"
+title: Computer Use
+tags: [sop, computer-use]
+---
+
 # computer_use
 
 L3 memory: ljqCtrl.py ljqCtrl_sop.md ui_detect.py

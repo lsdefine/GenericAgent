@@ -227,10 +227,18 @@ async function isServerAlive() {
   try {
     const ctrl = new AbortController();
     setTimeout(() => ctrl.abort(), 2000);
-    await fetch('http://127.0.0.1:18765', { signal: ctrl.signal });
+    await fetch('http://127.0.0.1:18766/api/result', { signal: ctrl.signal, method: 'POST', body: '{}' });
     return true; // Got HTTP response → port is listening
   } catch (e) {
-    return false; // Network error (connection refused) or timeout → server not alive
+    // Also try WS port as fallback (some setups serve HTTP on WS port)
+    try {
+      const ctrl2 = new AbortController();
+      setTimeout(() => ctrl2.abort(), 1500);
+      await fetch('http://127.0.0.1:18765', { signal: ctrl2.signal });
+      return true;
+    } catch (e2) {
+      return false; // Both failed → server not alive
+    }
   }
 }
 

@@ -46,6 +46,67 @@ class TMWebDriver:
         else:
             self.remote = f'http://{self.host}:{self.port+1}/link'
 
+    def _find_chrome_exe(self):
+        """Find Chrome/Chromium executable path."""
+        import os
+        candidates = [
+            r'C:\Program Files\Google\Chrome\Application\chrome.exe',
+            r'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe',
+            os.path.expandvars(r'%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe'),
+            r'C:\Program Files\Chromium\Application\chrome.exe',
+        ]
+        for p in candidates:
+            if os.path.exists(p):
+                return p
+        # Search PATH
+        import shutil
+        found = shutil.which('chrome') or shutil.which('chrome.exe') or shutil.which('chromium')
+        if found:
+            return found
+        return None
+
+    def ensure_tab(self, url='https://www.baidu.com', timeout=30):
+        """Ensure at least one scriptable tab exists. Opens Chrome with URL if needed.
+        Returns the session_id of the new/existing tab, or None on timeout."""
+        import subprocess, os
+        # Check if we already have active sessions
+        active = [s for s in self.sessions.values() if s.is_active() and s.url]
+        if active:
+            return active[0].id
+        
+        # Open Chrome with URL
+        chrome = self._find_chrome_exe()
+        if not chrome:
+            print("[ensure_tab] Chrome executable not found, cannot open tab")
+            return None
+        
+        print(f"[ensure_tab] No active sessions, opening Chrome with: {url}")
+        subprocess.Popen([chrome, url], 
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        
+        # Wait for extension to connect and register the session
+        start = time.time()
+        while time.time() - start < timeout:
+            active = [s for s in self.sessions.values() if s.is_active() and s.url]
+            if active:
+                sid = active[0].id
+                self.default_session_id = sid
+                print(f"[ensure_tab] Session appeared: {sid} ({active[0].url})")
+                return sid
+            time.sleep(0.5)
+        
+        # Final check after timeout (race condition mitigation)
+        time.sleep(1)
+        active = [s for s in self.sessions.values() if s.is_active() and s.url]
+        if active:
+            sid = active[0].id
+            self.default_session_id = sid
+            print(f"[ensure_tab] Session appeared just after timeout: {sid} ({active[0].url})")
+            return sid
+        
+        print(f"[ensure_tab] Timeout after {timeout}s, no session appeared")
+        return None
+
     def start_http_server(self):
         self.app = app = bottle.Bottle()
 
@@ -76,6 +137,8 @@ class TMWebDriver:
         @app.route('/api/result', method=['GET','POST'])
         def result():
             data = request.json
+            if data is None:
+                return 'ignored'  
             if data.get('type') == 'result':  
                 self.results[data.get('id')] = {'success': True, 'data': data.get('result'), 'newTabs': data.get('newTabs', [])}  
             elif data.get('type') == 'error':  
@@ -199,8 +262,16 @@ class TMWebDriver:
                     session = alive_sessions[0]  
                     print(f"会话 {session_id} 未连接，自动切换到最新活动会话: {session.id}")
                     session_id = self.default_session_id = session.id
-                if not session or not session.is_active(): 
-                    raise ValueError(f"会话ID {session_id} 未连接")  
+                if not session or not session.is_active():
+                    # Fallback: no scriptable tabs (e.g., all tabs are about:blank)
+                    # Try to open a real URL in Chrome
+                    print(f"[execute_js] No active session, attempting ensure_tab fallback...")
+                    new_sid = self.ensure_tab(timeout=30)
+                    if new_sid:
+                        session = self.sessions.get(new_sid)
+                        session_id = new_sid
+                    if not session or not session.is_active(): 
+                        raise ValueError(f"会话ID {session_id} 未连接，且无法自动打开浏览器标签页。请确保Chrome已打开非空白页面。")  
 
         tp = session.type
         if tp not in ('ws', 'http', 'ext_ws'):
@@ -279,6 +350,14 @@ class TMWebDriver:
         return self.default_session_id  
     
     def jump(self, url, timeout=10): self.execute_js(f"window.location.href='{url}'", timeout=timeout)
+
+    def navigate(self, url, timeout=15):
+        """Navigate to URL. Uses jump() if session exists, otherwise opens Chrome directly."""
+        active = [s for s in self.sessions.values() if s.is_active() and s.url]
+        if active:
+            return self.jump(url, timeout)
+        else:
+            return self.ensure_tab(url, timeout)
     
 if __name__ == "__main__":
     driver = TMWebDriver(host='127.0.0.1', port=18765)

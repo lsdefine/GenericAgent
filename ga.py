@@ -108,14 +108,14 @@ def first_init_driver():
     global driver
     from TMWebDriver import TMWebDriver
     driver = TMWebDriver()
-    for i in range(20):
+    for i in range(5):
         time.sleep(1)
         sess = driver.get_all_sessions()
         if len(sess) > 0: break
-    if len(sess) == 0: return 
-    if len(sess) == 1: 
-        #driver.newtab()
-        time.sleep(3)
+    if len(sess) == 0:
+        # Try to recover: open a URL in Chrome
+        print("[first_init] No sessions, attempting ensure_tab fallback...")
+        driver.ensure_tab(timeout=30)
 
 def web_scan(tabs_only=False, switch_tab_id=None, text_only=False, maxlen=35000):
     """获取当前页面的简化HTML内容和标签页列表。注意：简化过程会过滤边栏、浮动元素等非主体内容。
@@ -126,7 +126,10 @@ def web_scan(tabs_only=False, switch_tab_id=None, text_only=False, maxlen=35000)
     try:
         if driver is None: first_init_driver()
         if len(driver.get_all_sessions()) == 0:
-            return {"status": "error", "msg": "没有可用的浏览器标签页，查L3记忆分析原因。"}
+            # Try to recover: open a URL in Chrome
+            sid = driver.ensure_tab(timeout=30)
+            if not sid and len(driver.get_all_sessions()) == 0:
+                return {"status": "error", "msg": "没有可用的浏览器标签页，查L3记忆分析原因。"}
         tabs = []
         for sess in driver.get_all_sessions(): 
             sess.pop('connected_at', None)
@@ -172,7 +175,11 @@ def web_execute_js(script, switch_tab_id=None, no_monitor=False):
     global driver
     try:
         if driver is None: first_init_driver()
-        if len(driver.get_all_sessions()) == 0: return {"status": "error", "msg": "没有可用的浏览器标签页，查L3记忆分析原因。"}
+        if len(driver.get_all_sessions()) == 0:
+            # Try to recover: open a URL in Chrome
+            sid = driver.ensure_tab(timeout=30)
+            if not sid and len(driver.get_all_sessions()) == 0:
+                return {"status": "error", "msg": "没有可用的浏览器标签页，查L3记忆分析原因。"}
         if switch_tab_id: driver.default_session_id = switch_tab_id
         result = simphtml.execute_js_rich(script, driver, no_monitor=no_monitor)
         return result

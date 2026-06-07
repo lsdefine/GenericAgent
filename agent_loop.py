@@ -19,9 +19,11 @@ class BaseHandler:
         method_name = f"do_{tool_name}"
         if hasattr(self, method_name):
             args['_index'] = index; args['_tool_num'] = tool_num
-            _hook('tool_before', locals())
+            _ctx = _hook('tool_before', locals())
+            if isinstance(_ctx, dict): args = _ctx.get('args', args)
             ret = yield from try_call_generator(getattr(self, method_name), args, response)
-            _hook('tool_after', locals())
+            _ctx = _hook('tool_after', locals())
+            if isinstance(_ctx, dict): ret = _ctx.get('ret', ret)
             return ret
         elif tool_name == 'bad_json': return StepOutcome(None, next_prompt=args.get('msg', 'bad_json'), should_exit=False)
         else:
@@ -46,7 +48,8 @@ def agent_runner_loop(client, system_prompt, user_input, handler, tools_schema,
         {"role": "user", "content": initial_user_content if initial_user_content is not None else user_input}
     ]
     turn = 0;  handler.max_turns = max_turns
-    _hook('agent_before', locals())
+    _ctx = _hook('agent_before', locals())
+    if isinstance(_ctx, dict): system_prompt = _ctx.get('system_prompt', system_prompt)
     while turn < handler.max_turns:
         turn += 1; turnstr = f'LLM Running (Turn {turn}) ...'
         if handler.parent.task_dir: turnstr = f'Turn {turn} ...'
@@ -54,8 +57,10 @@ def agent_runner_loop(client, system_prompt, user_input, handler, tools_schema,
         if yield_info: yield {'turn': turn}
         yield f"\n\n{turnstr}\n\n"
         if turn%10 == 0: client.last_tools = ''  # 每10轮重置一次工具描述
-        _hook('turn_before', locals())
-        _hook('llm_before', locals())
+        _ctx = _hook('turn_before', locals())
+        if isinstance(_ctx, dict): messages = _ctx.get('messages', messages)
+        _ctx = _hook('llm_before', locals())
+        if isinstance(_ctx, dict): messages = _ctx.get('messages', messages)
         response_gen = client.chat(messages=messages, tools=tools_schema)
         if verbose:
             response = yield from response_gen
@@ -64,7 +69,8 @@ def agent_runner_loop(client, system_prompt, user_input, handler, tools_schema,
             response = exhaust(response_gen)
             cleaned = _clean_content(response.content)
             if cleaned: yield cleaned + '\n'
-        _hook('llm_after', locals())
+        _ctx = _hook('llm_after', locals())
+        if isinstance(_ctx, dict): response = _ctx.get('response', response)
 
         if not response.tool_calls: tool_calls = [{'tool_name': 'no_tool', 'args': {}}]
         else: tool_calls = [{'tool_name': tc.function.name, 'args': json.loads(tc.function.arguments), 'id': tc.id}
@@ -100,10 +106,12 @@ def agent_runner_loop(client, system_prompt, user_input, handler, tools_schema,
             if len(handler._done_hooks) == 0 or exit_reason.get('result', '') == 'EXITED': break
             next_prompts.add(handler._done_hooks.pop(0))
         next_prompt = handler.turn_end_callback(response, tool_calls, tool_results, turn, '\n'.join(next_prompts), exit_reason)
-        _hook('turn_after', locals())
+        _ctx = _hook('turn_after', locals())
+        if isinstance(_ctx, dict): next_prompt = _ctx.get('next_prompt', next_prompt)
         messages = [{"role": "user", "content": next_prompt, "tool_results": tool_results}]   # just new message, history is kept in *Session
     if exit_reason: handler.turn_end_callback(response, tool_calls, tool_results, turn, '', exit_reason)
-    _hook('agent_after', locals())
+    _ctx = _hook('agent_after', locals())
+    if isinstance(_ctx, dict): exit_reason = _ctx.get('exit_reason', exit_reason)
     return exit_reason or {'result': 'MAX_TURNS_EXCEEDED'}
 
 def _clean_content(text):

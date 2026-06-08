@@ -2331,6 +2331,16 @@ class InputArea(TextArea):
             event.stop(); event.prevent_default()
             self.post_message(self.Submitted(self, self.text))
             return
+        if event.is_printable:
+            insert = event.character
+            if insert is None and len(event.key) == 1:
+                insert = event.key
+            if insert is not None:
+                event.stop(); event.prevent_default()
+                self._insert_via_keyboard(insert)
+                if self._history_index != -1:
+                    self._history_index = -1
+                return
         if self._history_index != -1 and event.key not in ("up", "down", "left", "right"):
             self._history_index = -1
         await super()._on_key(event)

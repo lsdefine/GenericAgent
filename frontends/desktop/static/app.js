@@ -654,6 +654,17 @@ function setActiveSession(id) {
   renderSessionList();
   renderDiagnostics();
   const runtime = getSessionRuntime(sess);
+  // Restore route-info-bar for this session
+  const bar = document.getElementById('route-info-bar');
+  if (bar) {
+    if (runtime.lastRouteInfo) {
+      bar.textContent = runtime.lastRouteInfo;
+      bar.style.display = '';
+    } else {
+      bar.textContent = '';
+      bar.style.display = 'none';
+    }
+  }
   setBusy(runtime.busy, runtime.busy ? 'Agent is responding…' : null, sess);
   // When switching to a session that is still running, ensure the live draft
   // is rendered immediately and polling is active (it may have been started
@@ -880,6 +891,11 @@ function renderMessages() {
     messagesEl.scrollTop = messagesEl.scrollHeight;
   }
   state._prevRenderedId = state.activeId;
+
+  // Re-attach infoBar after DOM rebuild (innerHTML='' removes it)
+  if (runtime?._infoBar && !messagesEl.contains(runtime._infoBar)) {
+    messagesEl.prepend(runtime._infoBar);
+  }
 }
 
 function prepareMessagesForContent() {
@@ -1010,6 +1026,23 @@ function handleNotification(msg) {
     }
     // Update tab dot regardless
     renderSessionList();
+    return;
+  }
+  if (msg.type === 'agent-info') {
+    // Store per-session so switching tabs restores the correct route info
+    const infoSess = findSessionByBridgeId(msg.sessionId);
+    if (infoSess) {
+      const infoRuntime = getSessionRuntime(infoSess);
+      infoRuntime.lastRouteInfo = msg.text;
+    }
+    // Only update the bar if this message belongs to the active session
+    if (infoSess && infoSess.id === state.activeId) {
+      const bar = document.getElementById('route-info-bar');
+      if (bar) {
+        bar.textContent = msg.text;
+        bar.style.display = '';
+      }
+    }
     return;
   }
   if (msg.method !== 'session/update') return;
@@ -1327,6 +1360,11 @@ function finalizeAssistantReply(sess) {
     // Session finished in background — its DOM cache is stale, discard it
     // so that switching to it will do a full re-render from sess.messages
     _domCache.delete(sess.id);
+  } else {
+    // wrap is null but this is the active session (e.g. first reply on a new tab
+    // where the streaming turn element was never created). Force a full re-render
+    // so the finalized message becomes visible immediately.
+    renderMessages();
   }
   stopTaskTimer(sess);
 }
@@ -1469,6 +1507,7 @@ async function cancelPrompt() {
   try {
     const res = await window.ga.rpc('session/cancel', { sessionId: sess?.bridgeSessionId || state.activeId });
     if (res.error) throw new Error(res.error.message || res.error);
+    setBusy(false, null, sess);  // clear busy immediately; don't wait for server-side cancelled event
     return true;
   } catch (e) {
     showSystem('Stop failed: ' + (e.message || e));
@@ -1831,6 +1870,13 @@ window.ga.onBridgeClosed((info) => {
     return;
   }
   state.bridgeReady = false;
+  // Clear busy flag on all sessions so pending poll loops can exit cleanly
+  for (const [sid, runtime] of state.runtimeBySessionId) {
+    if (runtime.busy) {
+      const sess = state.sessions.get(sid);
+      setBusy(false, null, sess);
+    }
+  }
   setStatus('err', `Bridge stopped (${info.code})`);
 });
 
@@ -1952,6 +1998,7 @@ sendBtn.addEventListener('click', () => {
 });
 
 // ─── Buttons ─────────────────────────────────────────────────────────────
+
 $('new-session-btn').addEventListener('click', newSession);
 $('settings-btn').addEventListener('click', openSettings);
 $('close-settings').addEventListener('click', closeSettings);

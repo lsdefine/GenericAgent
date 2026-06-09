@@ -1,4 +1,5 @@
 // Disable alert/confirm/prompt to prevent page JS from blocking extension
+try{delete Navigator.prototype.webdriver;delete navigator.webdriver}catch(e){}
 (function() {
   const _log = console.log.bind(console);
   function toast(type, msg) {

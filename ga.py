@@ -108,14 +108,11 @@ def first_init_driver():
     global driver
     from TMWebDriver import TMWebDriver
     driver = TMWebDriver()
-    for i in range(20):
-        time.sleep(1)
+    for i in range(7):
+        time.sleep(2)
         sess = driver.get_all_sessions()
         if len(sess) > 0: break
-    if len(sess) == 0: return 
-    if len(sess) == 1: 
-        #driver.newtab()
-        time.sleep(3)
+        if i == 4: os.startfile("https://example.com")
 
 def web_scan(tabs_only=False, switch_tab_id=None, text_only=False, maxlen=35000):
     """获取当前页面的简化HTML内容和标签页列表。注意：简化过程会过滤边栏、浮动元素等非主体内容。
@@ -503,7 +500,7 @@ class GenericAgentHandler(BaseHandler):
             if remaining == 0:
                 self._exit_plan_mode(); yield "[Info] Plan完成：plan.md中0个[ ]残留，退出plan模式。\n"
         
-        yield "[Info] Final response to user.\n"
+        #yield "[Info] Final response to user.\n"
         return StepOutcome(response, next_prompt=None)
     
     def do_start_long_term_update(self, args, response):

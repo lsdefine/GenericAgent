@@ -245,7 +245,7 @@ class TMWebDriver:
     def _remote_cmd(self, cmd):
         try: return requests.post(self.remote, headers={"Content-Type": "application/json"}, json=cmd, timeout=30).json()
         except (ConnectionError, requests.exceptions.ConnectionError):
-            raise ConnectionError("TMWebDriver master未运行，看tmwebdriver_sop启动master")
+            raise ConnectionError("TMWebDriver master未运行，看tmwebdriver_sop后台启动一个TMWebDriver")
 
     def get_all_sessions(self):  
         if self.is_remote:

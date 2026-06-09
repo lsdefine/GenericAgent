@@ -19,7 +19,20 @@ from continue_cmd import handle_frontend_command, reset_conversation, list_sessi
 from btw_cmd import handle_frontend_command as btw_handle_frontend
 from export_cmd import last_assistant_text, export_to_temp, wrap_for_clipboard
 
-st.set_page_config(page_title="Cowork", layout="wide")
+st.set_page_config(page_title="Cowork", layout="wide", initial_sidebar_state="collapsed")
+
+st.markdown("""
+<style>
+[data-testid="stBottom"] {
+    position: fixed !important;
+    bottom: 0 !important;
+    left: 0; right: 0;
+    z-index: 999;
+    background: var(--background-color, #ffffff);
+}
+.stMainBlockContainer { padding-bottom: 10rem !important; }
+</style>
+""", unsafe_allow_html=True)
 
 LANG = os.environ.get('GA_LANG', 'zh')
 if LANG not in ('zh', 'en'): LANG = 'zh'
@@ -233,20 +246,6 @@ try:
     _embed_html = lambda html, **kw: _st_iframe(html, **{k: max(v, 1) if isinstance(v, int) else v for k, v in kw.items()})
 except (ImportError, AttributeError):
     from streamlit.components.v1 import html as _embed_html  # ≤1.55
-_js_scroll_fix = (
-    "!function(){var p=window.parent;if(p.__sfx2)return;p.__sfx2=1;var d=p.document;"
-    "var pending=0;"
-    "function f(){pending=0;var m=d.querySelector('section.main');if(!m)return;"
-    "var s=m.scrollTop,h=m.scrollHeight;"
-    "m.style.minHeight=h+1+'px';void m.offsetHeight;"
-    "m.style.minHeight='';void m.offsetHeight;"
-    "m.scrollTop=s}"
-    "function schedule(){if(!pending){pending=1;requestAnimationFrame(f)}}"
-    "d.addEventListener('transitionend',function(e){"
-    "e.target.closest&&e.target.closest('details')&&setTimeout(schedule,60)},!0);"
-    "new MutationObserver(function(){setTimeout(schedule,80)})"
-    ".observe(d.body,{subtree:1,attributes:1,attributeFilter:['open']})}()"
-)
 # IME composition fix (macOS only) - prevents Enter from submitting during CJK input
 _js_ime_fix = ("" if os.name == 'nt' else
     "!function(){if(window.parent.__imeFix)return;window.parent.__imeFix=1;"

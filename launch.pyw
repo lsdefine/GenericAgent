@@ -2,9 +2,7 @@ import webview, threading, subprocess, sys, time, os, ctypes, atexit, socket, ra
 from urllib.request import urlopen
 from urllib.error import URLError
 
-APP_TITLE = 'GenericAgent'
-WINDOW_WIDTH, WINDOW_HEIGHT = 600, 900
-READY_TIMEOUT = 30
+WINDOW_WIDTH, WINDOW_HEIGHT, RIGHT_PADDING, TOP_PADDING = 1200, 900, 0, 50
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 frontends_dir = os.path.join(script_dir, "frontends")

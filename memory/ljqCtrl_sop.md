@@ -10,6 +10,7 @@
 - `ljqCtrl.GrabWindow(hwnd_or_name)`: 前台截图(先Activate), 传hwnd(int)或窗口标题子串(str), 返回PIL Image
 - `ljqCtrl.GrabWindowBg(hwnd_or_name, timeout=5)`: WGC后台截图(Win10+)
 - `ljqCtrl.MouseDClick(staytime=0.05)`: 鼠标双击
+- 可先阅读computer_use.md
 
 ## 1. 环境载入
 import ljqCtrl

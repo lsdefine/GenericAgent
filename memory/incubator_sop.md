@@ -6,8 +6,10 @@
 GARoot/*.py
 GARoot/assets/*.txt *.json
 mykey.py
-GARoot/memory/           # 默认gitignore白名单的SOP，另外可以直接看情况修改干预
+GARoot/memory/      
 ```
+memory下大部分文件不适合分发，不要复制 memory 下未被 gitignore 白名单的文件！
+不要复制 memory 下的L1/L2文件(global_mem(_insight).txt)，会自动初始化
 
 ## 依赖
 requests beautifulsoup4

@@ -3997,12 +3997,20 @@ class SB:
             self._run_shell(raw[1:].strip())
             return
         if raw.startswith('/'):
+            # Expand pasted/file/image placeholders BEFORE dispatch so a command
+            # carries the real pasted text, not a `[Pasted text #N]` marker — e.g.
+            # `/morphling <pasted multi-line target>`. Without this the command
+            # path returned here before the expansion below ever ran, so the agent
+            # got the literal placeholder. `self.hist` already kept the raw input.
+            expanded = self._expand(raw)
             # /btw owns its own live-region panel — keep the command itself
             # out of the main scrollback.
-            cmd0 = (raw[1:].split(None, 1)[0] or '').lower()
+            cmd0 = (expanded[1:].split(None, 1)[0] or '').lower()
             if cmd0 != 'btw':
-                self._commit_user(raw)
-            self._cmd(raw); return
+                self._commit_user(expanded)
+            self._cmd(expanded)
+            self._pstore.clear(); self._fstore.clear(); self._imgs.clear()
+            return
         # Expand placeholders FIRST so the agent receives the resolved text,
         # not the [Image #N] / [Pasted #N] markers.  This matches the idle
         # submit path below — keeping the form identical means a queued

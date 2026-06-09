@@ -157,7 +157,7 @@ def detect(image_path, mode='match', conf=0.25, iou_thresh=0.5):
     return elements
 
 def visualize_for_debug(image_path, elements, output_path=None):
-    """调试用: 可视化元素列表"""
+    """Only use when user wants to DEBUG!"""
     from PIL import ImageFont
     img = Image.open(image_path)
     draw = ImageDraw.Draw(img)

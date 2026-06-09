@@ -773,6 +773,57 @@ def _sweep_stale_task_dirs() -> None:
         if os.path.isdir(d):
             _rmdir_if_empty(d)
 
+
+def _branch_assistant_blocks(content: Any) -> list[Any]:
+    if isinstance(content, list):
+        return content
+    if content is None:
+        return []
+    return [{"type": "text", "text": str(content)}]
+
+
+def _branch_history_pairs(history: list[dict[str, Any]]) -> list[tuple[dict[str, Any], list[Any]]]:
+    pairs: list[tuple[dict[str, Any], list[Any]]] = []
+    pending_user: Optional[dict[str, Any]] = None
+    for msg in history or []:
+        if not isinstance(msg, dict):
+            continue
+        role = msg.get("role")
+        if role == "user":
+            pending_user = msg
+        elif role == "assistant" and pending_user is not None:
+            pairs.append((pending_user, _branch_assistant_blocks(msg.get("content"))))
+            pending_user = None
+    return pairs
+
+
+def _persist_branch_snapshot(agent: Any, history: list[dict[str, Any]]) -> Optional[str]:
+    pairs = _branch_history_pairs(history)
+    if not pairs:
+        return None
+    log_dir = os.path.join(ROOT_DIR, "temp", "model_responses")
+    os.makedirs(log_dir, exist_ok=True)
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    path = os.path.join(log_dir, f"model_responses_branch_{os.getpid()}_{stamp}_{time.time_ns() % 1_000_000_000:09d}.txt")
+    with open(path, "w", encoding="utf-8", errors="replace") as fh:
+        for user_msg, assistant_blocks in pairs:
+            fh.write("=== Prompt ===\n")
+            fh.write(json.dumps(user_msg, ensure_ascii=False, indent=2))
+            fh.write("\n\n=== Response ===\n")
+            fh.write(repr(assistant_blocks))
+            fh.write("\n\n")
+    agent.log_path = path
+    clients: list[Any] = []
+    primary = getattr(agent, "llmclient", None)
+    if primary is not None:
+        clients.append(primary)
+    for client in getattr(agent, "llmclients", []) or []:
+        if client is not None and client not in clients:
+            clients.append(client)
+    for client in clients:
+        client.log_path = path
+    return path
+
 # Side-effect imports activate /btw + /continue monkey-patches.
 import chatapp_common  # noqa: F401
 from chatapp_common import format_restore
@@ -3838,6 +3889,13 @@ class GenericAgentTUI(App[None]):
             new.messages.append(nm)
         new.task_seq = old.task_seq
         n = len(new.agent.llmclient.backend.history)
+        try:
+            branch_log = _persist_branch_snapshot(new.agent, new.agent.llmclient.backend.history)
+            if branch_log:
+                import session_names
+                session_names.set_name(branch_log, name)
+        except Exception as e:
+            self._system(f"Branch persist warning: {type(e).__name__}: {e}")
         self._system(f"Branched #{old.agent_id} → #{new.agent_id} ({n} msgs).")
 
     def _cmd_rewind(self, args, raw):

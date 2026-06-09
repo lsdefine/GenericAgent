@@ -398,6 +398,7 @@ Thanks to the **LinuxDo** community for the support!
 - [chilishark27/ga-manager](https://github.com/chilishark27/ga-manager)
 - [wangjc683/galley](https://github.com/wangjc683/galley) — Out-of-the-box local agent workbench with a bundled GA runtime (CPython 3.11 + deps), native GUI/CLI, multi-session + Project orchestration, local-first.
 - [FroStorM/A3Agent](https://github.com/FroStorM/A3Agent/tree/workbench)
+- [Fwind43/GenericAgent-Admin](https://github.com/Fwind43/GenericAgent-Admin) — Go + React desktop admin panel: service lifecycle management, native chat, Goal mode, BBS team board, file editor, model config wizard, TMWebDriver monitor, self-update, and Windows tray/desktop-pet integration.
 
 ---
 
@@ -787,6 +788,7 @@ GA Web 工具运行在**真实、持久化的 Chrome/Chromium 会话**中，而�
 - [chilishark27/ga-manager](https://github.com/chilishark27/ga-manager)
 - [wangjc683/galley](https://github.com/wangjc683/galley) —— 开箱即用的本地 Agent 工作台，自带 GA 内核（内置 CPython 3.11 + 运行依赖），GUI/CLI 双原生、多 session + Project 编排、本地优先。
 - [FroStorM/A3Agent](https://github.com/FroStorM/A3Agent/tree/workbench)
+- [Fwind43/GenericAgent-Admin](https://github.com/Fwind43/GenericAgent-Admin) —— Go + React 桌面管理面板：服务生命周期管理、原生 Chat、Goal 模式、BBS 团队看板、文件编辑器、模型配置向导、TMWebDriver 监控、自更新，以及 Windows 托盘/桌面宠物集成。
 
 ---
 

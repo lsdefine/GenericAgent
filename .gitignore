@@ -146,3 +146,6 @@ frontends/conductor_im_plugins/config.local.json
 **/__pycache__/
 
 .claude/
+# Project Mode SOP
+!memory/project_mode_sop.md
+

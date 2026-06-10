@@ -6,10 +6,11 @@
 由模型按 L1 中的指针与线索（行数/大小）自行判断是否用 file 工具读取。
 利用 messages 是 list 引用的事实，直接 mutate 即反映到真正发给 LLM 的内容。
 
-激活态载体 = 文件锚 temp/.active_project（存当前项目名）。文件驱动，跨轮天生持久。
-  - 文件存在且非空 → 项目模式激活
-  - 进入：agent 读 project_mode_sop 后写该文件（SOP 指示）
-  - 退出：清空/删除该文件
+激活态载体 = 文件锚 temp/.active_project.<宿主pid>（存当前项目名）。PID 键控：
+  - 锚只对写它的那个 GA 进程有效 → 多开 GA 各自激活不同项目，互不可见
+  - GA 关闭即自动失活（重启后 pid 变，旧锚作废）；重新激活需经用户确认（SOP 指示）
+  - 进入：agent 读 project_mode_sop，经用户确认后写锚（code_run 中 os.getppid() 即宿主 pid）
+  - 退出：删除该文件。插件加载时清扫旧版无后缀锚与自己 pid 的前世残留（不碰他进程的锚）
 
 目录约定：
   temp/projects/<项目名>/project_memory.md   单文件全文注入的项目记忆
@@ -20,7 +21,24 @@ import plugins.hooks as hooks
 
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _TEMP = os.path.join(_PROJECT_ROOT, 'temp')
-_ANCHOR = os.path.join(_TEMP, '.active_project')
+_ANCHOR = os.path.join(_TEMP, f'.active_project.{os.getpid()}')
+
+
+def _cleanup_stale_anchors():
+    """清扫无主锚：仅删两类能纯靠文件名判定的——旧版无后缀的、自己 pid 的（刚启动
+    不可能写过锚，必是 pid 复用的前世残留）。他进程的锚一律不碰：故意不做存活探测，
+    os.kill(pid, 0) 在 Windows 上语义是终止进程而非探活，任何平台分支都不值得为
+    删除无害残留文件引入杀进程风险（激活判定只认自己 pid 的锚，残留不影响行为）。"""
+    import glob
+    for path in glob.glob(os.path.join(_TEMP, '.active_project*')):
+        pid = path.rsplit('.', 1)[-1]
+        if path != _ANCHOR and pid.isdigit():
+            continue  # 他进程的锚（含已死进程的），不碰
+        try: os.remove(path)
+        except OSError: pass
+
+
+_cleanup_stale_anchors()
 
 
 def _active_project():

@@ -1866,6 +1866,16 @@ class ChatMessage:
     searchable: bool = False
     search_query: str = ""
     all_choices: Optional[list] = field(default=None, repr=False)
+    # Free-input opt-in for searchable pickers (/model): when True, Enter in
+    # the search box with NO selectable match commits the raw query text as
+    # the value — the filter box doubles as a custom-name input. /continue
+    # keeps the default False, so a no-match Enter stays a no-op there.
+    free_input: bool = False
+    # Optional placeholder for the search Input ("" → the /continue default).
+    search_placeholder: str = ""
+    # Hint row shown (disabled) under the search Input when choices is empty —
+    # doubles as a "loading…" indicator for pickers filled asynchronously (/model).
+    empty_hint: str = "(no matches)"
     image_paths: list[str] = field(default_factory=list)
     _role_widget: Any = field(default=None, repr=False)
     _hint_widget: Any = field(default=None, repr=False)
@@ -1957,6 +1967,8 @@ COMMANDS = [
     ("/clear",    "",                 "清空显示（不动 LLM 历史）"),
     ("/stop",     "",                 "中止当前任务"),
     ("/llm",      "[n]",              "查看 / 切换模型"),
+    ("/model",    "[name]",           "查看 / 设置当前渠道的 model（列表在线拉取）"),
+    ("/effort",   "[level]",          "查看 / 设置 reasoning effort（off 清除；Claude xhigh→max）"),
     ("/btw",      "<question>",       "side question — 不打断主 agent"),
     ("/review",   "[request]",         "in-session 代码审查（直接输出报告）"),
     # ── slash_cmds bundle (prompt-injection + /scheduler picker).  Kept in
@@ -2210,7 +2222,8 @@ class SearchableChoiceList(Vertical):
     def compose(self):
         self._search_input = Input(
             value=self.msg.search_query or "",
-            placeholder="Search sessions: type to filter, Esc to cancel",
+            placeholder=(self.msg.search_placeholder
+                         or "Search sessions: type to filter, Esc to cancel"),
             id="continue-search",
         )
         yield self._search_input
@@ -2330,7 +2343,7 @@ class SearchableChoiceList(Vertical):
         if not filtered:
             # Show a disabled hint row so Enter on an empty result set is a
             # no-op rather than a crash inside _collapse_choice.
-            empty = ChoiceList(self.msg, "(no matches)", classes="picker")
+            empty = ChoiceList(self.msg, self.msg.empty_hint or "(no matches)", classes="picker")
             try:
                 empty.disabled = True
             except Exception:
@@ -2407,10 +2420,41 @@ class SearchableChoiceList(Vertical):
             if not at_end:
                 return
         if key in ("enter", "right"):
+            # Don't go through picker.action_select() here: the OptionSelected
+            # it posts is constructed while *this* widget's pump is active, so
+            # its _sender == picker's parent and Textual auto-stops the bubble
+            # one hop up — the App handler never sees it. Collapse directly.
+            committed = False
             try:
-                self.picker.action_select()
+                hi = self.picker.highlighted
+                opts = getattr(self.picker, "_options", [])
+                # Eligibility must be checked here, not inferred from
+                # _collapse_choice "not raising": it silently no-ops on an
+                # out-of-range idx (the disabled empty-hint picker highlights
+                # its placeholder row at 0 while msg.choices is []).
+                if (hi is not None and 0 <= hi < len(self.picker.msg.choices)
+                        and hi < len(opts) and not opts[hi].disabled):
+                    self.app._collapse_choice(self.picker.msg, hi)
+                    committed = True
             except Exception:
                 pass
+            # Free-input pickers (/model): Enter with no selectable match
+            # commits the raw query as the value — the search box doubles as
+            # a custom-name input (list still loading / fetch failed / name
+            # not in the list).
+            if (not committed and key == "enter"
+                    and getattr(self.msg, "free_input", False)):
+                q = ""
+                try:
+                    q = (self._search_input.value or "").strip()
+                except Exception:
+                    pass
+                if q:
+                    try:
+                        self.msg.choices = list(self.msg.choices or []) + [(q, q)]
+                        self.app._collapse_choice(self.msg, len(self.msg.choices) - 1)
+                    except Exception:
+                        pass
             event.stop(); event.prevent_default()
             return
 
@@ -3378,7 +3422,9 @@ class GenericAgentTUI(App[None]):
             "new": self._cmd_new, "switch": self._cmd_switch, "close": self._cmd_close,
             "rename": self._cmd_rename,
             "branch": self._cmd_branch, "rewind": self._cmd_rewind, "clear": self._cmd_clear,
-            "stop": self._cmd_stop, "llm": self._cmd_llm, "export": self._cmd_export,
+            "stop": self._cmd_stop, "llm": self._cmd_llm, "model": self._cmd_model,
+            "effort": self._cmd_effort,
+            "export": self._cmd_export,
             "restore": self._cmd_restore, "btw": self._cmd_btw, "review": self._cmd_review,
             "continue": self._cmd_continue, "cost": self._cmd_cost,
             "reload-keys": self._cmd_reload_keys,
@@ -4742,6 +4788,93 @@ class GenericAgentTUI(App[None]):
             return f"已切换到 [{idx}] {name}"
         except Exception as e:
             return f"❌ 切换失败: {e}"
+
+    # ---------------- /model: 渠道内 model 切换（逻辑在 model_cmd.py） ----------------
+    def _cmd_model(self, args, raw):
+        import model_cmd
+        agent = self.current.agent
+        if args:  # /model <name> 直设, 不拉列表
+            self._system(model_cmd.set_model(agent, " ".join(args)))
+            return
+        self._open_model_picker()
+
+    def _open_model_picker(self) -> None:
+        """立即挂一个空的 searchable picker(输入框先可用, 下方 hint 行显示加载中),
+        后台拉取完成后 _fill_model_picker 就地填充。mixin 不再选渠道, 直接作用于
+        当前子渠道 (model_cmd sub=None 即当前)。"""
+        import model_cmd
+        agent = self.current.agent
+        cur = model_cmd.current_model(agent, None)
+        msg = ChatMessage(
+            role="system",
+            content=f"选择模型 (当前: {cur} · 输入过滤或自定义名称 · ↑/↓ 移动，Enter 确认，Esc 取消)",
+            kind="choice", choices=[],
+            on_select=lambda v: model_cmd.set_model(self.current.agent, v),
+        )
+        msg.searchable = True
+        msg.free_input = True
+        msg.search_placeholder = "输入关键字过滤；无匹配时 Enter 设置自定义模型名"
+        msg.all_choices = []
+        msg.empty_hint = "⏳ 正在拉取模型列表… (或直接输入完整模型名 Enter 直设)"
+        self.current.messages.append(msg)
+        self._refresh_messages()
+
+        def worker():
+            try:
+                models = model_cmd.fetch_models(agent, None)
+                err = None if models else "渠道未返回模型列表"
+            except Exception as e:
+                models, err = [], f"{type(e).__name__}: {e}"
+            self.call_from_thread(self._fill_model_picker, msg, models, err, cur)
+
+        threading.Thread(target=worker, daemon=True, name="ga-tui-model").start()
+
+    # ---------------- /effort: reasoning effort 切换（逻辑在 model_cmd.py） ----------------
+    def _cmd_effort(self, args, raw):
+        import model_cmd
+        if args:  # /effort <level> 直设
+            self._system(model_cmd.set_effort(self.current.agent, " ".join(args)))
+            return
+        agent = self.current.agent
+        cur = model_cmd.current_effort(agent)
+        protocols = model_cmd._protocols(agent)
+        # (显示名, value, 备注, 是否当前选中)。有备注的行名字补齐到等宽，
+        # 备注对齐成一列；无备注的行直接用显示名，不留尾随空格。
+        rows = [("默认", "off", "", not cur)]
+        for lv in model_cmd.EFFORT_LEVELS:
+            rows.append((lv, lv, model_cmd.effort_note(lv, protocols), cur == lv))
+        w = max(len(d) for d, _, _, _ in rows)
+        choices = [(("✓ " if tick else "  ")
+                    + (disp.ljust(w) + f"    {note}" if note else disp), val)
+                   for disp, val, note, tick in rows]
+        msg = ChatMessage(
+            role="system",
+            content=(f"选择 reasoning effort (当前: {cur or '未设置'} · "
+                     "↑/↓ 移动，Enter 确认，Esc 取消)"),
+            kind="choice", choices=choices,
+            on_select=lambda v: model_cmd.set_effort(self.current.agent, v),
+        )
+        self.current.messages.append(msg)
+        self._refresh_messages()
+
+    def _fill_model_picker(self, msg, models, err, cur) -> None:
+        """拉取完成: 就地重建 picker 区, 保留 Input 焦点与已输入的过滤词。"""
+        w = msg._body_widget
+        if (msg.selected_label is not None or w is None
+                or not getattr(w, "is_mounted", False)):
+            return  # 用户已 Esc/已选, 静默丢弃
+        if err:
+            msg.empty_hint = f"❌ 拉取失败: {err} · 直接输入完整模型名 Enter 设置"
+        else:
+            msg.all_choices = [(("✓ " if m == cur else "  ") + m, m) for m in models]
+            msg.empty_hint = "(无匹配 · Enter 设置自定义模型名)"
+            msg.content = (f"选择模型 ({len(models)} 个 · 当前: {cur} · "
+                           "输入过滤或自定义名称 · ↑/↓ 移动，Enter 确认，Esc 取消)")
+            try:
+                msg._hint_widget.update(Text(msg.content, style=C_MUTED))
+            except Exception:
+                pass
+        w._apply_filter(msg.search_query or "")
 
     # ---------------- new commands ----------------
     def _cmd_btw(self, args, raw):
@@ -6637,6 +6770,11 @@ class GenericAgentTUI(App[None]):
                         batch=m.lazy_choice_batch or 50,
                         classes="picker",
                     )
+                elif m.searchable and not m.choices:
+                    # Async-filled picker still loading (or empty): disabled
+                    # hint row under the Input, same shape as the no-matches row.
+                    widget = ChoiceList(m, m.empty_hint, classes="picker")
+                    widget.disabled = True
                 else:
                     widget = ChoiceList(m, classes="picker")
                     for cl, _ in m.choices:

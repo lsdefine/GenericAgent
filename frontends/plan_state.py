@@ -159,16 +159,26 @@ def current_step(messages, start_idx: int = 0, max_len: int = 60) -> str:
     return ""
 
 
-def is_active(agent, messages=None, start_idx: int = 0) -> bool:
-    """Plan mode is on. Primary: `working['in_plan_mode']`. Fallback:
-    a `plan_*/plan.md` referenced in this session's messages (no global scan)."""
+def is_active(agent, messages=None, start_idx: int = 0,
+              restored_path: str = "") -> bool:
+    """Plan mode is on. Primary: `working['in_plan_mode']`. Then
+    `restored_path` — a path recovered from the transcript's structured
+    `enter_plan_mode` tool_use by /continue (see continue_cmd.find_plan_entry);
+    unlike the message scan it cannot be spoofed by a path typed in chat.
+    Legacy fallback: a `plan_*/plan.md` referenced in this session's messages
+    (no global scan) — only consulted when `messages` is passed."""
     if _stashed_plan_path(agent): return True
+    if restored_path and _resolve_stashed(restored_path): return True
     return find_path_in_messages(messages, start_idx) is not None
 
 
-def resolve_path(agent, messages=None, start_idx: int = 0) -> Optional[str]:
+def resolve_path(agent, messages=None, start_idx: int = 0,
+                 restored_path: str = "") -> Optional[str]:
     p = _resolve_stashed(_stashed_plan_path(agent))
     if p: return p
+    if restored_path:
+        p = _resolve_stashed(restored_path)
+        if p: return p
     return find_path_in_messages(messages, start_idx)
 
 

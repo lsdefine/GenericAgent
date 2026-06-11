@@ -1705,14 +1705,36 @@ Screen { background: $ga-bg; color: $ga-fg; }
    `display: none` default so the empty post-compose frame doesn't flash;
    renderer flips it on once items materialize. Fixed height (no scroll)
    keeps layout stable; body truncates to 4 items + "+N more" footer. */
-#planbar {
+/* Plan card. Outer #planbar-scroll owns the frame (border/padding) + show-hide.
+   #planbar-head pins the header + current-step line. #planbar-tasks is the only
+   scrolling region: capped at 4 rows so at most 4 TODO items show at once, the
+   rest reachable by wheel/PageUp. */
+#planbar-scroll {
     display: none;
-    height: 5;
-    max-height: 5;
+    height: auto;
     background: $ga-sel-bg;
     padding: 0 1;
     margin: 0 0 1 0;
     border-left: thick $ga-green;
+}
+#planbar-scroll.-visible { display: block; }
+#planbar-head {
+    height: auto;
+    background: $ga-sel-bg;
+}
+#planbar-tasks {
+    height: auto;
+    max-height: 4;
+    background: $ga-sel-bg;
+    scrollbar-size: 0 1;
+    scrollbar-background: $ga-sel-bg;
+    scrollbar-background-hover: $ga-sel-bg;
+    scrollbar-background-active: $ga-sel-bg;
+    scrollbar-color: $ga-border;
+}
+#planbar {
+    height: auto;
+    background: $ga-sel-bg;
 }
 
 /* `└ Tip:` footer — one dim row, never grows. */
@@ -3500,7 +3522,13 @@ class GenericAgentTUI(App[None]):
             yield _sidebar
             with Vertical(id="main"):
                 yield VerticalScroll(id="messages")
-                yield Static("", id="planbar")
+                # Plan card: pinned header/step (#planbar-head) above a task list
+                # (#planbar) that scrolls inside a 4-row window (#planbar-tasks).
+                with Vertical(id="planbar-scroll"):
+                    yield Static("", id="planbar-head")
+                    _tasks = VerticalScroll(Static("", id="planbar"), id="planbar-tasks")
+                    _tasks.can_focus = False  # don't steal Tab focus from input
+                    yield _tasks
                 yield OptionList(id="palette")
                 yield InputArea(
                     "",
@@ -3522,8 +3550,8 @@ class GenericAgentTUI(App[None]):
         self.add_session("main")
         self._system(f"Welcome to GenericAgent TUI. 按 / 唤起命令面板，{fmt_key('ctrl+n')} 新建会话。")
 
-        # CSS `#planbar { display: none }` keeps it hidden by default —
-        # the renderer flips it on once items materialize.
+        # CSS `#planbar-scroll { display: none }` keeps it hidden by default —
+        # the renderer adds `-visible` once plan items materialize.
         self.query_one("#input", InputArea).focus()
         self.set_interval(0.5, self._tick)
         self._patch_auto_scroll_for_selection()
@@ -6032,29 +6060,26 @@ class GenericAgentTUI(App[None]):
         if complete and sess and sess.plan_complete_since is not None:
             if time.time() - sess.plan_complete_since >= self._PLAN_GRACE_SEC:
                 self._set_planbar_visible(bar, False); return
-        # 5-row budget: header(1) + step(0/1) + tasks(N) + overflow(0/1).
+        # Render all tasks — #planbar-tasks caps the visible window at 4 rows and
+        # scrolls the rest. Open tasks first, done last (open work stays on top).
         step = plan_state.current_step(msgs, start_idx=base)
-        budget = 4 - (1 if step else 0)
         ordered = [(c, st) for c, st in items if st != "done"] + \
                   [(c, st) for c, st in items if st == "done"]
-        body_lines = budget - 1 if len(ordered) > budget else budget
-        shown = ordered[:body_lines]
-        overflow = max(0, len(ordered) - body_lines)
-        sig = (tuple(shown), overflow, step, bool(complete and sess and sess.plan_complete_since))
-        if getattr(bar, "_plan_sig", None) == sig and bar.display: return
+        sig = (tuple(ordered), step, bool(complete and sess and sess.plan_complete_since))
+        if getattr(bar, "_plan_sig", None) == sig and self._planbar_shown(): return
         bar._plan_sig = sig
-        body = Text()
-        head = f"✓ Plan complete ({n_total}/{n_total})\n" if complete else f"📋 Plan ({n_done}/{n_total})\n"
-        body.append(head, style=f"bold {C_GREEN}")
+        head = Text()
+        head.append(f"✓ Plan complete ({n_total}/{n_total})" if complete
+                    else f"📋 Plan ({n_done}/{n_total})", style=f"bold {C_GREEN}")
         if step:
-            body.append("  ▸ ", style=C_GREEN)
-            body.append(step[:120] + "\n", style=C_MUTED)
-        for c, st in shown:
-            if st == "done": body.append("  ✔ ", style=C_GREEN); body.append(c + "\n", style=C_DIM)
-            else:            body.append("  ☐ ", style=C_DIM);  body.append(c + "\n", style=C_FG)
-        if overflow:
-            body.append(f"  ⋮ +{overflow} more", style=C_DIM)
-        bar.update(body)
+            head.append("\n  ▸ ", style=C_GREEN)
+            head.append(step[:120], style=C_MUTED)
+        body = Text()
+        for i, (c, st) in enumerate(ordered):
+            if i: body.append("\n")
+            if st == "done": body.append("  [x] ", style=C_GREEN); body.append(c, style=C_DIM)
+            else:            body.append("  [ ] ", style=C_DIM);  body.append(c, style=C_FG)
+        self._planbar_paint(head, body, bar)
         self._set_planbar_visible(bar, True)
 
     def _render_planbar_placeholder(self, bar: Static, sess: AgentSession) -> None:
@@ -6067,26 +6092,44 @@ class GenericAgentTUI(App[None]):
         hint = "/".join(path.replace("\\", "/").rstrip("/").split("/")[-2:]) if path else "plan.md"
         step = plan_state.current_step(sess.messages, start_idx=base)
         sig = ("__placeholder__", hint, step)
-        if getattr(bar, "_plan_sig", None) == sig and bar.display: return
+        if getattr(bar, "_plan_sig", None) == sig and self._planbar_shown(): return
         bar._plan_sig = sig
-        body = Text()
-        body.append("📋 Plan 模式已激活\n", style=f"bold {C_GREEN}")
+        head = Text()
+        head.append("📋 Plan 模式已激活", style=f"bold {C_GREEN}")
         if step:
-            body.append("  ▸ ", style=C_GREEN)
-            body.append(step[:120] + "\n", style=C_MUTED)
+            head.append("\n  ▸ ", style=C_GREEN)
+            head.append(step[:120], style=C_MUTED)
+        body = Text()
         body.append(f"  等待写入 {hint} …", style=C_DIM)
-        bar.update(body)
+        self._planbar_paint(head, body, bar)
         self._set_planbar_visible(bar, True)
 
+    def _planbar_paint(self, head: Text, body: Text, bar: Static) -> None:
+        # Header/step go to the pinned #planbar-head; tasks to #planbar (the
+        # scrolling body). bar is #planbar, passed in by the callers.
+        try: self.query_one("#planbar-head", Static).update(head)
+        except Exception: pass
+        bar.update(body)
+
+    def _planbar_shown(self) -> bool:
+        try: return self.query_one("#planbar-scroll", Vertical).has_class("-visible")
+        except Exception: return False
+
     def _set_planbar_visible(self, bar: Static, visible: bool) -> None:
-        # Repaint only on show→hide transition; idle ticks no-op.
+        # Visibility lives on the outer container (display:none ↔ -visible),
+        # mirroring #palette. Repaint only on show→hide transition; idle ticks no-op.
+        try: cont = self.query_one("#planbar-scroll", Vertical)
+        except Exception: return
         if not visible:
-            if not bar.display: return
-            bar.display = False
+            if not cont.has_class("-visible"): return
+            cont.remove_class("-visible")
+            try: self.query_one("#planbar-head", Static).update(Text())
+            except Exception: pass
             bar.update(Text())
             bar._plan_sig = None
             return
-        if not bar.display: bar.display = True
+        if not cont.has_class("-visible"):
+            cont.add_class("-visible")
 
     def _start_plan_watcher(self) -> None:
         if getattr(self, "_plan_timer", None) is not None: return

@@ -245,6 +245,590 @@ def _render_tool_use_block(match) -> str:
     return f"\n*tool: {name}*\n"
 
 
+# ---------------------------------------------------------------------------
+# Write-tool diff rendering.
+#
+# `file_patch` / `file_write` are the only tools whose *content* matters at a
+# glance, so we render them as a real, themed diff instead of the generic
+# `tool: <name>` line. The render produces two parallel strings:
+#   - an ANSI string (line-number gutter + ±/space sign + low-saturation row
+#     background) injected into the colored "narrow" markdown stream, and
+#   - a plain string (identical visible text, no SGR) injected into the
+#     "wide" stream so `_align_md_renders` can pair them line-for-line and
+#     mouse-selection / copy still works.
+# Both strings have the SAME line count and the SAME post-rstrip text, which is
+# the invariant `_align_md_renders` relies on (K==W branch).
+#
+# The verbose display stream (agent_loop.py:78) shows tool args as pretty JSON
+# inside a ```` ```text ```` fence — but `get_pretty_json` turns escaped `\n`
+# into *real* newlines, so multi-line content no longer parses as JSON. Instead
+# of parsing the display text, `_install_write_snapshot_hook` captures the real
+# structured `args` dict (plus the file's pre-write content for `overwrite`)
+# from a `tool_before` hook, keyed by `hash(get_pretty_json(args))`. At render
+# time we hash the fence body and look the capture back up — content-addressed,
+# so it survives re-renders and pairs each block with its exact call.
+# ---------------------------------------------------------------------------
+
+# hash(get_pretty_json(args)) -> {"name", "args", "existed", "old"}
+_WRITE_CAP: dict[int, dict] = {}
+
+# Cap the rendered diff body so a 2000-line file_write can't flood the chat.
+_DIFF_MAX_ROWS = 80
+_DIFF_CONTEXT = 3
+
+# Visual-only left margin for the rendered card: prefixed to the ANSI (narrow)
+# stream but NOT the plain (wide) copy source, so mouse-copy stays margin-free.
+# `_align_md_renders` maps the offset via line_indents (single-line groups), and
+# `_md_line_has_box_drawing` exempts the card's `└─ ` line from the table
+# passthrough that would otherwise copy the visible (margined) text.
+_DIFF_MARGIN = 2
+
+# Matches the verbose tool display agent_loop.py emits:
+#   🛠️ Tool: `file_patch`  📥 args:
+#   ````text
+#   { ...pretty json... }
+#   ````
+# Group 1 = tool name, group 2 = the (newline-mangled) pretty-JSON fence body,
+# which we hash to recover the real args captured by the snapshot hook.
+_VERBOSE_WRITE_RE = re.compile(
+    r"🛠️ Tool: `(file_write|file_patch|file_read|code_run)`  📥 args:\n`{4}\w*\n(.*?)\n`{4}"
+    # Also swallow the dispatch output fence that immediately follows
+    # (`[Action]…`/`{status}` lines) — its info moves into the diff header.
+    r"(?:\s*`{5}\n(.*?)\n`{5})?",
+    re.DOTALL,
+)
+
+
+# Any other tool's verbose block — same shape, any tool name. Substituted AFTER
+# `_VERBOSE_WRITE_RE` (write blocks are already sentinels by then), purely to
+# add the left margin while keeping the Rich-markdown look unchanged.
+_VERBOSE_TOOL_RE = re.compile(
+    r"🛠️ Tool: `(\w+)`  📥 args:\n`{4}\w*\n.*?\n`{4}"
+    r"(?:\s*`{5}\n.*?\n`{5})?",
+    re.DOTALL,
+)
+
+
+def _fence_status(fence_body):
+    """Per-block outcome from the dispatch-output fence trailing a write call
+    (a `{"status": ..., "msg": ...}` line). This is the only *per-occurrence*
+    signal: `_WRITE_CAP` is keyed by args, so two identical calls (fail → mkdir
+    → retry) share one capture and its stored status is last-write-wins."""
+    for line in (fence_body or "").splitlines():
+        try:
+            d = json.loads(line)
+        except Exception:
+            continue
+        if isinstance(d, dict) and "status" in d:
+            return d.get("status"), str(d.get("msg") or "")
+    return None
+
+
+def _sgr_fg(hex_color: str) -> str:
+    r, g, b = _hex_rgb(hex_color)
+    return f"\x1b[38;2;{r};{g};{b}m"
+
+
+def _sgr_bg(hex_color: str) -> str:
+    r, g, b = _hex_rgb(hex_color)
+    return f"\x1b[48;2;{r};{g};{b}m"
+
+
+_SGR_RESET = "\x1b[0m"
+
+
+def _chop_cells(s: str, w: int) -> list[str]:
+    """Split into chunks each ≤ w display cells (CJK counts as 2)."""
+    from rich.cells import cell_len
+    out, cur, cw = [], [], 0
+    for ch in s:
+        c = cell_len(ch)
+        if cur and cw + c > w:
+            out.append("".join(cur)); cur, cw = [ch], c
+        else:
+            cur.append(ch); cw += c
+    if cur:
+        out.append("".join(cur))
+    return out or [""]
+
+
+def _cell_tail(s: str, n: int) -> str:
+    """Keep the tail of `s` within n cells, prefixing … if truncated."""
+    from rich.cells import cell_len
+    if cell_len(s) <= n:
+        return s
+    if n <= 1:
+        return "…"
+    out, w = [], 0
+    for ch in reversed(s):
+        c = cell_len(ch)
+        if w + c > n - 1:
+            break
+        out.append(ch); w += c
+    return "…" + "".join(reversed(out))
+
+
+class _CardWriter:
+    """Accumulates a tool card's two parallel streams: `ansi` (narrow, colored,
+    later margined) and `plain` (wide, the copy source — no margin). `row()`
+    takes (text, color) segments for simple uniform lines; `raw()` takes
+    pre-built ansi/plain for rows with gutters/backgrounds. `finish()` applies
+    the visual-only left margin to the ANSI stream ONLY (keeping it out of the
+    copy source) and joins both. Shared by all three tool cards so the _hrow /
+    margin boilerplate lives in one place."""
+    __slots__ = ("ansi", "plain")
+
+    def __init__(self):
+        self.ansi, self.plain = [], []
+
+    def row(self, *segs):
+        self.plain.append("".join(s for s, _ in segs))
+        self.ansi.append("".join(f"{_sgr_fg(c)}{s}" for s, c in segs) + _SGR_RESET)
+
+    def raw(self, ansi_line, plain_line):
+        self.ansi.append(ansi_line)
+        self.plain.append(plain_line)
+
+    def finish(self):
+        m = " " * _DIFF_MARGIN
+        return "\n".join(m + l for l in self.ansi), "\n".join(self.plain)
+
+
+def _card_status_row(cw, base_segs, err, detail, width):
+    """Emit a card's status-bearing line: `base_segs` followed by an inline red
+    `✗ detail` if it fits, else a bare `✗` with `detail` wrapped onto indented
+    red lines. `detail=''` with `err=True` yields a bare ✗. The single place
+    the three cards' failure-header layout lives."""
+    from rich.cells import cell_len
+    col = _diff_colors()
+    base_plain = "".join(s for s, _ in base_segs)
+    mark = (f"  ✗ {detail}" if detail else "  ✗") if err else ""
+    inline = (not detail) or cell_len(base_plain + mark) <= width
+    cw.row(*base_segs,
+           *([(mark if inline else "  ✗", col["del_sign"])] if err else []))
+    if err and not inline and detail:
+        for chunk in _chop_cells(detail, max(8, width - 3)):
+            cw.row(("   " + chunk, col["del_sign"]))
+
+
+def _card_note(cw, text):
+    """A card annotation line (truncation / omission notes), head color. One
+    style so every card's `… +N 行…` note reads alike."""
+    cw.row((text, _diff_colors()["head"]))
+
+
+def _emit_gutter(cw, content_w, segs, glyph_first, glyph_rest):
+    """Emit (text, color) segments behind a 2-col gutter: `glyph_first` on the
+    block's first physical row, `glyph_rest` after; soft-wraps each line, gutter
+    always dim. The code card's command (`│ `) and output (`└ `/`  `) blocks
+    share it."""
+    col = _diff_colors()
+    first = True
+    for text, color in segs:
+        for chunk in _chop_cells(text, content_w):
+            g = glyph_first if first else glyph_rest
+            cw.raw(f"{_sgr_fg(col['gutter'])}{g}{_sgr_fg(color)}{chunk}{_SGR_RESET}",
+                   f"{g}{chunk}".rstrip())
+            first = False
+
+
+def _diff_colors() -> dict:
+    """Derive diff colors from the live `_palette`. Backgrounds/foregrounds are
+    blended *from the theme's own bg/fg*, so the same code yields dark tints on
+    a dark theme and light tints on a light one — no explicit dark/light fork."""
+    p = _palette
+    bg = p.get("bg") or "#0d1117"
+    fg = p.get("fg") or "#c9d1d9"
+    # Fixed add/del hues so the diff semantics stay green/red on any theme
+    # (palette["green"] falls back to a theme's primary, which isn't always
+    # green). Backgrounds are still blended *from the theme bg*, so the tint
+    # auto-darkens on dark themes and lightens on light ones.
+    green = "#3fb950"
+    red = "#e5534b"
+    return {
+        "bg": bg,
+        "add_bg": _mix(bg, green, 0.18),
+        "del_bg": _mix(bg, red, 0.18),
+        "add_fg": _mix(fg, green, 0.50),
+        "del_fg": _mix(fg, red, 0.50),
+        "add_sign": green,
+        "del_sign": red,
+        "ctx_fg": _mix(bg, fg, 0.78),
+        "gutter": p.get("dim") or _mix(bg, fg, 0.35),
+        "head": p.get("muted") or _mix(bg, fg, 0.55),
+    }
+
+
+def _diff_hunks(old: str, new: str, context: int = _DIFF_CONTEXT) -> list[list[tuple]]:
+    """Group a diff into hunks of `(sign, line_no, text)` rows. `sign` is one of
+    '+'/'-'/' '; `line_no` is the new-file number for '+'/' ' and the old-file
+    number for '-'. Uses difflib's grouped opcodes so each hunk carries `context`
+    unchanged lines around the change, and gaps collapse into separate hunks."""
+    from difflib import SequenceMatcher
+    a, b = old.splitlines(), new.splitlines()
+    sm = SequenceMatcher(None, a, b, autojunk=False)
+    hunks: list[list[tuple]] = []
+    for group in sm.get_grouped_opcodes(context):
+        rows: list[tuple] = []
+        for tag, i1, i2, j1, j2 in group:
+            if tag == "equal":
+                for k in range(i2 - i1):
+                    rows.append((" ", j1 + k + 1, b[j1 + k]))
+            else:
+                for k in range(i1, i2):
+                    rows.append(("-", k + 1, a[k]))
+                for k in range(j1, j2):
+                    rows.append(("+", k + 1, b[k]))
+        if rows:
+            hunks.append(rows)
+    return hunks
+
+
+def _insert_hunk(text: str, start_no: int = 1) -> list[list[tuple]]:
+    """A single all-'+' hunk for a brand-new / appended / prepended file."""
+    return [[("+", start_no + k, line) for k, line in enumerate(text.splitlines())]]
+
+
+def _render_write_diff(name: str, args: dict, existed: bool, old: str, width: int,
+                       status: str = None, msg: str = ""):
+    """Render a file_write/file_patch call as a themed diff.
+
+    `existed`/`old` describe the target before the write (captured by the hook).
+    For file_patch, `old` (the pre-write full file) lets us render a whole-file
+    diff with real line numbers + surrounding context; without it we fall back to
+    diffing just the old/new fragment. `status` is the tool outcome
+    ('success'/'error'); success stays silent, error tags the header with a red ✗
+    (+msg) so the noisy `[Action]`/`{status}` lines can be dropped. Returns
+    `(ansi, plain)` parallel strings, or `None` to fall back."""
+    args = args or {}
+    old = old or ""
+    width = max(20, width - _DIFF_MARGIN)  # body math sees the post-margin width
+    path = str(args.get("path") or "").strip()
+    if not path:
+        return None
+
+    display_mode = None
+    if name == "file_patch":
+        old_c = str(args.get("old_content") or "")
+        new_c = str(args.get("new_content") or "")
+        if not old_c and not new_c:
+            return None
+        # Whole-file diff (real line numbers + context around the change) when we
+        # have the pre-write full file and old_content matches exactly once;
+        # otherwise diff just the fragment (no file context available, e.g.
+        # /continue without a tracked full file).
+        if existed and old and old_c and old.count(old_c) == 1:
+            hunks = _diff_hunks(old, old.replace(old_c, new_c, 1))
+        else:
+            hunks = _diff_hunks(old_c, new_c)
+    elif name == "file_write":
+        new = args.get("content")
+        if new is None:
+            return None  # content lives in the response body, not args — can't diff
+        new = str(new)
+        mode = str(args.get("mode") or "overwrite")
+        display_mode = mode
+        if mode in ("append", "prepend"):
+            if existed:
+                # Show append/prepend with the same surrounding unchanged context
+                # as file_patch by diffing the whole pre/post file, instead of an
+                # isolated all-green insertion block.
+                hunks = _diff_hunks(old, old + new if mode == "append" else new + old)
+            else:
+                hunks = _insert_hunk(new)
+        elif existed and old != new:
+            hunks = _diff_hunks(old, new)
+        elif existed:
+            return None  # overwrite with identical content — nothing to diff
+        else:
+            hunks = _insert_hunk(new)
+    else:
+        return None
+
+    if not any(hunks):
+        return None
+
+    added = sum(1 for h in hunks for r in h if r[0] == "+")
+    removed = sum(1 for h in hunks for r in h if r[0] == "-")
+    max_no = max((r[1] for h in hunks for r in h), default=1)
+    lw = max(2, len(str(max_no)))
+    content_w = max(8, width - (lw + 3))  # "<no> <sign> " prefix
+    col = _diff_colors()
+
+    from rich.cells import cell_len, set_cell_size
+
+    cw = _CardWriter()
+
+    # Header: compact tool-call line + tree child path/counts. Keep file_patch
+    # bare, but show the file_write mode as file_write(overwrite|append|prepend).
+    # Path is tail-truncated by display width so the header never wraps.
+    err = (status == "error")
+    msg = " ".join(str(msg or "").split())
+    tool_label = name if name == "file_patch" else f"{name}({display_mode})"
+    add_seg, del_seg = f"  +{added}", f" -{removed}"
+    child_prefix = "└─ "
+    avail = width - cell_len(child_prefix + add_seg + del_seg) - (cell_len("  ✗") if err else 0)
+    shown = _cell_tail(path, max(4, avail))
+    cw.row((tool_label, col["head"]))
+    _card_status_row(cw, [(child_prefix + shown, col["head"]),
+                          (add_seg, col["add_sign"]), (del_seg, col["del_sign"])],
+                     err, msg, width)
+
+    def emit(sign: str, no, text: str):
+        text = (text or "").replace("\t", "    ").replace("\x1b", "")
+        no_str = (str(no) if no is not None else "").rjust(lw)
+        if sign == "+":
+            row_bg, sign_c, text_c = col["add_bg"], col["add_sign"], col["add_fg"]
+        elif sign == "-":
+            row_bg, sign_c, text_c = col["del_bg"], col["del_sign"], col["del_fg"]
+        else:
+            row_bg, sign_c, text_c = None, col["gutter"], col["ctx_fg"]
+        bg = _sgr_bg(row_bg) if row_bg else ""
+        # Active soft-wrap: split long lines into width-sized physical rows so
+        # each row carries its own full-width background (Textual's own wrap
+        # leaves continuation rows unpainted). Continuation rows get a blank
+        # gutter so content stays aligned under the first row.
+        for ci, chunk in enumerate(_chop_cells(text, content_w)):
+            body = set_cell_size(chunk, content_w)  # pad to exactly content_w cells
+            if ci == 0:
+                gutter = f"{_sgr_fg(col['gutter'])}{no_str} {_sgr_fg(sign_c)}{sign} "
+                cw.raw(f"{bg}{gutter}{_sgr_fg(text_c)}{body}{_SGR_RESET}",
+                       f"{no_str} {sign} {chunk}")
+            else:
+                gutter = " " * (lw + 3)
+                cw.raw(f"{bg}{gutter}{_sgr_fg(text_c)}{body}{_SGR_RESET}",
+                       f"{' ' * (lw + 3)}{chunk}")
+
+    rows_emitted = 0
+    truncated = 0
+    for hi, hunk in enumerate(hunks):
+        if hi > 0:
+            cw.raw(f"{_sgr_fg(col['gutter'])}{'⋯'.rjust(lw + 2)}{_SGR_RESET}",
+                   "⋯".rjust(lw + 2))
+        for sign, no, text in hunk:
+            if rows_emitted >= _DIFF_MAX_ROWS:
+                truncated += 1
+                continue
+            emit(sign, no, text)
+            rows_emitted += 1
+    if truncated:
+        _card_note(cw, f"… +{truncated} 行未显示")
+
+    return cw.finish()
+
+
+_READ_MAX_ROWS = 10
+
+# Lines of a file_read result that exist for the LLM, not the user: the
+# show_linenos preamble, the `[FILE] N lines | PARTIAL …` header, truncation
+# tips, and the keyword-fallback explanation. All stripped from the card.
+_READ_NOISE_RE = re.compile(
+    r"^(?:由于设置了show_linenos|\[FILE[\] ]|\[FILE PARTIAL|（某些行被截断"
+    r"|Keyword '.*' not found after line )"
+)
+
+
+def _render_read_card(args, content, width):
+    """Render a file_read call like the write cards: header + the lines the
+    tool actually returned, LLM-facing chrome stripped (see _READ_NOISE_RE).
+    The gutter always shows line numbers when they're knowable: parsed from the
+    `N|` prefixes (show_linenos), else synthesized from `start` for sequential
+    reads — numbers and content are decoupled; the only number the renderer
+    can't derive is a keyword window's position without `N|`. smart_format's
+    `[omitted long content]` hole renders as a `⋯` row and ends the gutter for
+    the rest of the card (parsed and synthesized alike — the cut is mid-line,
+    so post-hole numbers mislead).
+    Body capped at _READ_MAX_ROWS with a tail count. `Error:` results render
+    header-✗ only — the Did-you-mean suggestions are for the agent's
+    self-correction, not the user. Returns (ansi, plain) or None."""
+    args = args or {}
+    width = max(20, width - _DIFF_MARGIN)
+    path = str(args.get("path") or "").strip()
+    if content is None or not path:
+        return None
+    from rich.cells import cell_len
+    col = _diff_colors()
+    text = str(content)
+    err = text.startswith("Error:")
+
+    rows: list[tuple] = []  # (lineno_or_None, text)
+    linenos = bool(args.get("show_linenos", True))
+    if not err:
+        # Strip LLM-facing chrome, then trim blank runs at both ends
+        # (separators around the stripped noise) BEFORE numbering; interior
+        # blanks are real file content and stay.
+        lines = [ln for ln in text.split("\n") if not _READ_NOISE_RE.match(ln.strip())]
+        while lines and not lines[0].strip():
+            lines.pop(0)
+        while lines and not lines[-1].strip():
+            lines.pop()
+        # Without `N|` prefixes, synthesize the gutter: a sequential read's
+        # lines are start, start+1, … Stay blank where numbers would be
+        # guesses: a keyword window's position is unknown (unless the keyword
+        # fell back to a sequential read).
+        fell_back = "not found after line" in text.split("\n", 1)[0]
+        synth = (not linenos) and (not args.get("keyword") or fell_back)
+        no = int(args.get("start") or 1) if synth else None
+        holed = False
+        for ln in lines:
+            if ln.strip() == "[omitted long content]":
+                rows.append((None, "⋯"))
+                no, holed = None, True  # gutter ends at the hole: the cut is
+                continue                # mid-line, post-hole numbers mislead
+            m = re.match(r"^(\d+)\|(.*)$", ln) if linenos else None
+            if m:
+                rows.append((None if holed else int(m.group(1)), m.group(2)))
+            else:
+                rows.append((no, ln))
+                if no is not None:
+                    no += 1
+        if not rows:
+            return None
+
+    msg = " ".join(text.split("\n")[0][len("Error:"):].split()) if err else ""
+    child_prefix = "└─ "
+    avail = width - cell_len(child_prefix) - (cell_len("  ✗") if err else 0)
+    shown = _cell_tail(path, max(4, avail))
+
+    cw = _CardWriter()
+    cw.row(("file_read", col["head"]))
+    _card_status_row(cw, [(child_prefix + shown, col["head"])], err, msg, width)
+
+    shown_rows = rows[:_READ_MAX_ROWS]
+    hidden = len(rows) - len(shown_rows)
+    max_no = max((no for no, _ in shown_rows if no), default=0)
+    lw = max(2, len(str(max_no or 1)))
+    content_w = max(8, width - (lw + 3))
+    for no, body in shown_rows:
+        body = (body or "").replace("\t", "    ").replace("\x1b", "")
+        no_str = (str(no) if no is not None else "").rjust(lw)
+        for ci, chunk in enumerate(_chop_cells(body, content_w)):
+            gutter = f"{no_str}   " if ci == 0 else " " * (lw + 3)
+            cw.raw(f"{_sgr_fg(col['gutter'])}{gutter}"
+                   f"{_sgr_fg(col['ctx_fg'])}{chunk}{_SGR_RESET}",
+                   f"{gutter}{chunk}".rstrip())
+    if hidden > 0:
+        _card_note(cw, f"… +{hidden} 行未显示")
+
+    return cw.finish()
+
+
+_CODE_MAX_CODE_ROWS = 20   # 代码段从头展示
+_CODE_MAX_OUT_ROWS = 15    # 输出段保尾展示（报错 traceback 关键在末尾）
+_CODE_DEFAULT_CWD = {"", ".", "./", ".\\"}
+
+
+def _code_parse_data(data):
+    """把 code_run 的 StepOutcome.data 归一成 (out_text, exit_code, err_msg, is_err)。
+    兼容三种返回形态:
+      - 正常/进程异常 dict: {"status","stdout","exit_code"} 或 {"status":"error","msg"}
+      - inline_eval 字符串: eval 的 repr，或 'Error: ...'
+      - 代码缺失字符串: '[Error] Code missing ...'
+    out_text 只取真正的输出(dict 的 stdout / 字符串结果)，绝不回退 msg——msg
+    是 dict 进程异常的摘要，单独走 err_msg 进头部，避免和输出段重复显示。
+    is_err 标记失败但无独立 detail 的情形(字符串错误本身就是输出)，让头部至少
+    打个裸 ✗。out_text 已规整 CRLF→LF。"""
+    exit_code, err_msg, is_err = None, "", False
+    if isinstance(data, dict):
+        out_text = data.get("stdout") or ""
+        exit_code = data.get("exit_code")
+        if data.get("status") == "error":
+            is_err = True
+            err_msg = str(data.get("msg") or "")
+    elif isinstance(data, str):
+        out_text = data
+        if data.lstrip().startswith(("Error:", "[Error]")):
+            is_err = True  # 内容即错误，留给输出段；头部裸 ✗
+    else:
+        out_text = "" if data is None else str(data)
+    out_text = str(out_text).replace("\r\n", "\n").replace("\r", "\n")
+    return out_text, exit_code, err_msg, is_err
+
+
+def _render_code_card(args, data, width):
+    """CC/Codex-style gutter card for code_run — no borders, structure comes
+    from dim gutters (Codex's exec cell look, adapted to our card family):
+
+        code_run(python)              ← header; red `✗ Exit 1 …` on failure
+        │ import os                   ← command: `│ ` gutter (plain text)
+        │ print(run())
+        └ epoch 1 loss 0.3            ← output: `└ ` + dim text, continuation
+          … +12 行已省略                 indented 2; TAIL-kept (traceback ends
+          ValueError: boom               matter most — differs from CC/Codex)
+
+    The command segment renders only when the code rode in via `script`/`code`
+    args; a body ```block``` source is already rendered above by markdown.
+    Returns (ansi, plain); tolerant of every data shape (_code_parse_data)."""
+    args = args or {}
+    width = max(20, width - _DIFF_MARGIN)
+    col = _diff_colors()
+    ctype = str(args.get("type") or "python").strip() or "python"
+    code = str(args.get("script") or args.get("code") or "")
+    out_text, exit_code, err_msg, is_err = _code_parse_data(data)
+
+    # Timeout / manual-stop markers live inside stdout (ga.py:72-73).
+    note_extra = ("超时" if "[Timeout Error]" in out_text
+                  else "已停止" if "[Stopped]" in out_text else "")
+    # Header failure detail. exit_code may be None (inline_eval has none, a
+    # killed process polls None) — only a non-zero *integer* counts. err_msg is
+    # the dict-error summary; a string-error's text stays in the output body, so
+    # it sets is_err (bare ✗) but contributes no detail (avoids duplication).
+    parts = []
+    if isinstance(exit_code, int) and exit_code != 0:
+        parts.append(f"Exit {exit_code}")
+    if note_extra:
+        parts.append(note_extra)
+    if err_msg:
+        m = err_msg
+        for p in ("Error:", "[Error]"):
+            if m.startswith(p):
+                m = m[len(p):].strip()
+        if m:
+            parts.append(m)
+    err = is_err or bool(parts)
+    detail = " ".join(" · ".join(parts).split())
+
+    cw = _CardWriter()
+    _card_status_row(cw, [(f"code_run({ctype})", col["head"])], err, detail, width)
+    cwd = str(args.get("cwd") or "").strip()
+    if cwd and cwd not in _CODE_DEFAULT_CWD:
+        for chunk in _chop_cells(f"cwd: {cwd}", max(8, width)):
+            cw.row((chunk, col["gutter"]))
+
+    content_w = max(8, width - 2)  # behind the 2-col gutter
+
+    # Command segment: `│ ` gutter on every physical line (plain text). Only
+    # when the code rode in via script/code args (a body ```block``` source is
+    # already rendered above by markdown).
+    code_lines = code.split("\n") if code.strip() else []
+    if code_lines:
+        shown = [l.replace("\t", "    ").replace("\x1b", "")
+                 for l in code_lines[:_CODE_MAX_CODE_ROWS]]
+        segs = [(l, col["ctx_fg"]) for l in shown]
+        extra = len(code_lines) - len(shown)
+        if extra > 0:
+            segs.append((f"… +{extra} 行未显示", col["head"]))
+        _emit_gutter(cw, content_w, segs, "│ ", "│ ")
+
+    # Output segment: `└ ` first row, `  ` after, dim. Tail-kept — the omission
+    # note leads, the tail lines follow (a traceback's last lines matter most).
+    out_lines = [l.replace("\t", "    ").replace("\x1b", "")
+                 for l in out_text.split("\n")]
+    while out_lines and not out_lines[-1].strip():
+        out_lines.pop()
+    segs = []
+    omitted = len(out_lines) - _CODE_MAX_OUT_ROWS
+    if omitted > 0:
+        segs.append((f"… +{omitted} 行已省略", col["head"]))
+        out_lines = out_lines[-_CODE_MAX_OUT_ROWS:]
+    if not out_lines and not segs:
+        segs.append(("(无输出)", col["gutter"]))
+    segs += [(l, col["ctx_fg"]) for l in out_lines]
+    _emit_gutter(cw, content_w, segs, "└ ", "  ")
+
+    return cw.finish()
+
+
 def _extract_user_text(entry: dict) -> str:
     c = entry.get("content") if isinstance(entry, dict) else None
     if isinstance(c, str):
@@ -546,8 +1130,27 @@ def _md_line_has_box_drawing(line: str) -> bool:
     newlines.  Use the Unicode Box Drawing block so SIMPLE/ROUNDED/HEAVY/etc.
     table styles are covered while em-dashes (`—`) and ASCII/Unicode hyphens are
     not mistaken for tables.
+
+    A leading `\u2514\u2500 ` (with the space) is the write-diff card's child-path line,
+    not a table border \u2014 borders run the glyphs together (`\u2514\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2518`). Same
+    for the code card's `\u2502 ` / `\u2514 ` gutters, and a gutter-only row (`\u2502` / `\u2514`
+    left after rstrip trims the trailing space of an empty command/output line).
+    Exempt all of them so the cards keep their exact narrow\u2194wide line mapping
+    instead of the visible-text passthrough (which would copy the card's
+    visual-only margin). A pure horizontal run (only `\u2500` + spaces) is a
+    separator / markdown hr, not a table \u2014 also exempt.
     """
-    return any("\u2500" <= ch <= "\u257f" for ch in line)
+    s = line.lstrip()
+    for pfx in ("\u2514\u2500 ", "\u2502 ", "\u2514 "):
+        if s.startswith(pfx):
+            s = s[len(pfx):]
+            break
+    else:
+        if s in ("\u2502", "\u2514"):  # gutter-only row (empty command/output line)
+            s = ""
+    if not s.replace("\u2500", "").replace(" ", ""):
+        return False
+    return any("\u2500" <= ch <= "\u257f" for ch in s)
 
 
 def _md_run_has_box_drawing(lines: list[str]) -> bool:
@@ -640,7 +1243,13 @@ def _align_md_renders(narrow_raw: str, wide_raw: str):
                     if j > g_start - run_start:
                         content, _ = _strip_quote_deco(nt.lstrip())
                     else:
-                        content = nt
+                        # First line of the group: drop any visual-only left
+                        # margin (narrow lead beyond the wide line's own lead —
+                        # margined tool blocks) so the accumulation against the
+                        # wide target stays balanced.
+                        n_lead = len(nt) - len(nt.lstrip())
+                        w_lead = len(w_line) - len(w_line.lstrip())
+                        content = nt[max(0, n_lead - w_lead):]
                     accumulated += len(content)
                     j += 1
                     # Each wrap boundary eats one space from the wide line, so
@@ -725,8 +1334,14 @@ def _align_md_renders(narrow_raw: str, wide_raw: str):
             for k in range(g_start, g_end):
                 nt = narrow[k]
                 if k == g_start:
-                    content = nt
-                    indent = 0
+                    # A narrow line with MORE lead than its wide twin is showing
+                    # a visual-only left margin (write-diff cards / margined tool
+                    # blocks). Map it as indent so selection x-coords shift and
+                    # copies exclude it; drop it from `content` so the pointer
+                    # accounting over the wide line stays balanced.
+                    nt_lead = len(nt) - len(nt.lstrip())
+                    indent = max(0, nt_lead - wide_lead)
+                    content = nt[indent:]
                 else:
                     indent = len(nt) - len(nt.lstrip())
                     content = nt.lstrip()
@@ -1251,6 +1866,16 @@ class ChatMessage:
     searchable: bool = False
     search_query: str = ""
     all_choices: Optional[list] = field(default=None, repr=False)
+    # Free-input opt-in for searchable pickers (/model): when True, Enter in
+    # the search box with NO selectable match commits the raw query text as
+    # the value — the filter box doubles as a custom-name input. /continue
+    # keeps the default False, so a no-match Enter stays a no-op there.
+    free_input: bool = False
+    # Optional placeholder for the search Input ("" → the /continue default).
+    search_placeholder: str = ""
+    # Hint row shown (disabled) under the search Input when choices is empty —
+    # doubles as a "loading…" indicator for pickers filled asynchronously (/model).
+    empty_hint: str = "(no matches)"
     image_paths: list[str] = field(default_factory=list)
     _role_widget: Any = field(default=None, repr=False)
     _hint_widget: Any = field(default=None, repr=False)
@@ -1342,6 +1967,8 @@ COMMANDS = [
     ("/clear",    "",                 "清空显示（不动 LLM 历史）"),
     ("/stop",     "",                 "中止当前任务"),
     ("/llm",      "[n]",              "查看 / 切换模型"),
+    ("/model",    "[name]",           "查看 / 设置当前渠道的 model（列表在线拉取）"),
+    ("/effort",   "[level]",          "查看 / 设置 reasoning effort（off 清除；Claude xhigh→max）"),
     ("/btw",      "<question>",       "side question — 不打断主 agent"),
     ("/review",   "[request]",         "in-session 代码审查（直接输出报告）"),
     # ── slash_cmds bundle (prompt-injection + /scheduler picker).  Kept in
@@ -1595,7 +2222,8 @@ class SearchableChoiceList(Vertical):
     def compose(self):
         self._search_input = Input(
             value=self.msg.search_query or "",
-            placeholder="Search sessions: type to filter, Esc to cancel",
+            placeholder=(self.msg.search_placeholder
+                         or "Search sessions: type to filter, Esc to cancel"),
             id="continue-search",
         )
         yield self._search_input
@@ -1715,7 +2343,7 @@ class SearchableChoiceList(Vertical):
         if not filtered:
             # Show a disabled hint row so Enter on an empty result set is a
             # no-op rather than a crash inside _collapse_choice.
-            empty = ChoiceList(self.msg, "(no matches)", classes="picker")
+            empty = ChoiceList(self.msg, self.msg.empty_hint or "(no matches)", classes="picker")
             try:
                 empty.disabled = True
             except Exception:
@@ -1792,10 +2420,41 @@ class SearchableChoiceList(Vertical):
             if not at_end:
                 return
         if key in ("enter", "right"):
+            # Don't go through picker.action_select() here: the OptionSelected
+            # it posts is constructed while *this* widget's pump is active, so
+            # its _sender == picker's parent and Textual auto-stops the bubble
+            # one hop up — the App handler never sees it. Collapse directly.
+            committed = False
             try:
-                self.picker.action_select()
+                hi = self.picker.highlighted
+                opts = getattr(self.picker, "_options", [])
+                # Eligibility must be checked here, not inferred from
+                # _collapse_choice "not raising": it silently no-ops on an
+                # out-of-range idx (the disabled empty-hint picker highlights
+                # its placeholder row at 0 while msg.choices is []).
+                if (hi is not None and 0 <= hi < len(self.picker.msg.choices)
+                        and hi < len(opts) and not opts[hi].disabled):
+                    self.app._collapse_choice(self.picker.msg, hi)
+                    committed = True
             except Exception:
                 pass
+            # Free-input pickers (/model): Enter with no selectable match
+            # commits the raw query as the value — the search box doubles as
+            # a custom-name input (list still loading / fetch failed / name
+            # not in the list).
+            if (not committed and key == "enter"
+                    and getattr(self.msg, "free_input", False)):
+                q = ""
+                try:
+                    q = (self._search_input.value or "").strip()
+                except Exception:
+                    pass
+                if q:
+                    try:
+                        self.msg.choices = list(self.msg.choices or []) + [(q, q)]
+                        self.app._collapse_choice(self.msg, len(self.msg.choices) - 1)
+                    except Exception:
+                        pass
             event.stop(); event.prevent_default()
             return
 
@@ -2763,7 +3422,9 @@ class GenericAgentTUI(App[None]):
             "new": self._cmd_new, "switch": self._cmd_switch, "close": self._cmd_close,
             "rename": self._cmd_rename,
             "branch": self._cmd_branch, "rewind": self._cmd_rewind, "clear": self._cmd_clear,
-            "stop": self._cmd_stop, "llm": self._cmd_llm, "export": self._cmd_export,
+            "stop": self._cmd_stop, "llm": self._cmd_llm, "model": self._cmd_model,
+            "effort": self._cmd_effort,
+            "export": self._cmd_export,
             "restore": self._cmd_restore, "btw": self._cmd_btw, "review": self._cmd_review,
             "continue": self._cmd_continue, "cost": self._cmd_cost,
             "reload-keys": self._cmd_reload_keys,
@@ -2970,8 +3631,122 @@ class GenericAgentTUI(App[None]):
         self.current_id = agent_id
         self._install_ask_user_hook(sess)
         self._install_intervene_replay_hook(sess)
+        self._install_write_snapshot_hook()
         self._refresh_all()
         return sess
+
+    _write_snapshot_hook_installed = False
+
+    def _install_write_snapshot_hook(self) -> None:
+        """Register one global `tool_before` hook that captures the structured
+        args of every file_write/file_patch (plus a file_write target's pre-write
+        content) into `_WRITE_CAP`, keyed by `hash(get_pretty_json(args))`.
+
+        That hash is the bridge to the display layer: agent_loop renders the same
+        `get_pretty_json(args)` inside the verbose `📥 args:` fence, so at render
+        time `_render_md` hashes the fence body and looks the real args back up —
+        no need to parse the newline-mangled pretty JSON. Content-addressed, so it
+        survives re-renders and pairs each block with its exact call. The registry
+        is process-global, so install at most once."""
+        if GenericAgentTUI._write_snapshot_hook_installed:
+            return
+        try:
+            from plugins import hooks as _ph
+            from agent_loop import get_pretty_json
+
+            def _strip_dispatch_keys(raw):
+                # dispatch() injects `_index`/`_tool_num` into args *before* the
+                # hooks fire, but the verbose display (agent_loop.py:78) ran
+                # get_pretty_json on the args *before* dispatch — i.e. without
+                # those keys. Strip them so our hash matches the fence body the
+                # renderer will hash.
+                return {k: v for k, v in (raw or {}).items()
+                        if k not in ("_index", "_tool_num")}
+
+            def _snap(ctx):
+                try:
+                    name = (ctx or {}).get("tool_name")
+                    if name not in ("file_write", "file_patch", "file_read", "code_run"):
+                        return ctx
+                    handler = (ctx or {}).get("self")
+                    args = _strip_dispatch_keys((ctx or {}).get("args"))
+                    if name == "code_run":
+                        # No path; the card shows args (code) + the result
+                        # stamped by _snap_after. Keyed the same way.
+                        _WRITE_CAP[hash(get_pretty_json(args))] = {
+                            "name": name, "args": args,
+                        }
+                        if len(_WRITE_CAP) > 256:
+                            for k in list(_WRITE_CAP)[:128]:
+                                _WRITE_CAP.pop(k, None)
+                        return ctx
+                    path = args.get("path")
+                    if not path or handler is None:
+                        return ctx
+                    if name == "file_read":
+                        # No disk snapshot needed — the read card shows the
+                        # tool's own result, stamped by _snap_after from
+                        # StepOutcome.data.
+                        _WRITE_CAP[hash(get_pretty_json(args))] = {
+                            "name": name, "args": args,
+                        }
+                    else:
+                        # Snapshot the pre-write full file for BOTH write tools:
+                        # file_write overwrite diffs against it, and file_patch
+                        # uses it to render a whole-file diff (real line numbers
+                        # + surrounding context) instead of just the fragment.
+                        existed, old = False, ""
+                        try:
+                            abs_path = handler._get_abs_path(path)
+                            existed = os.path.exists(abs_path)
+                            if existed:
+                                with open(abs_path, "r", encoding="utf-8") as f:
+                                    old = f.read()
+                        except Exception:
+                            existed, old = False, ""
+                        _WRITE_CAP[hash(get_pretty_json(args))] = {
+                            "name": name, "args": args, "existed": existed, "old": old,
+                        }
+                    # Bound memory: keep only the most recent captures.
+                    if len(_WRITE_CAP) > 256:
+                        for k in list(_WRITE_CAP)[:128]:
+                            _WRITE_CAP.pop(k, None)
+                except Exception:
+                    pass
+                return ctx
+
+            def _snap_after(ctx):
+                # Stamp the outcome onto the same capture: write tools get
+                # {status, msg} for the header ✗; file_read gets the result text
+                # itself (its StepOutcome.data IS the content the card shows).
+                try:
+                    name = (ctx or {}).get("tool_name")
+                    if name not in ("file_write", "file_patch", "file_read", "code_run"):
+                        return ctx
+                    args = _strip_dispatch_keys((ctx or {}).get("args"))
+                    data = getattr((ctx or {}).get("ret"), "data", None)
+                    h = hash(get_pretty_json(args))
+                    if h not in _WRITE_CAP:
+                        return ctx
+                    if name == "file_read":
+                        if isinstance(data, str):
+                            _WRITE_CAP[h]["content"] = data
+                    elif name == "code_run":
+                        # data is the StepOutcome.data verbatim: dict
+                        # {status,stdout,exit_code} | {status:error,msg} | str.
+                        _WRITE_CAP[h]["data"] = data
+                    elif isinstance(data, dict):
+                        _WRITE_CAP[h]["status"] = data.get("status")
+                        _WRITE_CAP[h]["msg"] = str(data.get("msg") or "")
+                except Exception:
+                    pass
+                return ctx
+
+            _ph.register("tool_before")(_snap)
+            _ph.register("tool_after")(_snap_after)
+            GenericAgentTUI._write_snapshot_hook_installed = True
+        except Exception:
+            pass
 
     def _install_ask_user_hook(self, sess: AgentSession) -> None:
         """Capture ask_user INTERRUPT payloads from agent_loop's turn_end hook.
@@ -4014,6 +4789,93 @@ class GenericAgentTUI(App[None]):
         except Exception as e:
             return f"❌ 切换失败: {e}"
 
+    # ---------------- /model: 渠道内 model 切换（逻辑在 model_cmd.py） ----------------
+    def _cmd_model(self, args, raw):
+        import model_cmd
+        agent = self.current.agent
+        if args:  # /model <name> 直设, 不拉列表
+            self._system(model_cmd.set_model(agent, " ".join(args)))
+            return
+        self._open_model_picker()
+
+    def _open_model_picker(self) -> None:
+        """立即挂一个空的 searchable picker(输入框先可用, 下方 hint 行显示加载中),
+        后台拉取完成后 _fill_model_picker 就地填充。mixin 不再选渠道, 直接作用于
+        当前子渠道 (model_cmd sub=None 即当前)。"""
+        import model_cmd
+        agent = self.current.agent
+        cur = model_cmd.current_model(agent, None)
+        msg = ChatMessage(
+            role="system",
+            content=f"选择模型 (当前: {cur} · 输入过滤或自定义名称 · ↑/↓ 移动，Enter 确认，Esc 取消)",
+            kind="choice", choices=[],
+            on_select=lambda v: model_cmd.set_model(self.current.agent, v),
+        )
+        msg.searchable = True
+        msg.free_input = True
+        msg.search_placeholder = "输入关键字过滤；无匹配时 Enter 设置自定义模型名"
+        msg.all_choices = []
+        msg.empty_hint = "⏳ 正在拉取模型列表… (或直接输入完整模型名 Enter 直设)"
+        self.current.messages.append(msg)
+        self._refresh_messages()
+
+        def worker():
+            try:
+                models = model_cmd.fetch_models(agent, None)
+                err = None if models else "渠道未返回模型列表"
+            except Exception as e:
+                models, err = [], f"{type(e).__name__}: {e}"
+            self.call_from_thread(self._fill_model_picker, msg, models, err, cur)
+
+        threading.Thread(target=worker, daemon=True, name="ga-tui-model").start()
+
+    # ---------------- /effort: reasoning effort 切换（逻辑在 model_cmd.py） ----------------
+    def _cmd_effort(self, args, raw):
+        import model_cmd
+        if args:  # /effort <level> 直设
+            self._system(model_cmd.set_effort(self.current.agent, " ".join(args)))
+            return
+        agent = self.current.agent
+        cur = model_cmd.current_effort(agent)
+        protocols = model_cmd._protocols(agent)
+        # (显示名, value, 备注, 是否当前选中)。有备注的行名字补齐到等宽，
+        # 备注对齐成一列；无备注的行直接用显示名，不留尾随空格。
+        rows = [("默认", "off", "", not cur)]
+        for lv in model_cmd.EFFORT_LEVELS:
+            rows.append((lv, lv, model_cmd.effort_note(lv, protocols), cur == lv))
+        w = max(len(d) for d, _, _, _ in rows)
+        choices = [(("✓ " if tick else "  ")
+                    + (disp.ljust(w) + f"    {note}" if note else disp), val)
+                   for disp, val, note, tick in rows]
+        msg = ChatMessage(
+            role="system",
+            content=(f"选择 reasoning effort (当前: {cur or '未设置'} · "
+                     "↑/↓ 移动，Enter 确认，Esc 取消)"),
+            kind="choice", choices=choices,
+            on_select=lambda v: model_cmd.set_effort(self.current.agent, v),
+        )
+        self.current.messages.append(msg)
+        self._refresh_messages()
+
+    def _fill_model_picker(self, msg, models, err, cur) -> None:
+        """拉取完成: 就地重建 picker 区, 保留 Input 焦点与已输入的过滤词。"""
+        w = msg._body_widget
+        if (msg.selected_label is not None or w is None
+                or not getattr(w, "is_mounted", False)):
+            return  # 用户已 Esc/已选, 静默丢弃
+        if err:
+            msg.empty_hint = f"❌ 拉取失败: {err} · 直接输入完整模型名 Enter 设置"
+        else:
+            msg.all_choices = [(("✓ " if m == cur else "  ") + m, m) for m in models]
+            msg.empty_hint = "(无匹配 · Enter 设置自定义模型名)"
+            msg.content = (f"选择模型 ({len(models)} 个 · 当前: {cur} · "
+                           "输入过滤或自定义名称 · ↑/↓ 移动，Enter 确认，Esc 取消)")
+            try:
+                msg._hint_widget.update(Text(msg.content, style=C_MUTED))
+            except Exception:
+                pass
+        w._apply_filter(msg.search_query or "")
+
     # ---------------- new commands ----------------
     def _cmd_btw(self, args, raw):
         question = " ".join(args).strip()
@@ -4162,6 +5024,17 @@ class GenericAgentTUI(App[None]):
             sess.plan_complete_since = None
             sess.plan_lost_since = None
             self._plan_mtime.pop(sess.agent_id, None)
+            # Live mode fills _WRITE_CAP from the tool_before hook; on restore that
+            # is gone, so seed it from the log's structured tool_use inputs (keyed
+            # the same way) — otherwise restored file_write/file_patch fall back to
+            # the raw verbose args block instead of a diff.
+            try:
+                from continue_cmd import iter_write_captures
+                from agent_loop import get_pretty_json
+                for cap in iter_write_captures(path):
+                    _WRITE_CAP[hash(get_pretty_json(cap["args"]))] = cap
+            except Exception:
+                pass
             for h in continue_extract(path):
                 sess.messages.append(ChatMessage(role=h["role"], content=h["content"]))
             # baseline=0 lets the scanner see prior plan_X/plan.md refs so an
@@ -5477,28 +6350,106 @@ class GenericAgentTUI(App[None]):
         # A parallel wide render builds a wrap-free "source" string that
         # SelectableStatic.get_selection uses, so copy never includes wrap newlines.
         try:
-            text = _TASKLIST_OPEN_RE.sub(r"\1☐ ", text)
-            text = _TASKLIST_DONE_RE.sub(r"\1✔ ", text)
-            text = _TOOL_USE_RE.sub(_render_tool_use_block, text)
-            text = _META_TAG_RE.sub("", text)
             from io import StringIO
             from rich.console import Console
             render_w = max(1, width - 1)
+            text = _TASKLIST_OPEN_RE.sub(r"\1☐ ", text)
+            text = _TASKLIST_DONE_RE.sub(r"\1✔ ", text)
+            # file_write/file_patch render as a themed diff that markdown can't
+            # express; swap them for a sentinel now and splice the prerendered
+            # ANSI (narrow) / plain (wide) blocks back in after markdown runs.
+            diff_blocks: dict[int, tuple[str, str]] = {}
+            def _stash(rendered, _b=diff_blocks):
+                n = len(_b)
+                _b[n] = rendered
+                return f"\n\nGADIFFSENTINEL{n}END\n\n"
+
+            # Render a standalone markdown block to (narrow-ANSI, wide-plain)
+            # streams with the card left margin: same theme/widths as the main
+            # render so the spliced block matches its surroundings, but only the
+            # narrow lines get the visual-only margin (kept out of the copy
+            # source). Shared by the code_run card and the generic tool margin.
+            def _md_to_streams(seg, _w=render_w):
+                nbuf, wbuf = StringIO(), StringIO()
+                Console(file=nbuf, width=max(8, _w - _DIFF_MARGIN),
+                        force_terminal=True, color_system="truecolor",
+                        legacy_windows=False,
+                        theme=_markdown_rich_theme(_palette, minimal=(self.theme != "ga-default"))
+                        ).print(HardBreakMarkdown(seg), end="")
+                Console(file=wbuf, width=10000, force_terminal=False,
+                        legacy_windows=False).print(HardBreakMarkdown(seg), end="")
+                margin = " " * _DIFF_MARGIN
+                nar = "\n".join(margin + l for l in nbuf.getvalue().rstrip("\n").split("\n"))
+                return nar, wbuf.getvalue().rstrip("\n")
+
+            # Primary path: the verbose `🛠️ Tool: …  📥 args:` block. Hash the
+            # fence body to recover the real args the snapshot hook captured.
+            def _sub_verbose(m, _w=render_w):
+                cap = _WRITE_CAP.get(hash(m.group(2)))
+                if cap:
+                    if cap["name"] == "file_read":
+                        r = _render_read_card(cap["args"], cap.get("content"), _w)
+                    elif cap["name"] == "code_run":
+                        r = _render_code_card(cap["args"], cap.get("data"), _w)
+                    else:
+                        status, msg = cap.get("status"), cap.get("msg", "")
+                        st = _fence_status(m.group(3))
+                        if st:
+                            status, msg = st
+                        r = _render_write_diff(cap["name"], cap["args"],
+                                               cap["existed"], cap["old"], _w,
+                                               status=status, msg=msg)
+                    if r:
+                        return _stash(r)
+                return m.group(0)
+            text = _VERBOSE_WRITE_RE.sub(_sub_verbose, text)
+            # Every other tool keeps its Rich-markdown look but gains the same
+            # left margin: render the block standalone with the same theme.
+            # file_read / code_run with a missing capture fall through here and
+            # at least get the margin (their bespoke cards already ran above).
+            def _sub_tool_margin(m, _w=render_w):
+                return _stash(_md_to_streams(m.group(0), _w))
+            text = _VERBOSE_TOOL_RE.sub(_sub_tool_margin, text)
+            # Legacy path: a raw `<tool_use>{…}</tool_use>` envelope (weak-tool
+            # models that inline tool calls as text rather than native calls).
+            def _sub_tool(m, _w=render_w):
+                try:
+                    obj = json.loads(m.group(1))
+                except Exception:
+                    return m.group(0)
+                if obj.get("name") in ("file_write", "file_patch"):
+                    args = obj.get("arguments") or {}
+                    r = _render_write_diff(obj.get("name"), args, False, "", _w)
+                    if r:
+                        return _stash(r)
+                return _render_tool_use_block(m)
+            text = _TOOL_USE_RE.sub(_sub_tool, text)
+            text = _META_TAG_RE.sub("", text)
             buf = StringIO()
             Console(file=buf, width=render_w, force_terminal=True,
                     color_system="truecolor", legacy_windows=False,
                     theme=_markdown_rich_theme(_palette, minimal=(self.theme != "ga-default"))
                     ).print(HardBreakMarkdown(text), end="")
             narrow_raw = buf.getvalue().rstrip("\n")
-            t = Text.from_ansi(narrow_raw)
-            t.highlight_regex(r"✔[^\n]*", style=C_DIM)
-            t.highlight_regex(r"☐", style=C_DIM)
-            t.highlight_regex(r"✔", style=C_GREEN)
 
             wide_buf = StringIO()
             Console(file=wide_buf, width=10000, force_terminal=False,
                     legacy_windows=False).print(HardBreakMarkdown(text), end="")
             wide_raw = wide_buf.getvalue().rstrip("\n")
+
+            # Splice diff blocks over their sentinel lines (ANSI → narrow,
+            # plain → wide). Identical post-rstrip text keeps line counts equal
+            # so `_align_md_renders` pairs them via its K==W branch.
+            for n, (ansi_block, plain_block) in diff_blocks.items():
+                pat = re.compile(rf"^.*GADIFFSENTINEL{n}END.*$", re.M)
+                narrow_raw = pat.sub(lambda _m, _a=ansi_block: _a, narrow_raw, count=1)
+                wide_raw = pat.sub(lambda _m, _p=plain_block: _p, wide_raw, count=1)
+
+            t = Text.from_ansi(narrow_raw)
+            t.highlight_regex(r"✔[^\n]*", style=C_DIM)
+            t.highlight_regex(r"☐", style=C_DIM)
+            t.highlight_regex(r"✔", style=C_GREEN)
+
             narrow_plain = _ANSI_SGR_RE.sub("", narrow_raw)
             # `_align_md_renders` handles Rich table/box-drawing runs at run
             # granularity: only the table block is copied visually, while normal
@@ -5819,6 +6770,11 @@ class GenericAgentTUI(App[None]):
                         batch=m.lazy_choice_batch or 50,
                         classes="picker",
                     )
+                elif m.searchable and not m.choices:
+                    # Async-filled picker still loading (or empty): disabled
+                    # hint row under the Input, same shape as the no-matches row.
+                    widget = ChoiceList(m, m.empty_hint, classes="picker")
+                    widget.disabled = True
                 else:
                     widget = ChoiceList(m, classes="picker")
                     for cl, _ in m.choices:

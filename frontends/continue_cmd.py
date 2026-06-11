@@ -117,6 +117,7 @@ def _parse_native_history(pairs):
         history.append({'role': 'assistant', 'content': blocks})
     return history
 
+
 _PREVIEW_WIN = 32 * 1024
 
 # Content-grep budget for `/continue` search box: read at most this many bytes
@@ -475,11 +476,22 @@ def _assistant_text(response_body):
 
 
 def _format_tool_use(block):
-    """Match agent_loop.py:72 verbose tool-call header."""
+    """Match agent_loop.py:78 verbose tool-call header byte-for-byte.
+
+    MUST use agent_loop's `get_pretty_json`, not a plain `json.dumps`: the
+    former rewrites a `script` arg's `"; "` into `";\\n  "`, so for tools
+    carrying `script` (code_run, web_execute_js) a plain dumps produces a
+    *different* fence body. The TUI's write/read/code cards content-address
+    their captures by `hash(get_pretty_json(args))`; a mismatched fence here
+    means the hash misses and the card silently falls back to the raw block."""
     name = block.get('name', '?')
     args = block.get('input', {})
-    try: pretty = json.dumps(args, indent=2, ensure_ascii=False).replace('\\n', '\n')
-    except Exception: pretty = str(args)
+    try:
+        from agent_loop import get_pretty_json
+        pretty = get_pretty_json(args)
+    except Exception:
+        try: pretty = json.dumps(args, indent=2, ensure_ascii=False).replace('\\n', '\n')
+        except Exception: pretty = str(args)
     return f"🛠️ Tool: `{name}`  📥 args:\n````text\n{pretty}\n````\n"
 
 
@@ -531,6 +543,127 @@ def _format_response_segment(response_body, tool_results):
             tid = b.get('id') or ''
             if tid and tid in tool_results: tool_parts.append(tool_results[tid])
     return '\n\n'.join(p for p in ['\n\n'.join(texts), '\n'.join(tool_parts)] if p)
+
+
+def iter_write_captures(path):
+    """Replay a log's file_write/file_patch/file_read calls into capture dicts
+    the TUI can feed to its card renderers (`_WRITE_CAP`), keyed later by
+    hash(get_pretty_json).
+
+    Live mode fills `_WRITE_CAP` from tool_before/tool_after hooks (with a real
+    pre-write disk snapshot); on /continue that history is gone, but the
+    structured `tool_use.input` survives in the log — clean, complete args. We
+    also track each path's content *within this session* so a file
+    written/patched several times shows real old→new diffs (not N× full "new
+    file"). Files first touched by an untracked on-disk state still fall back
+    to a full-content block.
+
+    Returns write entries `{"name", "args", "existed", "old", "status", "msg"}`
+    and read entries `{"name", "args", "content"}` in call order. `status`/`msg`
+    come from the matching tool_result so the header can show ✗ on a failed
+    write; a read's `content` is the raw tool_result text (the read card strips
+    its LLM-facing chrome itself).
+    """
+    try:
+        with open(path, encoding='utf-8', errors='replace') as f:
+            content = f.read()
+    except Exception:
+        return []
+    pairs = _pairs(content)
+    # tool_use_id -> (status, msg) from any prompt's tool_result blocks (the
+    # result lands in the *next* round's Prompt as a tool_result whose content
+    # is the json-dumped outcome.data, e.g. {"status":"success","msg":...}).
+    # tr_raw keeps the undecoded text — a file_read result is plain text.
+    tr_status, tr_raw = {}, {}
+    for prompt, _ in pairs:
+        try:
+            msg_obj = json.loads(prompt)
+        except Exception:
+            continue
+        if not isinstance(msg_obj, dict):
+            continue
+        for blk in msg_obj.get('content', []) or []:
+            if not (isinstance(blk, dict) and blk.get('type') == 'tool_result'):
+                continue
+            tid = blk.get('tool_use_id')
+            c = blk.get('content')
+            if isinstance(c, list):
+                c = ''.join(b.get('text', '') for b in c
+                            if isinstance(b, dict) and b.get('type') == 'text')
+            if tid and isinstance(c, str):
+                tr_raw[tid] = c
+            try:
+                d = json.loads(c) if isinstance(c, str) else None
+            except Exception:
+                d = None
+            if tid and isinstance(d, dict):
+                tr_status[tid] = (d.get('status'), str(d.get('msg') or ''))
+
+    out, state = [], {}
+    for _prompt, response in pairs:
+        try:
+            blocks = ast.literal_eval(response)
+        except Exception:
+            continue
+        if not isinstance(blocks, list):
+            continue
+        for b in blocks:
+            if not (isinstance(b, dict) and b.get('type') == 'tool_use'):
+                continue
+            name = b.get('name')
+            if name not in ('file_write', 'file_patch', 'file_read', 'code_run'):
+                continue
+            args = b.get('input') or {}
+            p = args.get('path')
+            if name == 'file_read':
+                out.append({'name': name, 'args': args,
+                            'content': tr_raw.get(b.get('id'))})
+                continue
+            if name == 'code_run':
+                # data = the tool_result text; a dict result is JSON, an
+                # inline_eval / code-missing result is plain text. Pass the
+                # parsed dict when possible so the card reads exit_code/stdout;
+                # else the raw string (the card handles both).
+                raw = tr_raw.get(b.get('id'))
+                d = raw
+                try:
+                    parsed = json.loads(raw) if isinstance(raw, str) else None
+                    if isinstance(parsed, dict):
+                        d = parsed
+                except Exception:
+                    pass
+                out.append({'name': name, 'args': args, 'data': d})
+                continue
+            st, mg = tr_status.get(b.get('id'), (None, ''))
+            if name == 'file_patch':
+                # If this file's content is tracked within the session, pass it as
+                # the pre-write full file so the renderer can do a whole-file diff
+                # (real line numbers + context); else fall back to the fragment.
+                pre = state.get(p, '')
+                out.append({'name': name, 'args': args,
+                            'existed': p in state, 'old': pre,
+                            'status': st, 'msg': mg})
+                if st == 'error':
+                    continue  # failed call left the disk untouched — don't book it
+                old = args.get('old_content') or ''
+                if p in state and old:
+                    state[p] = state[p].replace(old, args.get('new_content') or '', 1)
+            else:  # file_write
+                existed = p in state
+                old = state.get(p, '')
+                new = str(args.get('content') or '')
+                mode = str(args.get('mode') or 'overwrite')
+                out.append({'name': name, 'args': args, 'existed': existed, 'old': old,
+                            'status': st, 'msg': mg})
+                if st == 'error':
+                    continue  # failed call left the disk untouched — don't book it
+                if mode == 'append':
+                    state[p] = old + new
+                elif mode == 'prepend':
+                    state[p] = new + old
+                else:
+                    state[p] = new
+    return out
 
 
 def extract_ui_messages(path):

@@ -5,16 +5,14 @@
 - 目录：`temp/{task_name}/`（cwd在temp/时即`./{task_name}/`）
 - 启动：`python agentmain.py --task {name} [--input "短文本"] [--bg] [--llm_no N]`（cwd=代码根）
 - `--input`自动建目录+清旧output+写input.txt；长文本先手动写input.txt再启动(不带--input)
-- **前置条件**：`context.json` 不能替代 `input.txt`；若不带 `--input` 且未预先写好 `input.txt`，subagent 可能不会真正开始任务
-- 优先用`--bg`后台(print PID exit)，可同一code_run内sleep后poll；非--bg禁合并启动+轮询
-- subagent的cwd还是temp，不是task目录
+- 自动后台启动，print PID then exit
+- 统一设定：所有agent的cwd都是temp，方便文件共享，不是task目录
 - input：目标+约束即可，subagent同等智能。**禁写步骤/过度描述**，大量数据给路径
 - 通信：output.txt(append,`[ROUND END]`=轮完成) → 写reply.txt继续 → 不写10min退出。reply后输出为output1/2/3.txt(同格式)
-- 干预文件：`_stop`(当轮结束退出) | `_keyinfo`(注入working memory) | `_intervene`(追加指令)
-- **主agent空闲时应读output观察进度，必要时用干预文件纠偏，禁止无脑长时间sleep轮询**
-- **已验证收敛技巧**：若subagent长时间停留在补读/发散，先读`output.txt`确认停滞，再向`_intervene`追加“停止继续读取资料；基于已读信息立即按指定格式输出最终结果”，通常可促使下一轮快速收敛
-- 任务已完成但subagent仍后台存活时，写`_stop`让其当轮结束优雅退出，避免悬挂
-- 监察模式启动时加`--verbose`，output将包含工具执行结果，主agent可直接审查原始数据而非仅信任摘要
+- 干预文件：`_stop`(当轮结束) | `_keyinfo`(注入working memory) | `_intervene`(追加指令)
+- [[可选fork功能]]（继承对话上下文）: 事先code_run(inline_eval=True)，将变量history（自动注入,str）写入task目录下_history.json
+- [[可选监察者模式]]：**主agent空闲时应读output观察进度，必要时用干预文件纠偏，禁止无脑长时间sleep**
+  若加`--verbose`，output将包含工具执行结果，主agent可直接审查原始数据而非仅信任摘要
 
 ## 场景1：测试模式 - 行为验证
 **用途**：观察agent真实行为，修正RULES/L2/L3/SOP
@@ -31,7 +29,7 @@
 **核心优势**：独立上下文。避免处理文档A的长上下文污染处理文档B的质量
 **约束**：
 - 文件系统共享是优点：不同agent处理不同输入文件，产生不同输出文件
-- 共享资源冲突：键鼠不可共享；浏览器暂时不可并行使用，避免同时操作同一标签页
+- 共享资源冲突：键鼠不可共享；浏览器避免操作同一tab
 - 不满足map模式的任务 → 主agent顺序执行即可，别用subagent
 **标准流程（map-reduce）**：
 1. 主agent准备阶段：爬取/dump数据，存为多个独立输入文件

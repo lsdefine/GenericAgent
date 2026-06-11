@@ -29,38 +29,62 @@ MYKPY_PATH = os.path.join(PROJECT_ROOT, 'mykey.py')
 # ── 模型厂商定义 ───────────────────────────────────────────────────────────
 
 LLM_PROVIDERS = [
-    # ═══════════════════════════ 直连 API（按旗舰能力降序）═══════════════════════════
+    # ═══════════════════════════ 通用协议（官方直连或任意兼容中转）═══════════════════════════
     {
-        'id': 'anthropic',
-        'name': 'Anthropic Claude 官方直连',
-        'desc': 'Claude Opus #1 最强模型，原生 tool 协议，sk-ant- 开头',
-        'type': 'native_claude',
-        'template': {
-            'name': 'anthropic-direct', 'apikey': 'sk-ant-<your-anthropic-key>',
-            'apibase': 'https://api.anthropic.com', 'model': 'claude-opus-4-7',
-            'thinking_type': 'adaptive', 'max_tokens': 32768, 'temperature': 1,
-        },
-        'key_hint': '在 https://console.anthropic.com/ 获取',
-        'model_choices': ['claude-opus-4-7', 'claude-sonnet-4-6'],
-    },
-    {
-        'id': 'openai',
-        'name': 'OpenAI GPT-5.5 / o 系列',
-        'desc': 'GPT-5.5 旗舰，与 Claude Opus 同级',
+        'id': 'oai_chat',
+        'name': 'OpenAI Chat Completions 协议',
+        'desc': '官方直连或任意 OAI 兼容中转/网关，自填 apibase（回车=OpenAI 官方）',
         'type': 'native_oai',
         'template': {
-            'name': 'gpt-native', 'apikey': 'sk-<your-openai-key>',
+            'name': 'gpt-native', 'apikey': 'sk-<your-key>',
             'apibase': 'https://api.openai.com/v1', 'model': 'gpt-5.5',
             'api_mode': 'chat_completions', 'reasoning_effort': 'high',
             'max_retries': 3, 'connect_timeout': 10, 'read_timeout': 120,
         },
-        'key_hint': '在 https://platform.openai.com/api-keys 获取',
+        'key_hint': '官方在 https://platform.openai.com/api-keys 获取；中转站填其提供的 Key',
         'model_choices': ['gpt-5.5', 'gpt-5.4'],
+        'extra_fields': [
+            {'key': 'apibase', 'label': 'API Base（官方或中转地址）', 'default': 'https://api.openai.com/v1'},
+        ],
     },
+    {
+        'id': 'oai_responses',
+        'name': 'OpenAI Responses 协议',
+        'desc': 'Responses API（o 系列/GPT-5.5 推荐端点），官方或兼容网关，自填 apibase',
+        'type': 'native_oai',
+        'template': {
+            'name': 'gpt-responses', 'apikey': 'sk-<your-key>',
+            'apibase': 'https://api.openai.com/v1', 'model': 'gpt-5.5',
+            'api_mode': 'responses', 'reasoning_effort': 'high',
+            'max_retries': 3, 'connect_timeout': 10, 'read_timeout': 120,
+        },
+        'key_hint': '官方在 https://platform.openai.com/api-keys 获取；中转站填其提供的 Key',
+        'model_choices': ['gpt-5.5', 'gpt-5.4'],
+        'extra_fields': [
+            {'key': 'apibase', 'label': 'API Base（官方或中转地址）', 'default': 'https://api.openai.com/v1'},
+        ],
+    },
+    {
+        'id': 'claude_messages',
+        'name': 'Claude Messages 协议',
+        'desc': 'Anthropic 官方直连或任意 Claude 兼容中转，自填 apibase（回车=官方）',
+        'type': 'native_claude',
+        'template': {
+            'name': 'anthropic-direct', 'apikey': 'sk-ant-<your-key>',
+            'apibase': 'https://api.anthropic.com', 'model': 'claude-opus-4-7',
+            'thinking_type': 'adaptive', 'max_tokens': 32768, 'temperature': 1,
+        },
+        'key_hint': '官方在 https://console.anthropic.com/ 获取；中转站填其提供的 Key',
+        'model_choices': ['claude-opus-4-7', 'claude-sonnet-4-6'],
+        'extra_fields': [
+            {'key': 'apibase', 'label': 'API Base（官方或中转地址）', 'default': 'https://api.anthropic.com'},
+        ],
+    },
+    # ═══════════════════════════ 直连 API（按旗舰能力降序）═══════════════════════════
     {
         'id': 'deepseek',
         'name': 'DeepSeek (v4-Pro / Flash)',
-        'desc': '最强开源模型，v4-Pro 旗舰 1M 上下文',
+        'desc': '开源模型，v4-Pro 旗舰 1M 上下文',
         'type': 'native_oai',
         'template': {
             'name': 'deepseek', 'apikey': 'sk-<your-deepseek-key>',
@@ -73,7 +97,7 @@ LLM_PROVIDERS = [
     {
         'id': 'kimi',
         'name': 'Kimi (k2.6 / k2.5) 双协议',
-        'desc': '月之暗面，国内顶尖，支持 Anthropic 和 OAI 双协议',
+        'desc': '月之暗面，支持 Anthropic 和 OAI 双协议',
         'type': 'native_claude',
         'template': {
             'name': 'kimi', 'apikey': 'sk-kimi-<your-key>',

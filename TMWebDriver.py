@@ -93,12 +93,11 @@ class TMWebDriver:
                 session_id = data.get('sessionId')
                 code = data.get('code')
                 timeout = float(data.get('timeout', 10.0))
-                try:
-                    result = self.execute_js(code, timeout=timeout, session_id=session_id)
-                    print('[remote result]', (str(code)[:50] + ' RESULT:' +str(result)[:50]).replace('\n', ' '))
-                    return json.dumps({'r': result}, ensure_ascii=False)
-                except Exception as e:
-                    return json.dumps({'r': {'error': str(e)}}, ensure_ascii=False)
+                try: result = self.execute_js(code, timeout=timeout, session_id=session_id)
+                except Exception as e: return json.dumps({'r': {'error': str(e)}}, ensure_ascii=False)
+                try: print('[remote result]', (str(code)[:50] + ' RESULT:' +str(result)[:50]).replace('\n', ' '))
+                except Exception: pass
+                return json.dumps({'r': result}, ensure_ascii=False)
             return 'ok'
         def run():
             from wsgiref.simple_server import make_server, WSGIServer, WSGIRequestHandler

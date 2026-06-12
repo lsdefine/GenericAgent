@@ -1705,14 +1705,36 @@ Screen { background: $ga-bg; color: $ga-fg; }
    `display: none` default so the empty post-compose frame doesn't flash;
    renderer flips it on once items materialize. Fixed height (no scroll)
    keeps layout stable; body truncates to 4 items + "+N more" footer. */
-#planbar {
+/* Plan card. Outer #planbar-scroll owns the frame (border/padding) + show-hide.
+   #planbar-head pins the header + current-step line. #planbar-tasks is the only
+   scrolling region: capped at 4 rows so at most 4 TODO items show at once, the
+   rest reachable by wheel/PageUp. */
+#planbar-scroll {
     display: none;
-    height: 5;
-    max-height: 5;
+    height: auto;
     background: $ga-sel-bg;
     padding: 0 1;
     margin: 0 0 1 0;
     border-left: thick $ga-green;
+}
+#planbar-scroll.-visible { display: block; }
+#planbar-head {
+    height: auto;
+    background: $ga-sel-bg;
+}
+#planbar-tasks {
+    height: auto;
+    max-height: 4;
+    background: $ga-sel-bg;
+    scrollbar-size: 0 1;
+    scrollbar-background: $ga-sel-bg;
+    scrollbar-background-hover: $ga-sel-bg;
+    scrollbar-background-active: $ga-sel-bg;
+    scrollbar-color: $ga-border;
+}
+#planbar {
+    height: auto;
+    background: $ga-sel-bg;
 }
 
 /* `└ Tip:` footer — one dim row, never grows. */
@@ -1933,9 +1955,14 @@ class AgentSession:
     plan_items: list = field(default_factory=list)
     plan_complete_since: Optional[float] = None
     plan_lost_since: Optional[float] = None
-    # Boundary between restored history (≤ idx) and this run (> idx);
-    # `/continue` bumps to `len(messages)` so old plan cards don't resurrect.
+    # Boundary between restored history (≤ idx) and this run (> idx); only
+    # `current_step`'s 📌-line scan uses it now — card activation no longer
+    # reads messages.
     plan_scan_baseline: int = 0
+    # plan.md recovered from the transcript's structured `enter_plan_mode`
+    # tool_use by /continue (continue_cmd.find_plan_entry). Drives card
+    # activation alongside the live `working['in_plan_mode']` stash.
+    restored_plan_path: str = ""
     # `pending`: raw user text for UI display ([queued #N] chip).
     # `pending_wrapped`: same entries wrapped with the "complete current
     # task first" supplementary phrasing, in the form actually appended
@@ -2691,16 +2718,17 @@ class InputArea(TextArea):
         except Exception: pass
 
     def _stash_cleanup_restore(self, stashed: str) -> None:
-        """Deferred companion to action_stash (restore path)."""
+        """Deferred companion to action_stash (restore path).  Mirrors the
+        clear path: `self.text = stashed` rebuilds Document + WrappedDocument
+        and triggers a full re-wrap + screen-wide relayout, which freezes the
+        UI for seconds on long sessions.  Inject through the edit pipeline
+        instead so only the affected range re-wraps; `_insert_via_keyboard`
+        also moves the caret to the end, re-focuses, and resizes."""
         try: self._suppress_palette_next_change()
         except Exception: pass
-        self.text = stashed
-        try:
-            self.cursor_location = self.document.end
-        except Exception:
-            pass
-        try: self.app._resize_input(self)
-        except Exception: pass
+        if self.document.text:
+            self.clear()
+        self._insert_via_keyboard(stashed)
 
     def action_clear_input(self) -> None:
         self.reset()
@@ -3494,7 +3522,13 @@ class GenericAgentTUI(App[None]):
             yield _sidebar
             with Vertical(id="main"):
                 yield VerticalScroll(id="messages")
-                yield Static("", id="planbar")
+                # Plan card: pinned header/step (#planbar-head) above a task list
+                # (#planbar) that scrolls inside a 4-row window (#planbar-tasks).
+                with Vertical(id="planbar-scroll"):
+                    yield Static("", id="planbar-head")
+                    _tasks = VerticalScroll(Static("", id="planbar"), id="planbar-tasks")
+                    _tasks.can_focus = False  # don't steal Tab focus from input
+                    yield _tasks
                 yield OptionList(id="palette")
                 yield InputArea(
                     "",
@@ -3516,8 +3550,8 @@ class GenericAgentTUI(App[None]):
         self.add_session("main")
         self._system(f"Welcome to GenericAgent TUI. 按 / 唤起命令面板，{fmt_key('ctrl+n')} 新建会话。")
 
-        # CSS `#planbar { display: none }` keeps it hidden by default —
-        # the renderer flips it on once items materialize.
+        # CSS `#planbar-scroll { display: none }` keeps it hidden by default —
+        # the renderer adds `-visible` once plan items materialize.
         self.query_one("#input", InputArea).focus()
         self.set_interval(0.5, self._tick)
         self._patch_auto_scroll_for_selection()
@@ -4698,8 +4732,21 @@ class GenericAgentTUI(App[None]):
 
     def _cmd_stop(self, args, raw):
         sess = self.current
-        last_user_text = next((m.content for m in reversed(sess.messages)
-                               if m.role == "user"), None)
+        # Locate the last user message AND whether the agent already produced a
+        # reply for that turn. Walking reversed, any non-empty assistant message
+        # seen *before* we reach the user message means this turn was consumed
+        # (the LLM emitted output → it's in history; a resend would duplicate).
+        # System "[queued #n]" steers are skipped (neither role). The current
+        # task's assistant placeholder starts empty, so an interrupt before any
+        # stream leaves `consumed` False.
+        last_user_text = None
+        consumed = False
+        for m in reversed(sess.messages):
+            if m.role == "assistant" and (m.content or "").strip():
+                consumed = True
+            elif m.role == "user":
+                last_user_text = m.content
+                break
         try:
             sess.agent.abort()
             if sess.status == "running":
@@ -4709,11 +4756,12 @@ class GenericAgentTUI(App[None]):
         except Exception as e:
             self._system(f"Stop failed: {e}")
         # Refill the input box with the interrupted user text so edit-and-
-        # resend is one keystroke away. Only when the box is empty (don't
-        # clobber a half-typed follow-up). Agent history is untouched — a
-        # resend duplicates the turn in LLM context; `/rewind 1` is the
-        # manual escape.
-        if last_user_text:
+        # resend is one keystroke away — but only for an *unconsumed* turn
+        # (aborted before the LLM replied). Once the agent has answered, the
+        # turn lives in history and a resend would duplicate it, so leave the
+        # box alone. Also only when the box is empty (don't clobber a
+        # half-typed follow-up).
+        if last_user_text and not consumed:
             try:
                 inp = self.query_one("#input", InputArea)
                 if not inp.text:
@@ -5023,6 +5071,7 @@ class GenericAgentTUI(App[None]):
             sess.plan_items = []
             sess.plan_complete_since = None
             sess.plan_lost_since = None
+            sess.restored_plan_path = ""
             self._plan_mtime.pop(sess.agent_id, None)
             # Live mode fills _WRITE_CAP from the tool_before hook; on restore that
             # is gone, so seed it from the log's structured tool_use inputs (keyed
@@ -5037,21 +5086,26 @@ class GenericAgentTUI(App[None]):
                 pass
             for h in continue_extract(path):
                 sess.messages.append(ChatMessage(role=h["role"], content=h["content"]))
-            # baseline=0 lets the scanner see prior plan_X/plan.md refs so an
-            # unfinished plan resumes after /continue. Only when the restored
-            # plan.md is already all-done do we push baseline past history to
-            # suppress the stale ✓ card.
+            # Plan-card restore is keyed off the transcript's structured
+            # `enter_plan_mode` tool_use (find_plan_entry), NOT off plan.md
+            # paths mentioned in chat text — a typed filename can't fake it.
+            # Restore iff the entered plan still exists, parses to ≥1 task,
+            # and isn't all-done (an abandoned finished/headless plan stays
+            # buried). baseline stays 0: it only scopes current_step's 📌 scan.
             sess.plan_scan_baseline = 0
             import plan_state
-            pp = plan_state.resolve_path(sess.agent, messages=sess.messages)
-            if pp and os.path.isfile(pp):
+            from continue_cmd import find_plan_entry
+            pp = find_plan_entry(path)
+            rp = plan_state._resolve_stashed(pp) if pp else None
+            if rp:
                 try:
-                    with open(pp, encoding="utf-8", errors="replace") as f:
+                    with open(rp, encoding="utf-8", errors="replace") as f:
                         items = plan_state.extract(f.read())
-                    if items and plan_state.is_complete(items):
-                        sess.plan_scan_baseline = len(sess.messages)
                 except OSError:
-                    pass
+                    items = []
+                if items and not plan_state.is_complete(items):
+                    sess.restored_plan_path = rp
+                    sess.plan_items = items
             try:
                 import session_names
                 nm = session_names.name_for(path)
@@ -5957,14 +6011,13 @@ class GenericAgentTUI(App[None]):
     def _update_plan_state(self, sess: AgentSession, _stream_text: str = "") -> None:
         import plan_state
         prev = sess.plan_items
-        # Detect plan mode: `working['in_plan_mode']` first, fallback to per-
-        # session message scan for a `plan_*/plan.md` reference. Strictly
-        # per-session via `plan_scan_baseline` to avoid /continue bleed.
+        # Detect plan mode: `working['in_plan_mode']` (live) first, then
+        # `restored_plan_path` (/continue, recovered from the structured
+        # enter_plan_mode tool_use). Chat text mentioning a plan path is
+        # deliberately NOT a signal — no messages passed.
         new_items: list = []
-        msgs = sess.messages
-        base = sess.plan_scan_baseline
-        if plan_state.is_active(sess.agent, messages=msgs, start_idx=base):
-            path = plan_state.resolve_path(sess.agent, messages=msgs, start_idx=base)
+        if plan_state.is_active(sess.agent, restored_path=sess.restored_plan_path):
+            path = plan_state.resolve_path(sess.agent, restored_path=sess.restored_plan_path)
             if path:
                 try:
                     with open(path, encoding="utf-8", errors="replace") as f:
@@ -5997,7 +6050,8 @@ class GenericAgentTUI(App[None]):
         # Plan-mode armed but no items yet → placeholder (covers the
         # enter_plan_mode → first plan.md write gap).
         if not items:
-            if sess and plan_state.is_active(sess.agent, messages=msgs, start_idx=base):
+            if sess and plan_state.is_active(sess.agent,
+                                             restored_path=sess.restored_plan_path):
                 self._render_planbar_placeholder(bar, sess)
                 return
             self._set_planbar_visible(bar, False); return
@@ -6006,29 +6060,26 @@ class GenericAgentTUI(App[None]):
         if complete and sess and sess.plan_complete_since is not None:
             if time.time() - sess.plan_complete_since >= self._PLAN_GRACE_SEC:
                 self._set_planbar_visible(bar, False); return
-        # 5-row budget: header(1) + step(0/1) + tasks(N) + overflow(0/1).
+        # Render all tasks — #planbar-tasks caps the visible window at 4 rows and
+        # scrolls the rest. Open tasks first, done last (open work stays on top).
         step = plan_state.current_step(msgs, start_idx=base)
-        budget = 4 - (1 if step else 0)
         ordered = [(c, st) for c, st in items if st != "done"] + \
                   [(c, st) for c, st in items if st == "done"]
-        body_lines = budget - 1 if len(ordered) > budget else budget
-        shown = ordered[:body_lines]
-        overflow = max(0, len(ordered) - body_lines)
-        sig = (tuple(shown), overflow, step, bool(complete and sess and sess.plan_complete_since))
-        if getattr(bar, "_plan_sig", None) == sig and bar.display: return
+        sig = (tuple(ordered), step, bool(complete and sess and sess.plan_complete_since))
+        if getattr(bar, "_plan_sig", None) == sig and self._planbar_shown(): return
         bar._plan_sig = sig
-        body = Text()
-        head = f"✓ Plan complete ({n_total}/{n_total})\n" if complete else f"📋 Plan ({n_done}/{n_total})\n"
-        body.append(head, style=f"bold {C_GREEN}")
+        head = Text()
+        head.append(f"✓ Plan complete ({n_total}/{n_total})" if complete
+                    else f"📋 Plan ({n_done}/{n_total})", style=f"bold {C_GREEN}")
         if step:
-            body.append("  ▸ ", style=C_GREEN)
-            body.append(step[:120] + "\n", style=C_MUTED)
-        for c, st in shown:
-            if st == "done": body.append("  ✔ ", style=C_GREEN); body.append(c + "\n", style=C_DIM)
-            else:            body.append("  ☐ ", style=C_DIM);  body.append(c + "\n", style=C_FG)
-        if overflow:
-            body.append(f"  ⋮ +{overflow} more", style=C_DIM)
-        bar.update(body)
+            head.append("\n  ▸ ", style=C_GREEN)
+            head.append(step[:120], style=C_MUTED)
+        body = Text()
+        for i, (c, st) in enumerate(ordered):
+            if i: body.append("\n")
+            if st == "done": body.append("  [x] ", style=C_GREEN); body.append(c, style=C_DIM)
+            else:            body.append("  [ ] ", style=C_DIM);  body.append(c, style=C_FG)
+        self._planbar_paint(head, body, bar)
         self._set_planbar_visible(bar, True)
 
     def _render_planbar_placeholder(self, bar: Static, sess: AgentSession) -> None:
@@ -6036,31 +6087,49 @@ class GenericAgentTUI(App[None]):
         import plan_state
         base = sess.plan_scan_baseline
         path = (plan_state._stashed_plan_path(sess.agent)
-                or plan_state.find_path_in_messages(sess.messages, start_idx=base)
+                or sess.restored_plan_path
                 or "")
         hint = "/".join(path.replace("\\", "/").rstrip("/").split("/")[-2:]) if path else "plan.md"
         step = plan_state.current_step(sess.messages, start_idx=base)
         sig = ("__placeholder__", hint, step)
-        if getattr(bar, "_plan_sig", None) == sig and bar.display: return
+        if getattr(bar, "_plan_sig", None) == sig and self._planbar_shown(): return
         bar._plan_sig = sig
-        body = Text()
-        body.append("📋 Plan 模式已激活\n", style=f"bold {C_GREEN}")
+        head = Text()
+        head.append("📋 Plan 模式已激活", style=f"bold {C_GREEN}")
         if step:
-            body.append("  ▸ ", style=C_GREEN)
-            body.append(step[:120] + "\n", style=C_MUTED)
+            head.append("\n  ▸ ", style=C_GREEN)
+            head.append(step[:120], style=C_MUTED)
+        body = Text()
         body.append(f"  等待写入 {hint} …", style=C_DIM)
-        bar.update(body)
+        self._planbar_paint(head, body, bar)
         self._set_planbar_visible(bar, True)
 
+    def _planbar_paint(self, head: Text, body: Text, bar: Static) -> None:
+        # Header/step go to the pinned #planbar-head; tasks to #planbar (the
+        # scrolling body). bar is #planbar, passed in by the callers.
+        try: self.query_one("#planbar-head", Static).update(head)
+        except Exception: pass
+        bar.update(body)
+
+    def _planbar_shown(self) -> bool:
+        try: return self.query_one("#planbar-scroll", Vertical).has_class("-visible")
+        except Exception: return False
+
     def _set_planbar_visible(self, bar: Static, visible: bool) -> None:
-        # Repaint only on show→hide transition; idle ticks no-op.
+        # Visibility lives on the outer container (display:none ↔ -visible),
+        # mirroring #palette. Repaint only on show→hide transition; idle ticks no-op.
+        try: cont = self.query_one("#planbar-scroll", Vertical)
+        except Exception: return
         if not visible:
-            if not bar.display: return
-            bar.display = False
+            if not cont.has_class("-visible"): return
+            cont.remove_class("-visible")
+            try: self.query_one("#planbar-head", Static).update(Text())
+            except Exception: pass
             bar.update(Text())
             bar._plan_sig = None
             return
-        if not bar.display: bar.display = True
+        if not cont.has_class("-visible"):
+            cont.add_class("-visible")
 
     def _start_plan_watcher(self) -> None:
         if getattr(self, "_plan_timer", None) is not None: return
@@ -6073,11 +6142,9 @@ class GenericAgentTUI(App[None]):
         import plan_state
         sess = self.sessions.get(self.current_id) if self.current_id is not None else None
         if sess is None: return
-        msgs = sess.messages
-        base = sess.plan_scan_baseline
-        if not plan_state.is_active(sess.agent, messages=msgs, start_idx=base):
+        if not plan_state.is_active(sess.agent, restored_path=sess.restored_plan_path):
             self._refresh_planbar(); return
-        path = plan_state.resolve_path(sess.agent, messages=msgs, start_idx=base)
+        path = plan_state.resolve_path(sess.agent, restored_path=sess.restored_plan_path)
         if not path:
             self._refresh_planbar(); return
         try: mtime = os.path.getmtime(path)

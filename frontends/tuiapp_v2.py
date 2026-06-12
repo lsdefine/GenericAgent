@@ -1137,8 +1137,13 @@ def _md_line_has_box_drawing(line: str) -> bool:
     left after rstrip trims the trailing space of an empty command/output line).
     Exempt all of them so the cards keep their exact narrow\u2194wide line mapping
     instead of the visible-text passthrough (which would copy the card's
-    visual-only margin). A pure horizontal run (only `\u2500` + spaces) is a
-    separator / markdown hr, not a table \u2014 also exempt.
+    visual-only margin).
+
+    A pure horizontal run (only `─` + spaces) is NOT exempt: a SIMPLE-box
+    Markdown table's only box glyph is its header rule, so exempting bare
+    `─` rows drops the whole table out of passthrough and misaligns CJK
+    copy. The cosmetic cost is that a real markdown hr copies as a dash run
+    — the pre-card behavior, never reported as a problem.
     """
     s = line.lstrip()
     for pfx in ("\u2514\u2500 ", "\u2502 ", "\u2514 "):
@@ -1148,8 +1153,6 @@ def _md_line_has_box_drawing(line: str) -> bool:
     else:
         if s in ("\u2502", "\u2514"):  # gutter-only row (empty command/output line)
             s = ""
-    if not s.replace("\u2500", "").replace(" ", ""):
-        return False
     return any("\u2500" <= ch <= "\u257f" for ch in s)
 
 

@@ -368,6 +368,49 @@ def _cell_tail(s: str, n: int) -> str:
     return "…" + "".join(reversed(out))
 
 
+def _cell_head(s: str, n: int) -> str:
+    """Keep the head of `s` within n cells, suffixing … if truncated.
+    (省略末尾 — names: keep the start, drop the tail.)"""
+    from rich.cells import cell_len
+    if cell_len(s) <= n:
+        return s
+    if n <= 1:
+        return "…"
+    out, w = [], 0
+    for ch in s:
+        c = cell_len(ch)
+        if w + c > n - 1:
+            break
+        out.append(ch); w += c
+    return "".join(out) + "…"
+
+
+def _cell_mid(s: str, n: int) -> str:
+    """Keep head+tail of `s` within n cells, eliding the middle with ….
+    (省略中间 — paths: the project root and the leaf both stay visible.)"""
+    from rich.cells import cell_len
+    if cell_len(s) <= n:
+        return s
+    if n <= 1:
+        return "…"
+    avail = n - 1                      # reserve one cell for …
+    head_budget = avail - avail // 2   # head gets the rounding bias
+    tail_budget = avail // 2
+    head, w = [], 0
+    for ch in s:
+        c = cell_len(ch)
+        if w + c > head_budget:
+            break
+        head.append(ch); w += c
+    tail, w = [], 0
+    for ch in reversed(s):
+        c = cell_len(ch)
+        if w + c > tail_budget:
+            break
+        tail.append(ch); w += c
+    return "".join(head) + "…" + "".join(reversed(tail))
+
+
 class _CardWriter:
     """Accumulates a tool card's two parallel streams: `ansi` (narrow, colored,
     later margined) and `plain` (wide, the copy source — no margin). `row()`
@@ -1361,6 +1404,16 @@ def _align_md_renders(narrow_raw: str, wide_raw: str):
     return "".join(source_parts).rstrip("\n"), line_starts, line_indents, line_lengths
 
 
+# ---------------------------------------------------------------------------
+# @ 文件引用（at-mention）— 补全版（completion-only）
+#   编辑期：光标处 @token → 后台文件索引 + 模糊匹配 → 复用 #palette 下拉，
+#   选中把 @路径 补进输入框（索引根 = 会话 workspace，未绑定退化为 CWD）。
+#   提交期：不处理，@路径 作为普通文本发给 agent，由其自行决定是否 file_read。
+#   纯逻辑（索引/模糊/token）抽到 frontends/at_complete.py，与 tui_v3 共用；
+#   自动预读那一版见 temp/plan_v2_at_mention/autoread_version.py。
+from at_complete import get_index, fuzzy_rank, find_at_token, format_pick, candidates_for
+
+
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
@@ -1397,6 +1450,7 @@ from chatapp_common import format_restore
 from btw_cmd import handle_frontend_command as btw_handle
 from review_cmd import handle as review_handle
 from continue_cmd import list_sessions as continue_list, extract_ui_messages as continue_extract
+import workspace_cmd
 from export_cmd import last_assistant_text, export_to_temp, wrap_for_clipboard
 
 # Cross-platform clipboard copy for /export clip. Mirrors tui_v3's native-tool
@@ -1945,6 +1999,10 @@ class AgentSession:
     input_pastes: dict[int, str] = field(default_factory=dict)
     input_paste_counter: int = 0
     buffer: str = ""
+    # Per-session workspace/project-mode binding. Empty means ordinary mode.
+    workspace_name: str = ""
+    workspace_path: str = ""
+    workspace_link: str = ""
     # Drives topbar heat-color ramp + elapsed label; set on first running tick.
     _busy_since: Optional[float] = None
     # Stamps running→idle; topbar dot flashes green for ~5s after.
@@ -2011,6 +2069,7 @@ COMMANDS = [
     ("/conductor", "[task]",           "调用 frontends/conductor.py 多 subagent 编排"),
     ("/scheduler", "",                 "多选启动/停止 reflect 任务（cron 由 reflect/scheduler.py 驱动）"),
     ("/continue", "[n|name]",         "列出 / 恢复历史会话"),
+    ("/workspace","[path|off]",       "设定工作目录(绝对路径)并进入项目模式"),
     ("/resume",   "",                 "列出最近会话并恢复其中一个"),
     ("/cost",     "[all]",            "显示当前会话 token 用量（all = 所有会话）"),
     ("/export",   "clip|<file>|all",  "导出最后回复"),
@@ -2042,8 +2101,24 @@ class ChoiceList(OptionList):
                 Binding("escape", "cancel", "Cancel", show=False)]
 
     def __init__(self, msg: "ChatMessage", *options, **kwargs):
-        super().__init__(*options, **kwargs)
+        super().__init__(*[self._single_line(o) for o in options], **kwargs)
         self.msg = msg
+
+    @staticmethod
+    def _single_line(item):
+        # A str prompt → a no-wrap, ellipsis-on-overflow Option so a long
+        # candidate (e.g. a workspace `name · /very/long/path · …`) stays on
+        # exactly one row instead of soft-wrapping into several. Already-built
+        # Option / None pass through untouched.
+        if isinstance(item, str):
+            return Option(Text(item, no_wrap=True, overflow="ellipsis"))
+        return item
+
+    def add_option(self, option=None):
+        return super().add_option(self._single_line(option))
+
+    def add_options(self, items):
+        return super().add_options([self._single_line(i) for i in items])
 
     def action_cancel(self) -> None:
         try:
@@ -2110,7 +2185,7 @@ class LazyChoiceList(ChoiceList):
         take = (len(self._lazy_labels) - self._lazy_loaded) if count is None else max(1, int(count))
         end = min(len(self._lazy_labels), self._lazy_loaded + take)
         try:
-            self.add_options([Option(self._lazy_labels[i]) for i in range(self._lazy_loaded, end)])
+            self.add_options([self._lazy_labels[i] for i in range(self._lazy_loaded, end)])
         except Exception:
             # If the list isn't mounted yet (very early call), fall back to
             # buffering via _options if available; otherwise silently bail so
@@ -2172,7 +2247,10 @@ def _filter_choices(all_choices: list, query: str) -> list:
     `all_choices` is `[(label, value), ...]`. Each whitespace-separated token
     in `query` must hit somewhere in either:
       * the label text (cheap, always tried first), or
-      * the basename of `value` when it looks like a path, or
+      * the **full** `value` when it's a string (e.g. a workspace's complete
+        real path — so a mid-path directory still matches even though the
+        displayed label elides the middle; display-layer truncation must not
+        shrink the searchable data), or
       * the **content** of the session file at `value` (first ~1MB), so users
         who remember a phrase from inside a session ("Conductor", "subB diff",
         a file path they pasted) can find it back.
@@ -2206,7 +2284,10 @@ def _filter_choices(all_choices: list, query: str) -> list:
             continue
         meta = str(label).lower()
         if isinstance(value, str) and value:
-            meta = meta + "\n" + os.path.basename(value).lower()
+            # Full value, not just basename: workspace pickers put the complete
+            # real path here, and the displayed label elides the middle — search
+            # must see the whole path so a mid-path term still matches.
+            meta = meta + "\n" + value.lower()
         if all(t in meta for t in terms):
             out.append(item)
             continue
@@ -2778,8 +2859,25 @@ class InputArea(TextArea):
             text = f"[Pasted text #{sid} +{line_count} lines]"
         self._insert_via_keyboard(text)
 
+    def _paste_gesture_echo(self, source: str) -> bool:
+        """One VSCode right-click can emit BOTH a forwarded mouse-click
+        (→ action_paste, source='manual') and a native bracketed paste
+        (→ _on_paste, source='bracketed'), pasting the clipboard twice. Treat the
+        second arrival from the *other* mechanism within a short window as an echo
+        and report it so the caller can skip. Same-mechanism repeats (a deliberate
+        double Ctrl+V) and lone gestures are never suppressed."""
+        now = time.monotonic()
+        prev = self._last_paste_gesture
+        if prev and prev[0] != source and now - prev[1] < 0.5:
+            self._last_paste_gesture = None   # pair consumed; next gesture starts clean
+            return True
+        self._last_paste_gesture = (source, now)
+        return False
+
     def action_paste(self) -> None:
-        if self.read_only or self._paste_file_from_clipboard():
+        if self.read_only or self._paste_gesture_echo("manual"):
+            return
+        if self._paste_file_from_clipboard():
             return
         text = _read_clipboard_text() or getattr(self.app, "clipboard", "")
         if text:
@@ -2850,6 +2948,7 @@ class InputArea(TextArea):
         super().__init__(*args, **kwargs)
         self._pastes: dict[int, str] = {}
         self._paste_counter = 0
+        self._last_paste_gesture: Optional[tuple[str, float]] = None  # (source, monotonic) — VSCode right-click double-paste guard
         self._input_history: list[str] = []
         self._history_index: int = -1         # -1 means not browsing
         self._history_stash: str = ""
@@ -2948,16 +3047,20 @@ class InputArea(TextArea):
         # Terminal Ctrl+V in bracketed-paste mode lands here, bypassing action_paste.
         if self.read_only:
             return
+        event.stop(); event.prevent_default()
+        # VSCode right-click fires this Paste AND a forwarded mouse-click
+        # (→ _on_click → action_paste); collapse the duplicate. See _paste_gesture_echo.
+        if self._paste_gesture_echo("bracketed"):
+            return
         if self._paste_file_from_clipboard():
-            event.stop(); event.prevent_default(); return
+            return
         # Git-bash / mintty fallback: PIL.ImageGrab can't return Image objects
         # in that TTY env, but the OS clipboard does hold the file path the
         # screenshot tool wrote. Treat a single-line, on-disk path as if the
         # file grab had succeeded — same placeholder + `_pastes` entry.
         if self._paste_file_from_text(event.text):
-            event.stop(); event.prevent_default(); return
+            return
         self._insert_paste_text(event.text)
-        event.stop(); event.prevent_default()
 
     def _paste_file_from_text(self, raw: str) -> bool:
         if not raw: return False
@@ -3101,7 +3204,8 @@ def render_status_chip(busy: bool, elapsed: int = 0) -> Text:
 def render_topbar(session_name: str, status: str, model: str, tasks_running: int,
                   fold_mode: bool = True, busy_elapsed: int = 0,
                   effort: str = "", sess_elapsed: int = 0,
-                  just_done: bool = False, term_width: int = 0) -> Table:
+                  just_done: bool = False, term_width: int = 0,
+                  workspace: str = "") -> Table:
     # Layout: identity-chip + session + status + fold packed LEFT; model + effort
     # + tasks CENTERED; clock RIGHT. The 2:2:1 ratio keeps the centered model
     # chip visually anchored even when the left column has the long status pill.
@@ -3154,6 +3258,13 @@ def render_topbar(session_name: str, status: str, model: str, tasks_running: int
     # narrow `▾ fold` glyph from being eaten by the left's ellipsis when the
     # running status pill fills the column budget.
     right = Text()
+    # workspace chip (top-right) — only when active. Clean real-dir basename,
+    # never the hashed junction name, so the hash never reaches the user.
+    if workspace:
+        short_ws = workspace if len(workspace) <= 18 else workspace[:17] + "…"
+        right.append("workspace: ", style=C_MUTED)
+        right.append(short_ws, style=f"bold {C_GREEN}")
+        right.append("  ·  ", style=C_DIM)
     if fold_mode:
         right.append("▾ fold", style=C_DIM)
         right.append("  ·  ", style=C_DIM)
@@ -3458,6 +3569,7 @@ class GenericAgentTUI(App[None]):
             "export": self._cmd_export,
             "restore": self._cmd_restore, "btw": self._cmd_btw, "review": self._cmd_review,
             "continue": self._cmd_continue, "cost": self._cmd_cost,
+            "workspace": self._cmd_workspace,
             "reload-keys": self._cmd_reload_keys,
             # slash_cmds bundle — see frontends/slash_cmds.py for the prompt
             # bodies + reflect/scheduler discovery.  All but /scheduler are
@@ -3550,6 +3662,11 @@ class GenericAgentTUI(App[None]):
 
     def on_mount(self) -> None:
         _sweep_stale_task_dirs()  # clear empty signal dirs left by prior runs
+        try: workspace_cmd.cleanup()  # remove dangling/unregistered workspace junctions
+        except Exception: pass
+        try: workspace_cmd.session_map_prune()  # drop session→ws entries whose log is gone
+        except Exception: pass
+        get_index(os.getcwd()).warm()   # @ 补全：CWD 索引后台预热
         self.add_session("main")
         self._system(f"Welcome to GenericAgent TUI. 按 / 唤起命令面板，{fmt_key('ctrl+n')} 新建会话。")
 
@@ -3660,6 +3777,15 @@ class GenericAgentTUI(App[None]):
                                           f'_tui_v2_{os.getpid()}_{agent_id}')
         except Exception:
             pass
+        try:
+            # Opt TUI v2 agents into per-agent project-mode selection. The
+            # plugin falls back to the legacy pid anchor only when this
+            # private attribute is absent, so None here means "ordinary mode"
+            # for this session rather than "use the process-global workspace".
+            agent._ga_project_mode_name = None
+            agent._ga_project_mode_workspace_path = ""
+        except Exception:
+            pass
         sess = AgentSession(agent_id=agent_id, name=name or f"agent-{agent_id}", agent=agent)
         thread = threading.Thread(target=agent.run, name=f"ga-tui-agent-{agent_id}", daemon=True)
         thread.start()
@@ -3671,6 +3797,35 @@ class GenericAgentTUI(App[None]):
         self._install_write_snapshot_hook()
         self._refresh_all()
         return sess
+
+    def _bind_workspace(self, sess: AgentSession, info: Optional[dict]) -> None:
+        if info:
+            sess.workspace_name = info.get("name") or ""
+            sess.workspace_path = info.get("target") or info.get("path") or ""
+            sess.workspace_link = info.get("link") or ""
+            project_name = sess.workspace_name or None
+            project_path = sess.workspace_path
+        else:
+            sess.workspace_name = ""
+            sess.workspace_path = ""
+            sess.workspace_link = ""
+            project_name = None
+            project_path = ""
+        try:
+            sess.agent._ga_project_mode_name = project_name
+            sess.agent._ga_project_mode_workspace_path = project_path
+        except Exception:
+            pass
+        # 持久化绑定/off → /continue 即时恢复，不必先聊一轮留 PROJECT MODE 块。
+        workspace_cmd.session_ws_set(getattr(sess.agent, "log_path", "") or "", project_path or "")
+        if project_path:
+            get_index(project_path).warm()  # @ 候选跟随 workspace
+
+    def _at_root(self, sess: Optional["AgentSession"] = None) -> str:
+        # @ 的索引根与越界边界：绑了 workspace 用真实 target，否则 CWD。
+        # 一律真实路径，绝不暴露哈希 junction 名。
+        s = sess or (self.sessions.get(self.current_id) if self.current_id is not None else None)
+        return (s.workspace_path if s and s.workspace_path else os.getcwd())
 
     _write_snapshot_hook_installed = False
 
@@ -4263,8 +4418,39 @@ class GenericAgentTUI(App[None]):
         if first_line.startswith("/") and " " not in first_line and "\n" not in val:
             self._populate_palette(first_line)
             self._show_palette()
+            return
+        # @ file mention: reuse the same palette for path candidates when the
+        # cursor sits inside an `@token` (claude-code parity, workspace-rooted).
+        try:
+            row, col = inp.cursor_location
+            line = inp.document.get_line(row)[:col]
+        except Exception:
+            line = ""
+        tok = find_at_token(line)
+        if tok is not None:
+            self._populate_at_palette(tok[0])
         else:
             self._hide_palette()
+
+    def _populate_at_palette(self, query: str) -> None:
+        matches = candidates_for(query, self._at_root())   # path-like → 目录补全；否则索引 fuzzy
+        palette = self.query_one("#palette", OptionList)
+        palette.clear_options()
+        if not matches:
+            self._hide_palette()
+            return
+        for path in matches:
+            t = Text()
+            # 目录候选末尾带 '/'，先剥掉再拆 base，否则 rsplit 得到空串 → 空白行。
+            is_dir = path.endswith("/")
+            core = path.rstrip("/")
+            parent, name = core.rsplit("/", 1) if "/" in core else ("", core)
+            base = name + ("/" if is_dir else "")
+            t.append(base, style="bold")
+            if parent:
+                t.append(f"  {parent}", style=C_MUTED)
+            palette.add_option(Option(t, id=f"at:{path}"))
+        self._show_palette()
 
     def _resize_input(self, inp: TextArea) -> None:
         # wrapped_document.height counts soft-wrapped lines; document.line_count only logical.
@@ -4335,6 +4521,10 @@ class GenericAgentTUI(App[None]):
                 # forward the literal so the agent recovers context.
                 self.submit_user_message(text)
                 return
+        # @ mentions are completion-only: the `@path` text rides along as
+        # plain text and the agent decides whether to file_read it. (The
+        # auto-read variant — pre-read + tool_results injection — lives in
+        # temp/plan_v2_at_mention/autoread_version.py.)
         self.submit_user_message(text, images=images)
 
     def _show_palette(self) -> None:
@@ -4363,6 +4553,24 @@ class GenericAgentTUI(App[None]):
         ol = event.option_list
         if ol.id == "palette":
             cmd_id = event.option.id
+            if cmd_id and cmd_id.startswith("at:"):
+                # @ candidate accepted: replace the in-progress @token with the
+                # picked path (quoted when it contains spaces), cursor to end.
+                inp = self.query_one("#input", InputArea)
+                try:
+                    row, col = inp.cursor_location
+                    line = inp.document.get_line(row)[:col]
+                    tok = find_at_token(line)
+                    if tok is not None:
+                        rep = format_pick(cmd_id[3:])
+                        self._suppress_palette_open = True
+                        inp.replace(rep, (row, tok[1]), (row, col))
+                        inp.move_cursor((row, tok[1] + len(rep)))
+                except Exception:
+                    pass
+                self._hide_palette()
+                inp.focus()
+                return
             if cmd_id:
                 inp = self.query_one("#input", InputArea)
                 needs_args = any(c[1] for c in COMMANDS if c[0] == cmd_id)
@@ -4633,6 +4841,12 @@ class GenericAgentTUI(App[None]):
             new.agent.llmclient.backend.history = copy.deepcopy(old.agent.llmclient.backend.history)
         except Exception as e:
             self._system(f"Branch warning: {e}"); return
+        if old.workspace_name:
+            self._bind_workspace(new, {
+                "name": old.workspace_name,
+                "target": old.workspace_path,
+                "link": old.workspace_link,
+            })
         # deepcopy(old.messages) trips on mounted Textual widget refs; shallow-copy each
         # ChatMessage and null out widget/cache fields so the new session re-mounts cleanly.
         new.messages = []
@@ -5118,10 +5332,92 @@ class GenericAgentTUI(App[None]):
                         session_names.migrate(path, current_log)
             except Exception:
                 pass
+            # Auto-restore workspace: if the continued session worked in a
+            # registered workspace, bind it to this session (recreating the
+            # junction if needed) without touching the legacy process anchor.
+            self._bind_workspace(self.current, None)
+            try:
+                rec = workspace_cmd.session_ws_get(path)   # 路径 / "" (off) / None(无记录)
+                if rec is not None:
+                    ws_path = rec or None                  # "" → 该会话已 off，明确不恢复
+                else:
+                    info = workspace_cmd.workspace_from_log(path)   # 老会话：回退扫日志
+                    ws_path = info["path"] if info else None
+                if ws_path:
+                    r = workspace_cmd.prepare(ws_path)
+                    if r.get("ok"):
+                        self._bind_workspace(self.current, r)
+                        self._system(f"⌂ 已恢复工作目录: {r['target']}")
+                    else:
+                        self._system(f"⚠ workspace 恢复失败: {r.get('error')}")
+            except Exception:
+                pass
             self._remount_current_session()
             self._refresh_all()
         self.call_after_refresh(_finish)
         return result.splitlines()[0] if result else "✅ 已恢复"
+
+    def _cmd_workspace(self, args, raw):
+        # /workspace <abs path> | /workspace off | /workspace (picker).
+        # Path may contain spaces (Windows) → capture the whole tail.
+        m = re.match(r"/workspace\s+(\S.*?)\s*$", (raw or "").strip())
+        if m:
+            token = m.group(1)
+            if token.lower() == "off":
+                sess = self.current
+                if sess.workspace_name:
+                    self._bind_workspace(sess, None)
+                    self._system("已退出 workspace（项目模式关闭;junction 与文件保留）")
+                else:
+                    self._system("当前未处于 workspace 模式")
+                self._refresh_topbar()
+                return
+            # 直接路径无 picker 面包屑，自己显示一条。
+            self._system(self._do_workspace_activate(token))
+            return
+        # No arg → searchable picker: free-text input (type an abs path to
+        # create/enter) over a candidate list of registered workspaces.
+        sess = self.current
+        choices = []
+        for it in workspace_cmd.registry_list():
+            age = _short_age(it["last_used"]) if it["last_used"] else "—"
+            mem = f"{it['mem_lines']}行记忆" if it["mem_lines"] else "空"
+            flag = " ⚠失效" if it["dangling"] else ""
+            # 显示名取真实目录 basename（天然不含 junction 的 -hash8 后缀）；
+            # dangling 无 path 时退回剥掉 name 尾部 hash。名称省略末尾、路径
+            # 省略中间，整行经 ChoiceList 单行渲染不会折行。
+            disp = os.path.basename((it["path"] or "").rstrip("/\\")) \
+                or re.sub(r"-[0-9a-f]{8}$", "", it["name"])
+            label = f"{_cell_head(disp, 22)} · {_cell_mid(it['path'], 46)} · {age} · {mem}{flag}"
+            choices.append((label, it["path"]))
+        head = ("指定工作目录（输入绝对路径回车新建/进入，或从下方选择已有 · "
+                "↑/↓ 移动，→/Enter 确认，Esc 取消）")
+        msg = ChatMessage(
+            role="system", content=head, kind="choice", choices=choices,
+            on_select=lambda v: self._do_workspace_activate(v),
+        )
+        msg.searchable = True
+        msg.free_input = True          # Enter on a typed abs path commits it as a new workspace
+        msg.all_choices = list(choices)
+        sess.messages.append(msg)
+        self._refresh_messages()
+
+    def _do_workspace_activate(self, path: str) -> str:
+        # 唯一展示文本 = 返回值：picker 路径由 _collapse_choice 渲染成 `✓ …`
+        # 面包屑；直接 `/workspace <path>` 路径由 _cmd_workspace 用 _system 显示。
+        # 两条路径各出一条，故此处不再自行 _system（否则与面包屑重复）。
+        r = workspace_cmd.prepare(path)
+        if not r.get("ok"):
+            return f"❌ workspace 设定失败: {r.get('error')}"
+        self._bind_workspace(self.current, r)
+        self._refresh_topbar()
+        # 显示名去 hash（与 picker 一致）：真实目录 basename，退回剥 name 尾 hash。
+        disp = os.path.basename((r.get("target") or "").rstrip("/\\")) \
+            or re.sub(r"-[0-9a-f]{8}$", "", r.get("name") or "")
+        out = f"✅ 已进入 workspace「{disp}」"
+        if r.get("warning"):
+            out += f"  ⚠ {r['warning']}"
+        return out
 
     def _cmd_cost(self, args, raw):
         try:
@@ -6268,11 +6564,14 @@ class GenericAgentTUI(App[None]):
             self._chip_timer = None
         try: term_w = self.size.width
         except Exception: term_w = 0
+        # Workspace label is per-session, not the legacy process-global anchor.
+        p = (s.workspace_path or "").rstrip("/\\")
+        ws_name = os.path.basename(p) if p else s.workspace_name
         self.query_one("#topbar", Static).update(
             render_topbar(s.name, s.status, model, tasks_running,
                           fold_mode=self.fold_mode, busy_elapsed=elapsed, effort=effort,
                           sess_elapsed=sess_elapsed, just_done=just_done,
-                          term_width=term_w))
+                          term_width=term_w, workspace=ws_name))
         self._ensure_title_timer()
         self._update_terminal_title()
 
@@ -6848,7 +7147,7 @@ class GenericAgentTUI(App[None]):
                 else:
                     widget = ChoiceList(m, classes="picker")
                     for cl, _ in m.choices:
-                        widget.add_option(Option(cl))
+                        widget.add_option(cl)
                 # `searchable` wraps the freshly-built picker in a Vertical
                 # container with an Input filter on top. The original picker
                 # is preserved as `.picker` so `_active_choice`, key routing

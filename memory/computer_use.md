@@ -23,3 +23,15 @@ ljqCtrl 失效或目标为网络游戏时，必须使用硬件键鼠 Xbananakb /
 
 临时截图/可视化文件用后清理，或固定文件名覆盖，避免堆积。
 ui_detect 可跨端复用；手机端沿用本原则时，UIA 换成 ui dump/adb_ui，ljqCtrl 控制换成 adb
+
+## 3. macOS 平台
+macOS 定位链与 §1 一致，工具映射如下：
+- 控制层：`import macljqCtrl as ljqCtrl`（替代 Windows ljqCtrl）
+- 窗口枚举：`ListWindows()` → 返回 id/app/title/bbox/pid（替代 win32gui）
+- 激活：`ActivateApp(pid)`（pid 来自 ListWindows，禁止用名字子串——同厂商 bundle 前缀会误伤）
+- UIA 层 = AX 辅助功能 API：`AXElements(pid)` 枚举控件树 → role/desc/title/id/物理坐标 xywh；`AXFind(pid, role=, desc=, title=)` 过滤；`AXPress(el)` 免坐标点击
+- 坐标：AX 返回逻辑点，库内自动 /dpi_scale 转物理像素，与 Click/Screenshot 统一；Retina 默认 scale=0.5
+- 截图：`GrabWindow(window_id)` 或 `ScreenCapAt(x, y, radius)`（物理坐标）
+- 权限：首次使用需授予「辅助功能」权限（系统设置 > 隐私与安全 > 辅助功能）；`AXIsProcessTrusted()` 检测
+- 依赖：`pip install pyobjc-framework-ApplicationServices`（AX 相关，软依赖——未装时键鼠/截图正常，仅 AX 函数不可用）
+- 节奏同 §2：先 ListWindows + AXElements 探测，确认控件后再操作；AXPress 优先，回退 Click(phys_cx, phys_cy)

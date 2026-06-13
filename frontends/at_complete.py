@@ -3,9 +3,11 @@
 File index (os.scandir, cached per root) + fuzzy match + @token detection +
 insert text. No UI deps; each front-end renders candidates its own way and
 calls candidates_for(query, root). Index root is the front-end's choice
-(session workspace, else CWD). Submit-time is intentionally absent —
-completion-only sends @path as plain text (auto-read variant lives in
-temp/plan_v2_at_mention/autoread_version.py).
+(session workspace, else CWD). Submit-time: completion-only does NOT read
+content, but absolutize_mentions() rewrites @relative → @absolute so the
+agent's file_read (relative to its own cwd) can locate the file. The
+content-injecting auto-read variant lives in
+temp/plan_v2_at_mention/autoread_version.py.
 """
 
 import os
@@ -18,6 +20,7 @@ _IGNORE_DIRS = {
     ".git", ".hg", ".svn", "node_modules", "__pycache__", ".venv", "venv",
     ".mypy_cache", ".pytest_cache", ".ruff_cache", "dist", "build",
     ".next", ".idea", ".vscode", "target", ".cache", ".eggs",
+    "model_responses",   # GA 会话日志（上千个 .txt），未绑时根=temp 会淹没 @ 候选
 }
 _IGNORE_EXT = {".pyc", ".pyo", ".so", ".o", ".class", ".lock", ".dll", ".exe"}
 _MAX_FILES = 50_000          # 超大目录宁缺毋卡：到上限就停
@@ -215,10 +218,55 @@ def path_completions(token: str, root: str, limit: int = 15) -> list[str]:
     return [d for _, _, d in rows[:limit]]
 
 
-def candidates_for(query: str, root: str, limit: int = 15) -> list[str]:
+def candidates_for(query: str, root: str, limit: int = 15, absolute: bool = False) -> list[str]:
     """@token candidates: path-like → directory completion, else index fuzzy.
-    Single dispatch point shared by both front-ends."""
+    Single dispatch point shared by both front-ends. `absolute=True` returns
+    fuzzy hits as absolute paths (front-end shows full path when no workspace
+    is bound, since the relative root isn't obvious to the user)."""
     if is_path_like(query):
         return path_completions(query, root, limit)
-    files = get_index(root).snapshot()
-    return fuzzy_rank(query, files, limit) if files else []
+    idx = get_index(root)
+    files = idx.snapshot()
+    if not files:
+        idx.warm()                       # 惰性兜底：该根还没建索引 → 后台建（本次可能空，下次有）
+    res = fuzzy_rank(query, files, limit) if files else []
+    if absolute:
+        res = [os.path.normpath(os.path.join(root, c)) for c in res]
+    return res
+
+
+# ------------------------------------------------------ submit-time absolutize
+# A fuzzy candidate inserts a path relative to the @ root (workspace/CWD), but
+# the agent's file_read resolves relative to its own ./temp cwd — so a bare
+# `@frontends/x.py` won't be found. At submit we rewrite each @mention naming a
+# real file to an absolute path; display keeps the short form. Still no content
+# read — this only completes the path so the agent can locate it.
+
+_AT_ABS_RE = re.compile(r'(^|\s)@("([^"]+)"|([\w\-./\\~:#]+))', re.UNICODE)
+_LINE_SUFFIX_RE = re.compile(r'(#L\d+(?:-\d+)?)$')
+
+
+def absolutize_mentions(text: str, root: str) -> str:
+    """@relative → @absolute (root-resolved, ~ expanded, quoted if it gains a
+    space), `#Lx-y` suffix kept. Only existing paths are rewritten; decorative
+    @words / typos pass through unchanged."""
+    def repl(m):
+        lead, quoted, bare = m.group(1), m.group(3), m.group(4)
+        raw = quoted if quoted is not None else bare
+        trail = ''
+        if quoted is None:                      # strip trailing prose punctuation
+            stripped = raw.rstrip('，。,;；)）]》>')
+            trail, raw = raw[len(stripped):], stripped
+        sm = _LINE_SUFFIX_RE.search(raw)
+        suffix = sm.group(1) if sm else ''
+        path = raw[:len(raw) - len(suffix)] if suffix else raw
+        if not path:
+            return m.group(0)
+        exp = os.path.expanduser(path)
+        absp = os.path.normpath(exp if os.path.isabs(exp) else os.path.join(root, exp))
+        if not os.path.exists(absp):            # decorative / typo → leave as-is
+            return m.group(0)
+        full = absp + suffix
+        token = f'@"{full}"' if ' ' in full else f'@{full}'
+        return lead + token + trail
+    return _AT_ABS_RE.sub(repl, text)

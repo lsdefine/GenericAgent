@@ -1411,7 +1411,7 @@ def _align_md_renders(narrow_raw: str, wide_raw: str):
 #   提交期：不处理，@路径 作为普通文本发给 agent，由其自行决定是否 file_read。
 #   纯逻辑（索引/模糊/token）抽到 frontends/at_complete.py，与 tui_v3 共用；
 #   自动预读那一版见 temp/plan_v2_at_mention/autoread_version.py。
-from at_complete import get_index, fuzzy_rank, find_at_token, format_pick, candidates_for
+from at_complete import get_index, fuzzy_rank, find_at_token, format_pick, candidates_for, absolutize_mentions
 
 
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -3666,7 +3666,7 @@ class GenericAgentTUI(App[None]):
         except Exception: pass
         try: workspace_cmd.session_map_prune()  # drop session→ws entries whose log is gone
         except Exception: pass
-        get_index(os.getcwd()).warm()   # @ 补全：CWD 索引后台预热
+        get_index(os.path.join(ROOT_DIR, "temp")).warm()   # @ 补全：预热未绑时的默认根（temp）
         self.add_session("main")
         self._system(f"Welcome to GenericAgent TUI. 按 / 唤起命令面板，{fmt_key('ctrl+n')} 新建会话。")
 
@@ -3822,10 +3822,11 @@ class GenericAgentTUI(App[None]):
             get_index(project_path).warm()  # @ 候选跟随 workspace
 
     def _at_root(self, sess: Optional["AgentSession"] = None) -> str:
-        # @ 的索引根与越界边界：绑了 workspace 用真实 target，否则 CWD。
+        # @ 索引根：绑了 workspace 用真实 target；否则用 agent 的实际工作目录
+        # ROOT_DIR/temp（file_read/code_run 都相对它），而非飘忽的 os.getcwd()。
         # 一律真实路径，绝不暴露哈希 junction 名。
         s = sess or (self.sessions.get(self.current_id) if self.current_id is not None else None)
-        return (s.workspace_path if s and s.workspace_path else os.getcwd())
+        return (s.workspace_path if s and s.workspace_path else os.path.join(ROOT_DIR, "temp"))
 
     _write_snapshot_hook_installed = False
 
@@ -4433,7 +4434,9 @@ class GenericAgentTUI(App[None]):
             self._hide_palette()
 
     def _populate_at_palette(self, query: str) -> None:
-        matches = candidates_for(query, self._at_root())   # path-like → 目录补全；否则索引 fuzzy
+        sess = self.sessions.get(self.current_id)
+        unbound = not (sess and sess.workspace_path)   # 未绑 workspace → 根是 temp，显示完整路径
+        matches = candidates_for(query, self._at_root(), absolute=unbound)
         palette = self.query_one("#palette", OptionList)
         palette.clear_options()
         if not matches:
@@ -4441,14 +4444,17 @@ class GenericAgentTUI(App[None]):
             return
         for path in matches:
             t = Text()
-            # 目录候选末尾带 '/'，先剥掉再拆 base，否则 rsplit 得到空串 → 空白行。
-            is_dir = path.endswith("/")
-            core = path.rstrip("/")
-            parent, name = core.rsplit("/", 1) if "/" in core else ("", core)
-            base = name + ("/" if is_dir else "")
-            t.append(base, style="bold")
-            if parent:
-                t.append(f"  {parent}", style=C_MUTED)
+            if unbound:                                 # 未绑：整条完整路径（根不直观）
+                t.append(path)
+            else:                                       # 绑 workspace：base + 父目录（短）
+                # 目录候选末尾带 '/'，先剥掉再拆 base，否则 rsplit 得到空串 → 空白行。
+                is_dir = path.endswith("/")
+                core = path.rstrip("/")
+                parent, name = core.rsplit("/", 1) if "/" in core else ("", core)
+                base = name + ("/" if is_dir else "")
+                t.append(base, style="bold")
+                if parent:
+                    t.append(f"  {parent}", style=C_MUTED)
             palette.add_option(Option(t, id=f"at:{path}"))
         self._show_palette()
 
@@ -4521,10 +4527,15 @@ class GenericAgentTUI(App[None]):
                 # forward the literal so the agent recovers context.
                 self.submit_user_message(text)
                 return
-        # @ mentions are completion-only: the `@path` text rides along as
-        # plain text and the agent decides whether to file_read it. (The
-        # auto-read variant — pre-read + tool_results injection — lives in
-        # temp/plan_v2_at_mention/autoread_version.py.)
+        # @ mentions (completion-only): rewrite @relative → @absolute so the
+        # agent's file_read can locate it; scrollback keeps the short form via
+        # display_text. No content is read here. (Content-injecting auto-read
+        # variant: temp/plan_v2_at_mention/autoread_version.py.)
+        if "@" in text:
+            abs_text = absolutize_mentions(text, self._at_root())
+            if abs_text != text:
+                self.submit_user_message(abs_text, images=images, display_text=text)
+                return
         self.submit_user_message(text, images=images)
 
     def _show_palette(self) -> None:

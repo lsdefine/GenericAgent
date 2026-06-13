@@ -2935,9 +2935,9 @@ class SB:
         return None
 
     def _at_root(self) -> str:
-        # @ 索引根 / 越界边界 = workspace（绑定时的真实路径），否则 CWD。
-        # 单会话 → 进程级一个；绝不暴露 junction 哈希名。
-        return self._ws_path or os.getcwd()
+        # @ 索引根 = workspace（绑定时真实路径），否则 agent 实际工作目录
+        # _ROOT/temp（file_read/code_run 都相对它），而非飘忽的 os.getcwd()。
+        return self._ws_path or os.path.join(_ROOT, "temp")
 
     def _at_active(self):
         """@ 补全：返回 (query, at_pos_in_buf) 或 None。基于光标前、当前逻辑行的
@@ -2960,7 +2960,9 @@ class SB:
         key = (self.buf, self.pos)
         if self._at_cache is not None and self._at_cache[0] == key:
             return self._at_cache[1]
-        items = at_complete.candidates_for(act[0], self._at_root())  # path-like → 目录补全；否则索引 fuzzy
+        # 未绑 workspace → 索引根是 temp，相对路径不直观，候选用绝对路径（_hint_lines
+        # 本就整条显示）；绑了用相对（短）。
+        items = at_complete.candidates_for(act[0], self._at_root(), absolute=not self._ws_path)
         self._at_cache = (key, items)
         return items
 
@@ -4256,17 +4258,20 @@ class SB:
         imgs = [self._imgs[i] for i in
                 (int(m.group(1)) for m in _IMG_PH_RE.finditer(raw)) if i in self._imgs]
         expanded = self._expand(raw)
+        # @ mentions: agent 收绝对路径（file_read 相对自身 cwd，否则找不到），
+        # scrollback 显示相对（简洁）。仅改路径根、不读内容。
+        agent_text = at_complete.absolutize_mentions(expanded, self._at_root()) if "@" in expanded else expanded
         if self._running:
-            wrapped = _t('pending.inject_wrap', text=expanded)
+            wrapped = _t('pending.inject_wrap', text=agent_text)
             if self._bridge and self._bridge.inject_intervene(wrapped, track=True):
-                self._pending.append(expanded)
+                self._pending.append(agent_text)
                 self._commit_user(_t('pending.queued_marker', text=expanded))
                 self._pstore.clear(); self._fstore.clear(); self._imgs.clear()
                 self._render_live()
                 return
             # Agent went idle in the race — fall through to put_task.
-        self._commit_user(expanded)                # scrollback shows exactly what
-        self._submit(expanded, imgs)               # the agent receives, not the
+        self._commit_user(expanded)                # scrollback 显示相对
+        self._submit(agent_text, imgs)             # agent 收绝对
         self._pstore.clear(); self._fstore.clear(); self._imgs.clear()   # drop placeholders
 
     def _cost_section(self, tname: str, t, be) -> list[str]:
@@ -5962,7 +5967,7 @@ def main(argv: list[str] | None = None) -> int:
     except Exception: pass
     try: workspace_cmd.session_map_prune()  # drop session→ws entries whose log is gone
     except Exception: pass
-    at_complete.get_index(os.getcwd()).warm()   # @ 补全：CWD 索引后台预热
+    at_complete.get_index(os.path.join(_ROOT, "temp")).warm()   # @ 补全：预热未绑时的默认根（temp）
     SB().run()
     return 0
 

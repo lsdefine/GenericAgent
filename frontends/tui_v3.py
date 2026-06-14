@@ -4483,7 +4483,16 @@ class SB:
                 self.commit([_DIM + _t('msg.no_history') + _RST]); return
 
             def _do_restore(path: str) -> None:
+                continue_cmd.reset_conversation(ag, message=None)  # 快照+清空当前进程日志
                 msg, _ = continue_cmd.restore(ag, path)
+                # 镜像源日志进当前进程日志，否则续聊只 append 增量，下次 /continue 丢旧历史。
+                # 对齐 v2 _do_continue_restore（tuiapp_v2.py:5285）。
+                current_log = getattr(ag, 'log_path', '') or ''
+                if current_log and path != current_log:
+                    try:
+                        shutil.copyfile(path, current_log)
+                    except Exception:
+                        pass
                 self.commit([_DIM + '┄┄ ' + _t('msg.continue_loading', name=os.path.basename(path)) + ' ┄┄' + _RST])
                 for mm in continue_cmd.extract_ui_messages(path):
                     c = (mm.get('content') or '').strip()

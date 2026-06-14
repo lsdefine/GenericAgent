@@ -400,11 +400,33 @@ try:
         kAXChildrenAttribute, kAXRoleAttribute, kAXDescriptionAttribute,
         kAXPositionAttribute, kAXSizeAttribute, kAXWindowsAttribute,
         kAXTitleAttribute, kAXValueCGPointType, kAXValueCGSizeType,
-        kAXPressAction,
+        kAXPressAction, kAXEnabledAttribute,
     )
     _HAS_AX = True
 except ImportError:
     _HAS_AX = False
+
+
+def _resolve_pid(target):
+    """target(int pid | str bundle_id/应用名) → pid(int)。
+
+    str 优先按 bundle id 精确匹配, 再按 localizedName 精确/子串兜底,
+    与 ActivateApp 的匹配纪律一致, 避免同厂商前缀误伤。"""
+    if isinstance(target, int):
+        return int(target)
+    key = str(target); keyl = key.lower()
+    ws = NSWorkspace.sharedWorkspace()
+    apps = list(ws.runningApplications())
+    for a in apps:                                    # ① bundle id 精确
+        if (a.bundleIdentifier() or '') == key:
+            return int(a.processIdentifier())
+    for a in apps:                                    # ② localizedName 精确
+        if (a.localizedName() or '').lower() == keyl:
+            return int(a.processIdentifier())
+    for a in apps:                                    # ③ localizedName 子串
+        if keyl in (a.localizedName() or '').lower():
+            return int(a.processIdentifier())
+    raise ValueError(f'找不到 target={target!r} 对应的运行中应用')
 
 
 def _ax_attr(el, key):
@@ -438,18 +460,7 @@ def AXElements(target, max_depth=10, include_zero_size=False):
             'AX 不可用。请安装: pip install pyobjc-framework-ApplicationServices')
     if not AXIsProcessTrusted():
         raise PermissionError('需要授予辅助功能权限(系统设置 > 隐私与安全 > 辅助功能)')
-    # 解析 target → pid
-    if isinstance(target, str):
-        ws = AppKit.NSWorkspace.sharedWorkspace()
-        pid = None
-        for a in ws.runningApplications():
-            if a.bundleIdentifier() == target:
-                pid = a.processIdentifier()
-                break
-        if pid is None:
-            raise ValueError(f'找不到 bundle_id={target!r} 对应的运行中应用')
-    else:
-        pid = int(target)
+    pid = _resolve_pid(target)
 
     app_el = AXUIElementCreateApplication(pid)
     wins = _ax_attr(app_el, kAXWindowsAttribute) or []
@@ -465,6 +476,7 @@ def AXElements(target, max_depth=10, include_zero_size=False):
         title = _ax_attr(el, kAXTitleAttribute)
         ident = _ax_attr(el, 'AXIdentifier')
         value = _ax_attr(el, 'AXValue')
+        enabled = _ax_attr(el, kAXEnabledAttribute)
         # AXValue 多为 str/num(文本/输入框);若是 AXValueRef(坐标等)忽略
         if value is not None and not isinstance(value, (str, int, float, bool)):
             value = None
@@ -491,7 +503,7 @@ def AXElements(target, max_depth=10, include_zero_size=False):
         else:
             results.append(dict(
                 depth=depth, role=role, desc=desc, title=title, id=ident,
-                value=value,
+                value=value, enabled=bool(enabled) if enabled is not None else None,
                 x=round(phys_x), y=round(phys_y),
                 w=round(phys_w), h=round(phys_h), el=el))
         for child in (_ax_attr(el, kAXChildrenAttribute) or []):
@@ -510,26 +522,43 @@ def AXPress(element) -> bool:
     return err == 0
 
 
-def AXFind(target, role=None, desc=None, title=None, identifier=None, max_depth=10):
+def AXClick(node, check=True) -> bool:
+    """点击控件: AXPress 优先(免坐标), 失败回退到中心点物理坐标 Click。
+    node: AXFind/AXElements 返回的 dict(含 el 与 x/y/w/h), 或裸 AXUIElement。
+    返回是否点击成功(回退路径据像素变化判定, check=False 时无法判定按 True)。
+    呼应 computer_use SOP: AXPress 优先, 回退 Click(phys_cx, phys_cy)。"""
+    if not isinstance(node, dict):
+        return AXPress(node)
+    if node.get('enabled') is False:
+        print(f"[WARN] AXClick: 控件 disabled (role={node.get('role')}, "
+              f"title={node.get('title')!r}), 点击可能无效")
+    if AXPress(node.get('el')):
+        return True
+    # 回退: 中心点物理坐标
+    cx = node['x'] + node['w'] // 2
+    cy = node['y'] + node['h'] // 2
+    res = Click(cx, cy, check=check)
+    if not check or res is None:
+        return check is False  # 无法判定时: 关检查按成功, 截图失败按失败
+    diff, _ = res
+    return diff >= 0.5
+
+
+def AXFind(target, role=None, desc=None, title=None, identifier=None,
+           enabled_only=False, max_depth=10):
     """枚举并过滤控件。所有过滤条件为子串匹配(大小写不敏感)。
+    enabled_only=True 时只返回 enabled 的控件(SOP: 点前查 disabled)。
 
     Returns
     -------
     list[dict] : 匹配项,同 AXElements 返回格式。
     """
-    nodes = AXElements(target, max_depth=max_depth)
-    out = []
-    for n in nodes:
-        if role and (not n['role'] or role.lower() not in n['role'].lower()):
-            continue
-        if desc and (not n['desc'] or desc.lower() not in n['desc'].lower()):
-            continue
-        if title and (not n['title'] or title.lower() not in n['title'].lower()):
-            continue
-        if identifier and (not n['id'] or identifier.lower() not in n['id'].lower()):
-            continue
-        out.append(n)
-    return out
+    def _hit(field, needle):
+        return needle is None or (field and needle.lower() in field.lower())
+    return [n for n in AXElements(target, max_depth=max_depth)
+            if _hit(n['role'], role) and _hit(n['desc'], desc)
+            and _hit(n['title'], title) and _hit(n['id'], identifier)
+            and not (enabled_only and n.get('enabled') is False)]
 
 
 # ---------- API 镜像别名 (drop-in 替换 ljqCtrl 用) ----------

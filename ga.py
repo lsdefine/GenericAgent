@@ -1,4 +1,4 @@
-import sys, os, re, json, time, threading, importlib
+import sys, os, re, json, time, threading, importlib, webbrowser
 from datetime import datetime
 from pathlib import Path
 import tempfile, traceback, subprocess, itertools, collections, difflib, shutil
@@ -112,7 +112,7 @@ def first_init_driver():
         time.sleep(2)
         sess = driver.get_all_sessions()
         if len(sess) > 0: break
-        if i == 4: os.startfile("https://example.com")
+        if i == 4: webbrowser.open("https://example.com")
 
 def web_scan(tabs_only=False, switch_tab_id=None, text_only=False, maxlen=35000):
     """获取当前页面的简化HTML内容和标签页列表。注意：简化过程会过滤边栏、浮动元素等非主体内容。
@@ -241,9 +241,9 @@ def file_read(path, start=1, keyword=None, count=200, show_linenos=True):
     except FileNotFoundError:
         msg = f"Error: File not found: {path}"
         try:
-            tgt = os.path.basename(path); scan = os.path.dirname(os.path.dirname(os.path.abspath(path)))
-            roots = [scan] + [d for d in _read_dirs if not d.startswith(scan)]
-            cands = list(itertools.islice((c for base in roots for c in _scan_files(base)), 2000))
+            tgt = os.path.basename(path); parent = os.path.dirname(os.path.abspath(path)); scan = os.path.dirname(parent)
+            roots = [parent, scan] + [d for d in _read_dirs if not d.startswith(scan)]
+            cands = list(dict.fromkeys(itertools.islice((c for base in roots for c in _scan_files(base)), 2000)))
             top = sorted([(difflib.SequenceMatcher(None, tgt.lower(), c[0].lower()).ratio(), c) for c in cands[:2000]], key=lambda x: -x[0])[:5]
             top = [(s, c) for s, c in top if s > 0.3]
             if top: msg += "\n\nDid you mean:\n" + "\n".join(f"  {c[1]}  ({s:.0%})" for s, c in top)

@@ -16,7 +16,6 @@
       "path": {"type": "string", "description": "Relative or absolute"},
       "start": {"type": "integer", "description": "Start line number (1-based)"},
       "count": {"type": "integer", "description": "Number of lines to read", "default": 200},
-      "keyword": {"type": "string", "description": "[Optional] If provided, returns first match (case-insensitive) with context"},
       "show_linenos": {"type": "boolean", "description": "Show line numbers", "default": true}}}
   }},
   {"type": "function", "function": {

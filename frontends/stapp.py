@@ -23,14 +23,9 @@ st.set_page_config(page_title="Cowork", layout="wide", initial_sidebar_state="co
 
 st.markdown("""
 <style>
-[data-testid="stBottom"] {
-    position: fixed !important;
-    bottom: 0 !important;
-    left: 0; right: 0;
-    z-index: 999;
-    background: var(--background-color, #ffffff);
-}
-.stMainBlockContainer { padding-bottom: 10rem !important; }
+[data-testid="stBottom"]{position:fixed!important;bottom:0!important;left:0!important;right:0!important;width:100vw!important;z-index:999;background:var(--background-color,#fff)}
+@media (min-width:768px){[data-testid="stSidebar"][aria-expanded="true"]~div [data-testid="stBottom"]{left:300px!important;width:calc(100vw - 300px)!important}}
+.stMainBlockContainer{padding-bottom:10rem!important}
 </style>
 """, unsafe_allow_html=True)
 
@@ -88,7 +83,9 @@ def render_sidebar():
     if st.button(T('desktop_pet')):
         kwargs = {'creationflags': 0x08} if sys.platform == 'win32' else {}
         pet_script = os.path.join(script_dir, 'desktop_pet_v2.pyw')
-        if not os.path.exists(pet_script): pet_script = os.path.join(script_dir, 'desktop_pet.pyw')
+        if not os.path.exists(pet_script):
+            st.error("desktop_pet_v2.pyw not found")
+            return
         subprocess.Popen([sys.executable, pet_script], **kwargs)
         def _pet_req(q):
             def _do():

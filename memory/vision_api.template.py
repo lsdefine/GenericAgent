@@ -3,6 +3,12 @@ from io import BytesIO
 from pathlib import Path
 
 # ============ 用户配置区（从 template 拷贝后只需改这里）============
+# GA自举提示：
+# mykey.py配置变量名不固定；默认值失败时，枚举候选变量名，并用最小vision请求实验探测哪组配置可用。
+# 只打印变量名/字段名/model/apibase域名路径/HTTP状态码/错误类型，禁止打印完整dict和apikey/token。
+# 常见格式：
+#   xxx_config = {"apibase": "https://.../v1", "apikey": "...", "model": "...", "proxy": None}
+# 不同中转的 apibase/endpoint 可能不同，按实际状态码和响应结构修正。
 CLAUDE_CONFIG_KEY = 'claude_config141'   # mykey.py 中 Claude 配置的变量名
 OPENAI_CONFIG_KEY = 'oai_config1'        # mykey.py 中 OpenAI 配置的变量名
 MODELSCOPE_API_KEY = ''                  # 直接填你的 ModelScope token
@@ -79,7 +85,7 @@ def _call_claude(b64, prompt, timeout, max_tokens=1024):
     mk = _load_config()
     cfg = getattr(mk, CLAUDE_CONFIG_KEY)
     resp = requests.post(
-        cfg['apibase'] + '/v1/messages',
+        cfg['apibase'] + '/v1/messages',   # endpoint按中转实际情况改：有的apibase已含/v1，或路径不同
         json={'model': cfg['model'], 'max_tokens': max_tokens, 'messages': [{
             'role': 'user',
             'content': [
@@ -96,7 +102,7 @@ def _call_claude(b64, prompt, timeout, max_tokens=1024):
 def _call_openai_compat(b64, prompt, timeout, *, apibase, apikey, model, proxy=None):
     proxies = {'https': proxy, 'http': proxy} if proxy else None
     resp = requests.post(
-        apibase.rstrip('/') + '/v1/chat/completions',
+        apibase.rstrip('/') + '/v1/chat/completions',   # endpoint按中转实际情况改：有的apibase已含/v1，或路径不同
         json={'model': model, 'messages': [{
             'role': 'user',
             'content': [

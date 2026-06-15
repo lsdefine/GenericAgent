@@ -53,6 +53,7 @@ memory/L4_raw_sessions/*
 # ljqCtrl related tools
 !memory/ljqCtrl.py
 !memory/ljqCtrl_sop.md
+!memory/macljqCtrl.py
 !memory/computer_use.md
 
 # procmem_scanner related tools
@@ -86,10 +87,6 @@ memory/L4_raw_sessions/*
 
 # Morphling SOP
 !memory/morphling_sop.md
-
-# Skill Search SOP
-!memory/skill_search/
-!memory/skill_search/**
 
 
 # ADB UI tool

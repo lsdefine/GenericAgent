@@ -188,7 +188,8 @@ def _parse_claude_sse(resp_lines):
         content_blocks.append(current_block); current_block = None
     if warn:
         print(f"[WARN] {warn.strip()}")
-        content_blocks.append({"type": "text", "text": warn}); yield warn
+        insert_at = next((i for i,b in enumerate(content_blocks) if b.get("type") == "tool_use"), len(content_blocks))
+        content_blocks.insert(insert_at, {"type": "text", "text": warn}); yield warn
     return content_blocks
 
 def _try_parse_tool_args(raw):

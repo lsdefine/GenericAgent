@@ -41,9 +41,20 @@ def _cleanup_stale_anchors():
 _cleanup_stale_anchors()
 
 
-def _active_project():
-    """读文件锚，返回当前激活的项目名；未激活返回 None。
+def _active_project(ctx=None):
+    """返回当前激活的项目名；未激活返回 None。
+
+    兼容策略:
+      - 新 TUI 多会话可在当前 GenericAgent 实例上设置 _ga_project_mode_name。
+        只要该属性存在,就以它为准;值为 None/空串表示该 agent 普通模式。
+      - 其它 UI / 旧 SOP 不设置该属性,继续读取 pid 键控文件锚。
     异常不在此捕获——hooks.trigger 统一捕获并打印，保持可观测。"""
+    parent = None
+    if isinstance(ctx, dict):
+        handler = ctx.get('handler')
+        parent = getattr(handler, 'parent', None)
+    if parent is not None and hasattr(parent, '_ga_project_mode_name'):
+        return getattr(parent, '_ga_project_mode_name', None) or None
     if not os.path.isfile(_ANCHOR):
         return None
     return open(_ANCHOR, encoding='utf-8').read().strip() or None
@@ -101,7 +112,7 @@ def _build_injection(name):
 @hooks.register('agent_before')
 def inject_project_context(ctx):
     """每个用户轮起始时，若项目模式激活，把项目上下文追加到 user message。"""
-    name = _active_project()
+    name = _active_project(ctx)
     if not name:
         return  # 未激活，普通模式，什么都不做
 

@@ -52,8 +52,8 @@ class SubAgentState:
     thread: Optional[threading.Thread] = None
     reply: str = ""
     status: str = "running"  # running | stopped
-    created_at: float = field(default_factory=time.time)
-    updated_at: float = field(default_factory=time.time)
+    created_at: int = field(default_factory=lambda: int(time.time()))
+    updated_at: int = field(default_factory=lambda: int(time.time()))
 
 ws_clients: set[WebSocket] = set()
 main_loop: Optional[asyncio.AbstractEventLoop] = None
@@ -172,7 +172,7 @@ class SubagentPool:
             s = self.subagents.get(agent_id)
             if s:
                 s.reply = acc
-                s.updated_at = time.time()
+                s.updated_at = int(time.time())
                 s.status = "stopped" if done else "running"
     def _auto_cleanup_loop(self):
         IDLE_TIMEOUT = 3600
@@ -212,14 +212,14 @@ class SubagentPool:
         s.prompt = msg
         s.reply = ""
         s.status = "running"
-        s.updated_at = time.time()
+        s.updated_at = int(time.time())
         return self._send_msg(sid, msg)
     def keyinfo_subagent(self, sid: str, msg: str) -> dict:
         with self.lock: s = self.subagents.get(sid)
         if not s: return {"error": "subagent not found", "id": sid}
         h = s.agent.handler
         h.working['key_info'] = h.working.get('key_info', '') + f"\n[MASTER] {msg}"
-        s.updated_at = time.time()
+        s.updated_at = int(time.time())
         return {"id": sid, "status": "keyinfo_injected"}        
 
 pool = SubagentPool()
@@ -251,16 +251,16 @@ subagent完成流程：
 3. 预测用户是否满意；不满意就reply/keyinfo要求返工、修改、优化，继续监督，不急着报告。
 4. 预计用户满意后，POST /chat给简洁交付报告。""",
 "im": """\
-IM采集subagent刚完成，你要审查其输出，把值得用户关注的内容转化成"可点击执行"的待批任务（approval）。
+你要审查IM采集subagent的输出，把**值得用户关注的内容**报告给用户或转化成"可点击执行"的待批TODO（approval）。
 先读L2记忆中User相关，推荐的动作和措辞要符合用户画像。
 要求：
 1. 不要只凭采集摘要；重要事实要核实，需要判断时先派subagent补做必要调查，再下结论。
-2. 不要推"去看看/研究一下"这种半成品。推荐必须是最后一步可直接执行的动作（发某段微信回复、回复某封邮件草稿、处理某PR、整理某文件等）。
-3. POST /approval 推送，prompt里同时写清两部分：
+2. 没有值得用户点击执行的动作就直接结束，不要打扰；尤其不要对执行回执/完成确认/纯闲聊报"无需关注"。
+3. 判断标准：私聊默认重要，群聊除非@用户否则忽略。
+4. 只有真正需要用户的内容才报告或形成TODO。不要推"去看看/研究一下"这种半成品。TODO必须是最后一步可直接执行的动作（发某段微信回复、回复某封邮件草稿、处理某PR、整理某文件等）。
+5. 如果形成用户TODO，POST /approval 推送，prompt里同时写清两部分：
    ① 奏折式报告给用户拍板：背景(什么事/来自谁) + 已核实(你做了哪些调查/关键事实) + 判断(为什么这样建议) + 风险。用户看完这段就能直接拍板，不用再去翻原消息。
-   ② 用户同意后该执行的完整任务指令（approval通过会直接作为subagent的prompt派发，必须具体到可直接执行）。
-4. 没有值得用户点击执行的动作就直接结束，不要打扰；尤其不要对执行回执/完成确认/纯闲聊报"无需关注"。
-5. 判断标准：私聊默认重要，群聊除非@用户或与用户工作相关否则忽略。""",
+   ② 用户同意后该执行的完整任务指令（approval通过会直接作为subagent的prompt派发，必须具体到可直接执行）。""",
 }
 
 class Conductor:
@@ -278,12 +278,14 @@ class Conductor:
         running, stopped = pool.counts()
         unread = sum(1 for m in chat_messages if m.get("role") == "user" and not m.get("read"))
         done_count = sum(1 for e in events if e.get("type") == "subagent_done")
-        summary = f"subagents: {running} running, {stopped} stopped | {unread}条用户未读消息, {done_count}个subagent完成报告"
-        summary += "".join(f"\n[IM信号] {e['source']} 有新消息（GET /im_prompt/{e['source']} 取采集prompt），尽量复用已有subagent" for e in events if e.get("type") == "im_signal")
+        event_type = events[0].get("type") if events else "wake"; im_sources = [e.get("source") for e in events if e.get("type") == "im_signal"]
+        if event_type == "user_message": summary = f"[用户消息] {unread}条未读用户消息，GET /chat 读取；按GET /readme/usermsg处理。"
+        elif event_type == "subagent_done": summary = f"[subagent完成] {done_count}个完成报告；GET /subagent 查看并验收；IM subagent完成报告按GET /readme/im处理，其他subagent完成报告按GET /readme/subagent处理。"
+        elif event_type == "im_signal": summary = f"[IM信号] {', '.join(im_sources)} 有新消息；" + "；".join(f"GET /im_prompt/{s}取采集prompt" for s in im_sources) + "；尽量复用已有subagent。"
+        else: summary = f"[唤醒] subagents: {running} running, {stopped} stopped | {unread}条用户未读消息, {done_count}个subagent完成报告"
         base = f"http://{HOST}:{PORT}"
         return f"""你是agent总管。用户只和你对话，你负责调度、验收、交付，目标是降低用户管理多个agent的负担。
-API: {base}；先requests，GET /readme查用法，GET /chat读未读对话，GET /subagent看状态；POST /chat是唯一对用户说话方式。
-流程文档按需读取: GET /readme/usermsg | GET /readme/subagent | GET /readme/im
+API: {base}；requests，GET /readme查用法，GET /chat读未读对话，GET /subagent看状态；POST /chat是唯一对用户说话方式。
 
 铁律：
 - 绝不亲自执行任务/探测环境；一切执行交给subagent。你只分析、派遣、审查、沟通。
@@ -291,7 +293,8 @@ API: {base}；先requests，GET /readme查用法，GET /chat读未读对话，GE
 - 改写prompt时严禁添加用户未提及的假设、工具、前提条件。只能精炼/结构化用户原意，不能脑补，只能做很小的改写
 
 原则：
-- 信任subagent足够聪明，不要写具体步骤和容易探测的信息；能自己判断的自己判断，只在真正需要用户决策时打扰。
+- 信任subagent足够聪明，不要写具体步骤和容易探测的信息；能自己判断的自己判断，只在真正需要用户决策时打扰。\n
+需要处理：
 {summary}"""
 
     def _drain(self, dq: "queue.Queue", events: list) -> str:
@@ -433,7 +436,7 @@ def api_subagent_action(sid: str, body: SubagentActionIn):
     if action in ("abort", "stop"):
         s.agent.abort()
         s.status = "stopped"
-        s.updated_at = time.time()
+        s.updated_at = int(time.time())
         push_cards()
         return {"id": sid, "status": "stopped"}
     return JSONResponse({"error": f"unknown action: {body.action}"}, status_code=400)

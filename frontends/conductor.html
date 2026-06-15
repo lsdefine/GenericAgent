@@ -78,6 +78,8 @@
     .hint { color: var(--muted); font-size: 12px; }
 
     .cards {
+      flex: 1;
+      min-height: 0;
       padding: 14px;
       overflow: auto;
       display: flex;
@@ -91,6 +93,9 @@
       background: rgba(31,42,68,.16);
       border-radius: 10px;
     }
+    .approvals-body::-webkit-scrollbar { width: 10px; }
+    .approvals-body::-webkit-scrollbar-track { background: rgba(31,42,68,.08); border-radius: 10px; }
+    .approvals-body::-webkit-scrollbar-thumb { background: rgba(31,42,68,.34); border-radius: 10px; border: 2px solid rgba(255,255,255,.65); }
     .empty { color: var(--muted); font-size: 13px; padding: 8px 4px; }
 
     /* ---------- subagent 卡片(可折叠) ---------- */
@@ -154,8 +159,8 @@
     .reply pre { white-space: pre-wrap; }
 
     /* ---------- 任务奏折栏(无事则隐) ---------- */
-    .approvals { display: none; }
-    .approvals.show { display: block; }
+    .approvals { display: none; min-height: 0; overflow: hidden; }
+    .approvals.show { display: flex; flex: 0 0 420px; height: 420px; max-height: 42vh; flex-direction: column; }
     .approvals .head {
       background: linear-gradient(180deg, rgba(245,158,11,.14), rgba(245,158,11,.05));
       border-bottom: 1px solid rgba(245,158,11,.18);
@@ -166,8 +171,9 @@
       background: var(--amber); border-radius: 99px; padding: 2px 9px;
       box-shadow: 0 4px 12px rgba(245,158,11,.35);
     }
-    .approvals-body { padding: 13px; display: flex; flex-direction: column; gap: 11px; max-height: 38vh; overflow: auto; }
+    .approvals-body { flex: 1; min-height: 0; padding: 13px; display: flex; flex-direction: column; gap: 11px; overflow-y: scroll; overflow-x: hidden; scrollbar-gutter: stable; }
     .approval {
+      flex: 0 0 auto;
       border-radius: 16px; background: rgba(255,255,255,.8);
       border: 1px solid rgba(245,158,11,.25);
       box-shadow: 0 8px 22px rgba(245,158,11,.10);

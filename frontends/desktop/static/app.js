@@ -1469,6 +1469,7 @@ async function cancelPrompt() {
   try {
     const res = await window.ga.rpc('session/cancel', { sessionId: sess?.bridgeSessionId || state.activeId });
     if (res.error) throw new Error(res.error.message || res.error);
+    setBusy(false, null, sess);  // clear busy immediately; don't wait for server-side cancelled event
     return true;
   } catch (e) {
     showSystem('Stop failed: ' + (e.message || e));
@@ -1831,6 +1832,10 @@ window.ga.onBridgeClosed((info) => {
     return;
   }
   state.bridgeReady = false;
+  // Clear busy flag on all sessions so pending poll loops can exit cleanly
+  for (const [sid, runtime] of state.runtimeBySessionId) {
+    if (runtime.busy) setBusy(false, null, state.sessions.get(sid));
+  }
   setStatus('err', `Bridge stopped (${info.code})`);
 });
 

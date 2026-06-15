@@ -264,24 +264,24 @@ if __name__ == '__main__':
             except Exception as e: 
                 print(f'[Reflect] check() error: {e}'); task = None
             if task and task == '/exit': break
-            if not task:
-                time.sleep(getattr(mod, 'INTERVAL', 5)); continue
-            print(f'[Reflect] triggered: {task[:80]}')
-            dq = agent.put_task(task, source='reflect')
-            try:
-                while 'done' not in (item := dq.get(timeout=1200)): pass
-                result = item['done']
-                print(result)
-            except Exception as e:
-                if getattr(mod, 'ONCE', False): raise
-                print(f'[Reflect] drain error: {e}'); result = f'[ERROR] {e}'
-            log_dir = os.path.join(script_dir, 'temp/reflect_logs'); os.makedirs(log_dir, exist_ok=True)
-            script_name = os.path.splitext(os.path.basename(args.reflect))[0]
-            open(os.path.join(log_dir, f'{script_name}_{datetime.now():%Y-%m-%d}.log'), 'a', encoding='utf-8').write(f'[{datetime.now():%m-%d %H:%M}]\n{result}\n\n')
-            if (on_done := getattr(mod, 'on_done', None)):
-                try: on_done(result)
-                except Exception as e: print(f'[Reflect] on_done error: {e}')
-            if getattr(mod, 'ONCE', False): print('[Reflect] ONCE=True, exiting.'); break
+            if task:
+                print(f'[Reflect] triggered: {task[:80]}')
+                dq = agent.put_task(task, source='reflect')
+                try:
+                    while 'done' not in (item := dq.get(timeout=1200)): pass
+                    result = item['done']
+                    print(result)
+                except Exception as e:
+                    if getattr(mod, 'ONCE', False): raise
+                    print(f'[Reflect] drain error: {e}'); result = f'[ERROR] {e}'
+                log_dir = os.path.join(script_dir, 'temp/reflect_logs'); os.makedirs(log_dir, exist_ok=True)
+                script_name = os.path.splitext(os.path.basename(args.reflect))[0]
+                open(os.path.join(log_dir, f'{script_name}_{datetime.now():%Y-%m-%d}.log'), 'a', encoding='utf-8').write(f'[{datetime.now():%m-%d %H:%M}]\n{result}\n\n')
+                if (on_done := getattr(mod, 'on_done', None)):
+                    try: on_done(result)
+                    except Exception as e: print(f'[Reflect] on_done error: {e}')
+                if getattr(mod, 'ONCE', False): print('[Reflect] ONCE=True, exiting.'); break
+            time.sleep(getattr(mod, 'INTERVAL', 5))
     else:
         try: import readline
         except Exception: pass

@@ -16,7 +16,6 @@
       "path": {"type": "string", "description": "文件相对或绝对路径"},
       "start": {"type": "integer", "description": "起始行号（从 1 开始）"},
       "count": {"type": "integer", "description": "读取的行数", "default": 200},
-      "keyword": {"type": "string", "description": "可选搜索关键字。如果提供，将返回第一个匹配项（忽略大小写）及其周边的内容"},
       "show_linenos": {"type": "boolean", "description": "是否显示行号，建议开启以辅助 file_patch 定位", "default": true}}}
   }},
   {"type": "function", "function": {

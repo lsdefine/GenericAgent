@@ -209,7 +209,9 @@ def Paste(text):
 
 # ---------- 截图 (screencapture, 输出物理像素) ----------
 def GrabScreen(bbox=None):
-    """全屏或区域截图 -> PIL Image。bbox=(l,u,r,b) 物理像素坐标。"""
+    """全屏或区域截图 -> PIL Image。bbox=(l,u,r,b) 物理像素坐标。
+    传 bbox 后图内坐标相对裁剪原点; 转屏幕绝对坐标用 CropToScreen, 勿手搓 screencapture -R。
+    """
     fd, fn = tempfile.mkstemp(suffix='.png'); os.close(fd)
     try:
         if bbox:
@@ -230,6 +232,14 @@ def GrabScreen(bbox=None):
 def ScreenCapAt(x, y, r=100):
     """物理坐标(x,y)为中心±r 截图 -> PIL Image。"""
     return GrabScreen((x-r, y-r, x+r, y+r))
+
+def CropToScreen(bbox, x, y=None):
+    """裁剪图内坐标 -> 屏幕绝对物理坐标。bbox=GrabScreen 用的 (l,u,r,b) 物理像素。
+    (x,y)=在 GrabScreen(bbox) 返回图内找到的点。返回可直接喂给 Click 的 (X,Y)。
+    macOS 版的 ClientToScreen: 纯加裁剪原点偏移, 不做缩放(裁剪图与 bbox 同物理像素)。"""
+    if y is None and isinstance(x, (tuple, list)):
+        x, y = x[0], x[1]
+    return int(bbox[0] + x), int(bbox[1] + y)
 
 def GrabWindow(win):
     """窗口截图 -> PIL Image。win=窗口号(int) 或 标题/应用名子串(str)。物理像素。"""
@@ -387,7 +397,9 @@ def Click(x, y=None, check=True, r=60):
             if verbose_click:
                 print(f'Click({x},{y}) pixel change: {diff:.1f}%')
             if diff < 0.5:
-                print(f'[WARN] Click({x},{y}) 像素变化≈0%, 可能点歪了, 请诊断坐标!')
+                print(f'[WARN] Click({x},{y}) 像素变化≈0%, 可能点歪了, 请诊断坐标! '
+                       '常见错因: 用了裁剪图内坐标却没加裁剪原点(用 CropToScreen), '
+                       '或对已是物理像素的坐标又做了 *dpi_scale 换算。')
             return diff, Image.fromarray(after)
     return None
 

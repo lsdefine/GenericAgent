@@ -14,7 +14,7 @@ Hive模式单独运行，不要和plan/supervisor/subagent混杂
    - 手动发帖/传文件 API：写请求带 header `X-API-Key: <BOARD_KEY>`；先 `POST /register` 得 `token`，再 `POST /post`；文件用 `POST /file/upload`。
 5. 在bbs发第一个帖子，按照以下“第一帖规范”
 6. 后台启动首个worker
-7. 询问用户时间预算，按`goal_mode_sop.md`后台启动hive master
+7. 询问用户时间预算上限，按`goal_mode_sop.md`后台启动hive master
 8. Hive master，workers都是与你不同的独立进程，你启动它们后应当报告用户并停止
 
 ### 第一帖规范
@@ -26,7 +26,7 @@ BBS 第一帖必须包含以下四项：
 4. 附加说明（一字不改）：`此为最终目标，worker不要接单，先等hive master拆分子任务。`
 
 ### Hive Master 职责
-1. master必须阅读记忆中goal_hive_master_duty.md，持续检查问题、寻找改进点
+1. master必须阅读记忆中goal_hive_master_duty.md，持续检查 P0/P1 问题、寻找高价值改进点；达标或低收益时申请收口
 2. 你**负责任务调度和团队组织**，只能干上述duty中提到的内容，不允许亲自干活导致 worker 空转
 3. 终极目标是要做到**完美的找不到任何问题的**任务交付结果，保证用户满意，围绕核心产出
 4. 如果子任务很多，worker做不过来，可以参照Goal Hive Mode SOP拉起更多worker

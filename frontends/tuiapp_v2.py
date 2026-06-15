@@ -3787,6 +3787,11 @@ class GenericAgentTUI(App[None]):
         except Exception:
             pass
         sess = AgentSession(agent_id=agent_id, name=name or f"agent-{agent_id}", agent=agent)
+        try:
+            from continue_cmd import acquire_birth_lock
+            acquire_birth_lock(agent, agent_id)   # 原地复原:出生持锁,使占用检测对本会话可见
+        except Exception:
+            pass
         thread = threading.Thread(target=agent.run, name=f"ga-tui-agent-{agent_id}", daemon=True)
         thread.start()
         sess.thread = thread
@@ -5218,7 +5223,7 @@ class GenericAgentTUI(App[None]):
         if m:
             token = m.group(1)
             if token.isdigit():
-                sessions = continue_list(exclude_pid=os.getpid())
+                sessions = continue_list(exclude_log=os.path.basename(getattr(sess.agent, "log_path", "") or ""))
                 idx = int(token) - 1
                 if not (0 <= idx < len(sessions)):
                     self._system(f"❌ 索引越界（有效范围 1-{len(sessions)}）"); return
@@ -5237,7 +5242,7 @@ class GenericAgentTUI(App[None]):
                 self._system(f"❌ 找不到名为 {token!r} 的会话"); return
             self._do_continue_restore(path)
             return
-        sessions = continue_list(exclude_pid=os.getpid())
+        sessions = continue_list(exclude_log=os.path.basename(getattr(sess.agent, "log_path", "") or ""))
         if not sessions:
             self._system("❌ 没有可恢复的历史会话"); return
         choices = []
@@ -5272,25 +5277,38 @@ class GenericAgentTUI(App[None]):
         self._refresh_messages()
 
     def _do_continue_restore(self, path: str) -> str:
+        # 默认原地续(接管原日志,延续同一会话)。快照只能拷贝续;被活进程占用 →
+        # 弹窗问是否从原会话拷贝一份继续(复用内联 choice)。
+        import continue_cmd as _cc
         sess = self.current
-        from continue_cmd import reset_conversation, restore
+        if not _cc.is_snapshot(path):
+            occ = _cc.session_occupant(path)
+            if occ is not None:
+                head = f"该会话正被占用（pid {occ.get('pid', '?')}）—— 是否从原会话拷贝一份继续？"
+                msg = ChatMessage(
+                    role="system", content=head, kind="choice",
+                    choices=[("拷贝一份继续", path), ("取消", None)],
+                    on_select=lambda v: (self._continue_restore_apply(v, copy=True) if v else None),
+                )
+                sess.messages.append(msg); self._refresh_messages()
+                return head
+        return self._continue_restore_apply(path, copy=_cc.is_snapshot(path))
+
+    def _continue_restore_apply(self, path: str, copy: bool) -> str:
+        sess = self.current
+        import continue_cmd as _cc
         try:
-            reset_conversation(sess.agent, message=None)
-            result, ok = restore(sess.agent, path)
+            if copy:
+                result, ok = _cc.continue_copy(sess.agent, path, sess.agent_id)
+            else:
+                result, ok = _cc.continue_inplace(sess.agent, path, sess.agent_id)
         except Exception as e:
             msg = f"❌ 恢复失败: {e}"
             self._system(msg); return msg
         if not ok:
             self._system(result); return result
-        # Mirror the source transcript into this agent's own log file so a
-        # future /continue resolves the merged history under the migrated name.
-        current_log = getattr(sess.agent, "log_path", "") or ""
-        if current_log and path != current_log:
-            try:
-                import shutil
-                shutil.copyfile(path, current_log)
-            except Exception:
-                pass
+        # 原地:new_log == path(接管原文件);拷贝:new_log 是内容相同的新副本。
+        new_log = getattr(sess.agent, "log_path", "") or ""
         def _finish():
             sess.messages.clear()
             # Plan state belongs to the *previous* conversation. Clearing it
@@ -5339,8 +5357,8 @@ class GenericAgentTUI(App[None]):
                 nm = session_names.name_for(path)
                 if nm:
                     sess.name = nm
-                    if current_log:
-                        session_names.migrate(path, current_log)
+                    if new_log and new_log != path:   # 仅拷贝续才迁移名字到新副本;原地无需迁移
+                        session_names.migrate(path, new_log)
             except Exception:
                 pass
             # Auto-restore workspace: if the continued session worked in a

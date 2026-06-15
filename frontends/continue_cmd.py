@@ -1,7 +1,7 @@
 """`/continue` command: list & restore past model_responses sessions.
 Pure functions + one `install(cls)` monkey-patch entry. No side effects at import.
 """
-import ast, glob, json, os, re, time
+import ast, atexit, glob, json, os, random, re, shutil, threading, time
 _LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                         'temp', 'model_responses')
 _LOG_GLOB = os.path.join(_LOG_DIR, 'model_responses_*.txt')
@@ -294,12 +294,19 @@ def _rounds_for_file(path, st):
     return n, key
 
 
-def list_sessions(exclude_pid=None):
-    """Newest-first list of (path, mtime, preview_text, n_rounds). Preview uses head/tail window only."""
+def list_sessions(exclude_pid=None, exclude_log=None):
+    """Newest-first list of (path, mtime, preview_text, n_rounds). Preview uses head/tail window only.
+
+    `exclude_log` (basename, e.g. 'model_responses_123456.txt') drops the caller's
+    OWN current session — preferred over `exclude_pid`, which assumed the log file
+    was named by PID (it isn't: agentmain mints a random 6-digit logid), so the
+    pid tag never matched and the current session leaked into its own list."""
     files = glob.glob(_LOG_GLOB)
     if exclude_pid is not None:
         tag = f'model_responses_{exclude_pid}.txt'
         files = [f for f in files if not f.endswith(tag)]
+    if exclude_log:
+        files = [f for f in files if os.path.basename(f) != exclude_log]
     out = []
     valid_keys = []
     for f in files:
@@ -773,6 +780,269 @@ def handle_frontend_command(agent, query, exclude_pid=None):
     reset_conversation(agent, message=None)
     msg, _ = restore(agent, sessions[idx][0])
     return msg
+
+
+# ===========================================================================
+# 原地复原(in-place continue)共享层 —— 仅供 TUI(tui_v2/tui_v3 及其 rewind 副本)
+# 调用;其它前端(IM/qt/streamlit…)不调用这些函数,行为完全不受影响。
+#
+# 模型:每个会话 = 一个 `model_responses_<logid>.txt`,身份就是文件本身。
+#   · 原地续 X = 把 agent 的 log_path 指回 X,之后的轮次追加到 X 本身(同一会话延续)。
+#   · 拷贝续 X = 铸一个新 logid、把 X 拷进去,在副本上续;X 原件不动(并发安全)。
+#   · 切走/新对话 = 释放当前锁、旧日志原样留作"空闲会话"(不存快照、不清空),新对话铸新 logid。
+#
+# 独占:每个 TUI 会话出生即持有自己日志的一把锁(`.locks/<logid>.lock`);
+#   整进程共用一个心跳线程,每 ~5s touch 锁文件 mtime(无 fsync)。
+#   判活 = 锁 mtime 在 30s 内新鲜;超 30s 视为持锁者已死,可被接管。
+#   抢锁用原子 O_EXCL;锁基础设施任何故障都降级为"假定空闲、放行续接",绝不阻断 /continue。
+# ===========================================================================
+
+_LOCK_DIR = os.path.join(_LOG_DIR, '.locks')
+_HB_INTERVAL = 5.0       # 心跳间隔(秒)
+_STALE_AFTER = 30.0      # 超过这么久无心跳 → 持锁者视为已死,可接管
+_held_locks = set()      # 本进程当前持有的 log_path 集合
+_hb_lock = threading.Lock()
+_hb_thread = None
+
+
+def _lock_path(log_path):
+    base = os.path.splitext(os.path.basename(log_path))[0]
+    return os.path.join(_LOCK_DIR, base + '.lock')
+
+
+def _read_lock(lock_file):
+    try:
+        with open(lock_file, encoding='utf-8') as fh:
+            return json.load(fh)
+    except Exception:
+        return None
+
+
+def _lock_fresh(lock_file):
+    """心跳新鲜度 = 锁文件 mtime 距今 < _STALE_AFTER。"""
+    try:
+        return (time.time() - os.path.getmtime(lock_file)) < _STALE_AFTER
+    except OSError:
+        return False
+
+
+def session_occupant(log_path):
+    """若 `log_path` 正被一个活着的(心跳新鲜)进程持有,返回其 owner 元数据 dict;
+    否则返回 None(空闲,或锁已过期可接管)。供 TUI 判断"原地 / 弹窗拷贝"。"""
+    lf = _lock_path(log_path)
+    meta = _read_lock(lf)
+    if meta is not None and _lock_fresh(lf):
+        return meta
+    return None
+
+
+def acquire_lock(log_path, agent_id=None):
+    """尝试独占 `log_path`。成功(或锁设施故障降级)返回 True;
+    仅当被另一活进程(心跳新鲜)持有时返回 False。"""
+    try:
+        os.makedirs(_LOCK_DIR, exist_ok=True)
+        lf = _lock_path(log_path)
+        meta = {'pid': os.getpid(), 'agent_id': agent_id,
+                'log': os.path.basename(log_path),
+                'started': time.time()}
+        blob = json.dumps(meta, ensure_ascii=False)
+        try:
+            fd = os.open(lf, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            with os.fdopen(fd, 'w', encoding='utf-8') as fh:
+                fh.write(blob)
+        except FileExistsError:
+            cur = _read_lock(lf)
+            if cur and cur.get('pid') != os.getpid() and _lock_fresh(lf):
+                return False                      # 被另一活进程持有
+            # 过期锁 / 本进程自己的 → 接管(覆盖)。小竞态窗口可接受。
+            try: os.remove(lf)
+            except OSError: pass
+            try:
+                fd = os.open(lf, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+                with os.fdopen(fd, 'w', encoding='utf-8') as fh:
+                    fh.write(blob)
+            except FileExistsError:
+                cur2 = _read_lock(lf)
+                if cur2 and cur2.get('pid') != os.getpid() and _lock_fresh(lf):
+                    return False                  # 抢锁竞态输了
+                with open(lf, 'w', encoding='utf-8') as fh:
+                    fh.write(blob)
+        with _hb_lock:
+            _held_locks.add(log_path)
+        _ensure_hb_thread()
+        return True
+    except Exception:
+        # 锁设施故障绝不阻断续接 —— 降级为"假定空闲、放行"。
+        return True
+
+
+def release_lock(log_path):
+    """释放本进程对 `log_path` 的锁(只删自己持有/无主的锁文件)。"""
+    with _hb_lock:
+        _held_locks.discard(log_path)
+    try:
+        lf = _lock_path(log_path)
+        cur = _read_lock(lf)
+        if cur is None or cur.get('pid') == os.getpid():
+            os.remove(lf)
+    except Exception:
+        pass
+
+
+def _hb_tick():
+    now = time.time()
+    with _hb_lock:
+        items = list(_held_locks)
+    for lp in items:
+        try:
+            os.utime(_lock_path(lp), (now, now))   # 仅更新 mtime,无 fsync
+        except OSError:
+            pass
+
+
+def _hb_loop():
+    while True:
+        time.sleep(_HB_INTERVAL)
+        try:
+            _hb_tick()
+        except Exception:
+            pass
+
+
+def _ensure_hb_thread():
+    global _hb_thread
+    with _hb_lock:
+        if _hb_thread is None:
+            _hb_thread = threading.Thread(target=_hb_loop,
+                                          name='ga-session-heartbeat', daemon=True)
+            _hb_thread.start()
+
+
+@atexit.register
+def _release_all_locks():
+    for lp in list(_held_locks):
+        release_lock(lp)
+
+
+def _new_log_path():
+    """铸一个新的 6 位 logid 日志路径(与 agentmain 同公式)。"""
+    logid = f'{(time.time_ns() + random.randrange(1_000_000)) % 1_000_000:06d}'
+    return os.path.join(_LOG_DIR, f'model_responses_{logid}.txt')
+
+
+def _retarget_log(agent, new_path):
+    """把 agent(及其所有 llmclient)的日志写入点切到 new_path —— 之后的轮次写这里。"""
+    try:
+        agent.log_path = new_path
+    except Exception:
+        pass
+    for client in _agent_clients(agent):
+        try: client.log_path = new_path
+        except Exception: pass
+
+
+def is_snapshot(path):
+    """遗留快照存档(model_responses_snapshot_*.txt)。这类只能拷贝续,不参与原地
+    (provisional,待 worktree 复审)。"""
+    return os.path.basename(path).startswith('model_responses_snapshot_')
+
+
+def _clear_conversation_state(agent):
+    """清空对话状态(对齐 reset_conversation,但不碰日志文件)。"""
+    if hasattr(agent, 'history'):
+        agent.history = []
+    for client in _agent_clients(agent):
+        backend = getattr(client, 'backend', None)
+        if backend is not None and hasattr(backend, 'history'):
+            backend.history = []
+        if hasattr(client, 'last_tools'):
+            client.last_tools = ''
+    if hasattr(agent, 'handler'):
+        agent.handler = None
+
+
+def acquire_birth_lock(agent, agent_id=None):
+    """会话出生时持有自己当前日志的锁(新 logid 必然抢到)。TUI 在建会话时调用,
+    使本会话对"占用检测"可见 —— 别的会话才能据此判定它是否还活着。"""
+    lp = getattr(agent, 'log_path', '') or ''
+    if lp:
+        acquire_lock(lp, agent_id)
+
+
+def release_current(agent):
+    """切走:释放 agent 当前日志的锁,旧日志原样留作"空闲会话"(不存快照、不清空)。"""
+    lp = getattr(agent, 'log_path', '') or ''
+    if lp:
+        release_lock(lp)
+
+
+def begin_fresh_session(agent, agent_id=None):
+    """新对话 / clear:释放当前锁(旧日志留作空闲会话)→ 铸新 logid 重指 → 持新锁 →
+    清空对话状态。**替代 TUI 里的 reset_conversation**(不再存快照/清空旧日志)。"""
+    try: agent.abort()
+    except Exception: pass
+    release_current(agent)
+    newp = _new_log_path()
+    _retarget_log(agent, newp)
+    acquire_lock(newp, agent_id)
+    _clear_conversation_state(agent)
+
+
+def _load_history_into(agent, path):
+    """把 `path` 解析进 backend.history(native;否则降级摘要)。镜像 restore() 的解析,
+    但不 abort/不快照(日志重指由调用方先做好)。返回 (msg, is_full)。"""
+    try:
+        with open(path, encoding='utf-8', errors='replace') as fh:
+            content = fh.read()
+    except Exception as e:
+        return f'❌ 读取失败: {e}', False
+    pairs = _pairs(content)
+    if not pairs:
+        return f'❌ {os.path.basename(path)} 为空或格式不符', False
+    history = _parse_native_history(pairs)
+    name = os.path.basename(path)
+    if history is not None:
+        _replace_backend_history(agent, history)
+        return f'✅ 已恢复 {len(pairs)} 轮完整对话（{name}）', True
+    from chatapp_common import _restore_native_history, _restore_text_pairs
+    summary = _restore_text_pairs(content) or _restore_native_history(content)
+    if not summary:
+        return f'❌ {name} 无法解析（非 native 且无摘要可提取）', False
+    if hasattr(agent, 'history'):
+        agent.history.extend(summary)
+    n = sum(1 for l in summary if l.startswith('[USER]: '))
+    return f'⚠️ 非 native 格式，降级恢复 {n} 轮摘要（{name}）', False
+
+
+def continue_inplace(agent, path, agent_id=None):
+    """原地续:把 agent 的日志指回 `path` 本身,之后轮次追加到 X,延续同一会话。
+    调用方应已确认空闲(session_occupant 为 None);抢锁失败(被占)返回错误。
+    返回 (msg, ok)。"""
+    try: agent.abort()
+    except Exception: pass
+    if not acquire_lock(path, agent_id):       # 先抢到目标锁;失败则保持现状,不丢自己的锁
+        return '❌ 会话已被占用，无法原地接管', False
+    cur = getattr(agent, 'log_path', '') or ''
+    if cur and os.path.basename(cur) != os.path.basename(path):
+        release_lock(cur)                       # 目标到手,旧会话释放为空闲(同一文件则不放)
+    _retarget_log(agent, path)
+    return _load_history_into(agent, path)
+
+
+def continue_copy(agent, path, agent_id=None):
+    """拷贝续:铸新 logid、把 `path` 内容拷进去,在副本上续;`path` 原件不动。
+    用于"被占用→用户选拷贝"以及快照源。返回 (msg, ok)。"""
+    try: agent.abort()
+    except Exception: pass
+    release_current(agent)
+    newp = _new_log_path()
+    try:
+        shutil.copyfile(path, newp)
+    except Exception:
+        pass
+    acquire_lock(newp, agent_id)
+    _retarget_log(agent, newp)
+    return _load_history_into(agent, newp)
 
 
 def install(cls):

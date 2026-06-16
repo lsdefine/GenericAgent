@@ -2764,33 +2764,39 @@ class InputArea(TextArea):
         pass
 
     def action_stash(self) -> None:
-        """Stash/restore the input draft.  reset()/text restore both defer
-        to `call_after_refresh` so the layout cascade runs off the
-        keystroke event, leaving Ctrl+S itself snappy on long sessions."""
+        """Stash/restore the input draft, fully synchronously.
+
+        The visible clear/restore runs inline rather than via
+        `call_after_refresh`.  That earlier deferral was introduced to keep
+        Ctrl+S snappy when `reset()` rebuilt the TextArea document, but
+        `reset()` now goes through `TextArea.clear()` (edit pipeline, no
+        document rebuild) and the whole clear/restore + resize costs well
+        under 1ms even on very long sessions — so the deferral buys nothing.
+        What it did cost was correctness under load: the deferred callback
+        lands on the Screen's idle callback queue, whose flush is gated on
+        the screen being layout/repaint-stable.  With several long-context
+        sessions streaming (continuous dirty regions), the queue's flush can
+        be postponed long enough that the input never visibly clears and the
+        half-flipped `_draft_stash` state makes the box feel frozen.  Doing
+        the work inline makes the keystroke authoritative: by the time the
+        Key event returns, the buffer and the stash flag are already
+        consistent, independent of whatever the streaming loop is doing."""
         current = self.text
         if current:
             self._draft_stash = current
             self._history_index = -1
             self._history_stash = ""
-            try:
-                self.app.call_after_refresh(self._stash_cleanup_clear)
-            except Exception:
-                # Last-resort synchronous fallback (re-introduces the freeze
-                # window but at least keeps the function correct).
-                self._stash_cleanup_clear()
+            self._stash_cleanup_clear()
         elif self._draft_stash:
             stashed = self._draft_stash
             self._draft_stash = ""
             self._history_index = -1
             self._history_stash = ""
-            try:
-                self.app.call_after_refresh(self._stash_cleanup_restore, stashed)
-            except Exception:
-                self._stash_cleanup_restore(stashed)
+            self._stash_cleanup_restore(stashed)
 
     def _stash_cleanup_clear(self) -> None:
-        """Deferred companion to action_stash (clear path).  The Changed
-        event posted by `clear()` is async-queued — set the flag and let
+        """Clear path for action_stash.  The Changed event posted by
+        `clear()` is async-queued — set the flag and let
         `on_text_area_changed` self-clear it when the event lands.  A
         try/finally here clears the flag too early and lets the handler
         re-run the heavy resize + palette path."""
@@ -2802,9 +2808,9 @@ class InputArea(TextArea):
         except Exception: pass
 
     def _stash_cleanup_restore(self, stashed: str) -> None:
-        """Deferred companion to action_stash (restore path).  Mirrors the
-        clear path: `self.text = stashed` rebuilds Document + WrappedDocument
-        and triggers a full re-wrap + screen-wide relayout, which freezes the
+        """Restore path for action_stash.  Mirrors the clear path:
+        `self.text = stashed` rebuilds Document + WrappedDocument and
+        triggers a full re-wrap + screen-wide relayout, which freezes the
         UI for seconds on long sessions.  Inject through the edit pipeline
         instead so only the affected range re-wraps; `_insert_via_keyboard`
         also moves the caret to the end, re-focuses, and resizes."""
@@ -2955,11 +2961,10 @@ class InputArea(TextArea):
         # Ctrl+S scratch draft (PR#479 semantics). Distinct from
         # `_history_stash`, which is the Up/Down-arrow working buffer.
         self._draft_stash: str = ""
-        # Set by `action_stash` to make on_input_area_changed bail out on
-        # the synchronous Changed event from `reset()` — the layout work
-        # is rescheduled via `call_after_refresh` so the keystroke handler
-        # returns immediately even when streaming has the reactive queue
-        # saturated.  Cleared by `_stash_cleanup_clear`.
+        # Set by `_stash_cleanup_clear` to make on_text_area_changed bail
+        # out on the async-queued Changed event from `clear()`/`reset()`,
+        # so it doesn't re-run the resize + palette path the stash already
+        # did inline.  Self-cleared by `on_text_area_changed`.
         self._skip_change_next: bool = False
         self._HISTORY_MAX = 200
 
@@ -4411,11 +4416,9 @@ class GenericAgentTUI(App[None]):
         if event.text_area.id != "input":
             return
         inp = event.text_area
-        # action_stash flips this flag right before `reset()`/text assign
-        # so the synchronous Changed event won't trigger the heavy
-        # _resize_input + palette-query on the keystroke hot path.  The
-        # deferred `_stash_cleanup_*` callbacks (call_after_refresh) own
-        # all the layout work for that path.
+        # _stash_cleanup_clear sets this before `reset()` so the
+        # async-queued Changed event from `clear()` doesn't re-run the
+        # resize + palette work the stash path already did inline.
         if getattr(inp, "_skip_change_next", False):
             inp._skip_change_next = False
             return
@@ -6093,6 +6096,21 @@ class GenericAgentTUI(App[None]):
         ).start()
         return tid
 
+    def _call_stream(self, agent_id, task_id, text, done):
+        """Bridge a display-queue chunk onto the UI loop, swallowing failures.
+
+        `call_from_thread` blocks this background thread on a Future that
+        resolves only once the UI loop has run the callback.  If the callback
+        raises, `Future.result()` re-raises here, which used to crash the
+        consume thread mid-task — leaving the assistant spinner spinning
+        forever (the `done` event never lands) and the session looking frozen.
+        The UI side already guards its own work; isolating the exception here
+        keeps the consumer alive so `done` can still settle the message."""
+        try:
+            self.call_from_thread(self._on_stream, agent_id, task_id, text, done)
+        except Exception:
+            pass
+
     def _consume_display_queue(self, agent_id, task_id, dq):
         buf = ""
         while True:
@@ -6100,10 +6118,10 @@ class GenericAgentTUI(App[None]):
             except queue.Empty: continue
             if "next" in item:
                 buf += str(item.get("next") or "")
-                self.call_from_thread(self._on_stream, agent_id, task_id, buf, False)
+                self._call_stream(agent_id, task_id, buf, False)
             if "done" in item:
                 done_text = str(item.get("done") or buf)
-                self.call_from_thread(self._on_stream, agent_id, task_id, done_text, True)
+                self._call_stream(agent_id, task_id, done_text, True)
                 return
 
     def _on_stream(self, agent_id, task_id, text, done):
@@ -6129,9 +6147,8 @@ class GenericAgentTUI(App[None]):
                         except Exception: self._refresh_messages()
                     else:
                         self._refresh_messages()
-                    if refresh_chrome:
-                        self._refresh_sidebar()
-                        self._refresh_topbar()
+                    self._refresh_sidebar()
+                    self._refresh_topbar()
                     self._ensure_spinner()
             return
         s.buffer = text

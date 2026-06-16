@@ -1,12 +1,12 @@
 # computer_use
 
-L3 memory: ljqCtrl.py ljqCtrl_sop.md ui_detect.py
+相关L3 memory: **ui_detect.py** ljqCtrl.py ljqCtrl_sop.md
 
 ## 1. 基础规则
 枚举窗口总是可用：GUI任务先用 win32gui 枚举标题/类名/rect，确定目标窗口、前台状态和客户区原点后再操作。
 优先使用 Python UIA；若UIA可用，探测和操作均可使用UIA；游戏不使用UIA；
-一旦 UIA 对该窗口无效，立刻改用 ui_detect 定位；
-ui_detect 不足时才用 vision，vision 只用于语义理解、确认界面状态和辅助判断目标，不可信其坐标
+一旦 UIA 对该窗口无效，使用 **ui_detect.py**
+ui_detect 仍不足时才用 vision，vision 只用于语义理解、确认界面状态和辅助判断目标，不可信其坐标
 Windows 下窗口截图和操作使用 ljqCtrl：严禁 pyautogui；记得先 Activate 到前台；
 坑1-DPI：一律物理坐标；坑2-遮盖/失焦：混乱先枚举窗口确认前台；
 ui_detect 的 bbox 是截图内坐标，点击前必须用 `ClientToScreen(hwnd,(0,0))/dpi_scale + bbox中心` 转屏幕物理坐标

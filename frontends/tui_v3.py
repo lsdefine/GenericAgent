@@ -4329,9 +4329,14 @@ class SB:
         self._tool_base = 0; self._tools = {}
 
     # ── workspace（与 v2 共用 workspace_cmd；单会话 → 进程级一个绑定）─────────
-    def _bind_workspace(self, info) -> None:
+    def _bind_workspace(self, info, persist: bool = True) -> None:
         """绑定 / 解绑 workspace。info=prepare() 的结果 dict → 绑定；None → 解绑。
-        同步 agent 的 project_mode 属性（插件据此注入项目上下文），刷新 @ 索引根。"""
+        同步 agent 的 project_mode 属性（插件据此注入项目上下文），刷新 @ 索引根。
+
+        persist=False: 仅刷新内存绑定状态，不写 session→ws 映射表。续接时的
+        reset(_bind_workspace(None)) 用它——原地续后 agent.log_path==被续文件，
+        若持久化会把本会话映射抹成 ""(= 已 off)，反而毁掉自动恢复。映射表只应由
+        显式 /workspace、/workspace off 与成功的续接恢复来写。"""
         ag = self._bridge.agent if self._bridge else None
         if info:
             self._ws_name = info.get('name') or ''
@@ -4349,7 +4354,8 @@ class SB:
             except Exception:
                 pass
             # 持久化绑定/off → /continue 即时恢复，不必先聊一轮留 PROJECT MODE 块。
-            workspace_cmd.session_ws_set(getattr(ag, "log_path", "") or "", pm_path or "")
+            if persist:
+                workspace_cmd.session_ws_set(getattr(ag, "log_path", "") or "", pm_path or "")
         at_complete.get_index(self._at_root()).warm()   # 预热新根（或 CWD）
 
     def _do_workspace_activate(self, path: str) -> str:
@@ -4509,7 +4515,10 @@ class SB:
                 self.commit([_DIM + '┄┄ ' + _t('msg.continue_ready', msg=msg) + ' ┄┄' + _RST])
                 # 自动恢复 workspace：续接的会话若在某个已登记 workspace 里工作过，
                 # 重新绑定（必要时重建 junction），不触碰 project_mode 的进程锚。
-                self._bind_workspace(None)
+                # persist=False：reset 绑定绝不写 session→ws 映射表——原地续把
+                # agent.log_path 指回 path，若持久化会把本会话映射抹成 ""，在读回
+                # 之前就毁掉自动恢复。
+                self._bind_workspace(None, persist=False)
                 try:
                     rec = workspace_cmd.session_ws_get(path)   # 路径 / "" (off) / None(无记录)
                     if rec is not None:

@@ -3803,7 +3803,12 @@ class GenericAgentTUI(App[None]):
         self._refresh_all()
         return sess
 
-    def _bind_workspace(self, sess: AgentSession, info: Optional[dict]) -> None:
+    def _bind_workspace(self, sess: AgentSession, info: Optional[dict],
+                        persist: bool = True) -> None:
+        # persist=False: 仅刷新内存绑定状态，不写 session→ws 映射表。续接时的
+        # reset(_bind_workspace(sess, None)) 用它——原地续后 agent.log_path==被续
+        # 文件，若持久化会把本会话映射抹成 ""(= 已 off)，反而毁掉自动恢复。映射表
+        # 只应由显式 /workspace、/workspace off 与成功的续接恢复来写。
         if info:
             sess.workspace_name = info.get("name") or ""
             sess.workspace_path = info.get("target") or info.get("path") or ""
@@ -3822,7 +3827,8 @@ class GenericAgentTUI(App[None]):
         except Exception:
             pass
         # 持久化绑定/off → /continue 即时恢复，不必先聊一轮留 PROJECT MODE 块。
-        workspace_cmd.session_ws_set(getattr(sess.agent, "log_path", "") or "", project_path or "")
+        if persist:
+            workspace_cmd.session_ws_set(getattr(sess.agent, "log_path", "") or "", project_path or "")
         if project_path:
             get_index(project_path).warm()  # @ 候选跟随 workspace
 
@@ -5364,7 +5370,10 @@ class GenericAgentTUI(App[None]):
             # Auto-restore workspace: if the continued session worked in a
             # registered workspace, bind it to this session (recreating the
             # junction if needed) without touching the legacy process anchor.
-            self._bind_workspace(self.current, None)
+            # persist=False: the reset bind must NOT write the session→ws map —
+            # in-place continue points log_path at `path`, so persisting "" here
+            # would erase this session's own mapping before we read it back.
+            self._bind_workspace(self.current, None, persist=False)
             try:
                 rec = workspace_cmd.session_ws_get(path)   # 路径 / "" (off) / None(无记录)
                 if rec is not None:

@@ -5268,10 +5268,10 @@ class GenericAgentTUI(App[None]):
         self._system(f"Branched #{old.agent_id} → #{new.agent_id} ({n} msgs).")
 
     def _cmd_rewind(self, args, raw):
-        # 外观:对话流内联选择卡片(旧版样式)。行为:有世界线树时走【持久】通道
-        # (_rw_restore_node→restore_plan,仅对话,落盘 tree HEAD + 重写投影日志,
-        # continue 后不复活);无树才兜底用内存级 _do_rewind(非持久)。代码恢复 /
-        # 分支树视图走 /worldline。
+        # 外观:对话流内联选择卡片(旧版样式)。行为:有世界线树时走【持久】通道——
+        # 选中提问后弹 RestoreModeScreen(复用 /worldline 那套)选 对话/代码/两者,再
+        # _rw_restore_node→restore_plan(落盘 tree HEAD + 重写投影日志,continue 后不复活)。
+        # 无树才兜底内存级 _do_rewind(非持久,仅对话)。分支树视图 / diff 走 /worldline。
         sess = self.current
         if sess.status == "running":
             self._system("Cannot rewind while running. /stop first."); return
@@ -5308,7 +5308,7 @@ class GenericAgentTUI(App[None]):
             if n < 1 or n > total:
                 self._system(f"Invalid: 1-{total}"); return
             if durable:
-                self._system(self._rw_restore_node(sess, payloads[n - 1], mode="conv", to="before"))
+                self._rewind_pick_mode(sess, payloads[n - 1])   # 弹模式窗后回退
             else:
                 self._system(self._do_rewind(payloads[n - 1]))
             return
@@ -5321,13 +5321,25 @@ class GenericAgentTUI(App[None]):
         if total > LIMIT:
             head += f"  [仅显示最近 {LIMIT}/{total}]"
         if durable:
-            on_sel = lambda v: self._rw_restore_node(sess, v, mode="conv", to="before")
+            on_sel = lambda v: self._rewind_pick_mode(sess, v)
         else:
             on_sel = lambda v: self._do_rewind(v)
         msg = ChatMessage(role="system", content=head, kind="choice",
                           choices=choices, on_select=on_sel)
         sess.messages.append(msg)
         self._refresh_messages()
+
+    def _rewind_pick_mode(self, sess, node_id) -> None:
+        """选中要回退到的提问后,弹 RestoreModeScreen(复用 /worldline 的模式选择窗)选
+        对话/代码/两者,再走持久回退 _rw_restore_node(to='before')。取消(返回 None)则不回退。"""
+        store = getattr(sess, "store", None)
+        title = ""
+        if store is not None and node_id in getattr(store, "nodes", {}):
+            title = store.nodes[node_id].get("title") or ""
+        def _after(mode):
+            if mode:
+                self._system(self._rw_restore_node(sess, node_id, mode=mode, to="before"))
+        self.push_screen(RestoreModeScreen(title, "before"), _after)
 
     def _cmd_rewind_tree(self, args, raw):
         sess = self.current

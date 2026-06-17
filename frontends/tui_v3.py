@@ -877,10 +877,12 @@ def _ptk_keypress_to_bytes(kp) -> bytes:
         return b'\x02'
     if has('right'):
         return b'\x06'
+    # Home/End get dedicated bytes — 0x01 is already Ctrl+A (select-all) and
+    # 0x05 has no editor handler, so reusing them would break/no-op the keys.
     if has('home'):
-        return b'\x01'
+        return b'\x07'
     if has('end'):
-        return b'\x05'
+        return b'\x14'
     if has('delete'):
         return b'\x7f'
     if has('backspace') or data == '\x7f' or data == '\x08':
@@ -1632,7 +1634,9 @@ def _strip_bg(s: str) -> str:
             out.append(t); i += 1
         return '\x1b[' + ';'.join(out) + 'm' if out else '\x1b[0m'
     return _SGR_RE.sub(repl, s)
-_ESC_RE = re.compile(rb'\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b.')
+# CSI (`\x1b[…`) or SS3 (`\x1bO…`, application-cursor mode for Home/End/arrows)
+# as whole sequences, else any 2-byte `\x1b.` — order matters so SS3 wins over `\x1b.`.
+_ESC_RE = re.compile(rb'\x1b\[[0-9;?]*[ -/]*[@-~]|\x1bO[@-~]|\x1b.')
 _FILE_REF_RE = re.compile(r'@([\w./\-~]+)')
 _PASTE_PH_RE = re.compile(r'\[Pasted text #(\d+) \+\d+ lines\]')
 _FILE_PH_RE = re.compile(r'\[File #(\d+)\]')
@@ -2107,6 +2111,13 @@ def _esc_repl(m: re.Match) -> bytes:
         return b'\x1d'   # Shift+↓ → extend selection down
     if s in (b'\x1b[27;2;13~', b'\x1b[13;2u'):
         return b'\n'      # Shift+Enter (modifyOtherKeys / kitty) → newline
+    # Home/End arrive as raw VT sequences via PTK's KeyPress.data (special keys
+    # carry their original escape bytes), so _ptk_keypress_to_bytes returns them
+    # verbatim and they must be decoded here like the arrows above.
+    if s in (b'\x1b[H', b'\x1b[1~', b'\x1b[7~', b'\x1bOH'):
+        return b'\x07'    # Home → internal jump-to-line-start
+    if s in (b'\x1b[F', b'\x1b[4~', b'\x1b[8~', b'\x1bOF'):
+        return b'\x14'    # End → internal jump-to-line-end
     return b''            # swallow every other escape sequence
 
 
@@ -5677,6 +5688,14 @@ class SB:
             elif o == 0x01:                       # Ctrl+A — select all
                 if self.buf:
                     self._sel = 0; self.pos = len(self.buf)
+            elif o == 0x07:                       # Home — jump to line start
+                self._sel = None
+                _, _, ls, _ = self._line_region()
+                self.pos = ls
+            elif o == 0x14:                       # End — jump to line end
+                self._sel = None
+                _, _, _, le = self._line_region()
+                self.pos = le
             elif o == 0x18:                       # Ctrl+X — cut selection
                 r = self._sel_range()
                 if r:

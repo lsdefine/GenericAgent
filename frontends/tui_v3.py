@@ -1498,6 +1498,15 @@ class AgentBridge:
         except Exception:
             return '?'
 
+    @property
+    def llm_model(self) -> str:
+        """The concrete model id in use (e.g. claude-opus-4-8), not the
+        channel group `llm_name` returns. Empty string when unavailable."""
+        try:
+            return self.agent.get_llm_name(model=True) or ''
+        except Exception:
+            return ''
+
     def list_llms(self) -> list[tuple[int, str, bool]]:
         return self.agent.list_llms()
 
@@ -2507,7 +2516,9 @@ class SB:
     # in callers are harmless legacy resets (they zero state PTK ignores).
 
     def _status_line(self, w: int) -> str:
-        name = self._bridge.llm_name if self._bridge else '?'
+        # Show the concrete model id; fall back to the channel group only when
+        # the model is unavailable (e.g. a mixin without a single .model).
+        name = (self._bridge.llm_model or self._bridge.llm_name) if self._bridge else '?'
         if self._asking:
             state = _t('status.asking')
         elif self._running:

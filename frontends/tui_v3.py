@@ -877,10 +877,12 @@ def _ptk_keypress_to_bytes(kp) -> bytes:
         return b'\x02'
     if has('right'):
         return b'\x06'
+    # Home/End get dedicated bytes — 0x01 is already Ctrl+A (select-all) and
+    # 0x05 has no editor handler, so reusing them would break/no-op the keys.
     if has('home'):
-        return b'\x01'
+        return b'\x07'
     if has('end'):
-        return b'\x05'
+        return b'\x14'
     if has('delete'):
         return b'\x7f'
     if has('backspace') or data == '\x7f' or data == '\x08':
@@ -1496,6 +1498,15 @@ class AgentBridge:
         except Exception:
             return '?'
 
+    @property
+    def llm_model(self) -> str:
+        """The concrete model id in use (e.g. claude-opus-4-8), not the
+        channel group `llm_name` returns. Empty string when unavailable."""
+        try:
+            return self.agent.get_llm_name(model=True) or ''
+        except Exception:
+            return ''
+
     def list_llms(self) -> list[tuple[int, str, bool]]:
         return self.agent.list_llms()
 
@@ -1632,7 +1643,9 @@ def _strip_bg(s: str) -> str:
             out.append(t); i += 1
         return '\x1b[' + ';'.join(out) + 'm' if out else '\x1b[0m'
     return _SGR_RE.sub(repl, s)
-_ESC_RE = re.compile(rb'\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b.')
+# CSI (`\x1b[…`) or SS3 (`\x1bO…`, application-cursor mode for Home/End/arrows)
+# as whole sequences, else any 2-byte `\x1b.` — order matters so SS3 wins over `\x1b.`.
+_ESC_RE = re.compile(rb'\x1b\[[0-9;?]*[ -/]*[@-~]|\x1bO[@-~]|\x1b.')
 _FILE_REF_RE = re.compile(r'@([\w./\-~]+)')
 _PASTE_PH_RE = re.compile(r'\[Pasted text #(\d+) \+\d+ lines\]')
 _FILE_PH_RE = re.compile(r'\[File #(\d+)\]')
@@ -2107,6 +2120,13 @@ def _esc_repl(m: re.Match) -> bytes:
         return b'\x1d'   # Shift+↓ → extend selection down
     if s in (b'\x1b[27;2;13~', b'\x1b[13;2u'):
         return b'\n'      # Shift+Enter (modifyOtherKeys / kitty) → newline
+    # Home/End arrive as raw VT sequences via PTK's KeyPress.data (special keys
+    # carry their original escape bytes), so _ptk_keypress_to_bytes returns them
+    # verbatim and they must be decoded here like the arrows above.
+    if s in (b'\x1b[H', b'\x1b[1~', b'\x1b[7~', b'\x1bOH'):
+        return b'\x07'    # Home → internal jump-to-line-start
+    if s in (b'\x1b[F', b'\x1b[4~', b'\x1b[8~', b'\x1bOF'):
+        return b'\x14'    # End → internal jump-to-line-end
     return b''            # swallow every other escape sequence
 
 
@@ -2496,7 +2516,9 @@ class SB:
     # in callers are harmless legacy resets (they zero state PTK ignores).
 
     def _status_line(self, w: int) -> str:
-        name = self._bridge.llm_name if self._bridge else '?'
+        # Show the concrete model id; fall back to the channel group only when
+        # the model is unavailable (e.g. a mixin without a single .model).
+        name = (self._bridge.llm_model or self._bridge.llm_name) if self._bridge else '?'
         if self._asking:
             state = _t('status.asking')
         elif self._running:
@@ -4329,9 +4351,14 @@ class SB:
         self._tool_base = 0; self._tools = {}
 
     # ── workspace（与 v2 共用 workspace_cmd；单会话 → 进程级一个绑定）─────────
-    def _bind_workspace(self, info) -> None:
+    def _bind_workspace(self, info, persist: bool = True) -> None:
         """绑定 / 解绑 workspace。info=prepare() 的结果 dict → 绑定；None → 解绑。
-        同步 agent 的 project_mode 属性（插件据此注入项目上下文），刷新 @ 索引根。"""
+        同步 agent 的 project_mode 属性（插件据此注入项目上下文），刷新 @ 索引根。
+
+        persist=False: 仅刷新内存绑定状态，不写 session→ws 映射表。续接时的
+        reset(_bind_workspace(None)) 用它——原地续后 agent.log_path==被续文件，
+        若持久化会把本会话映射抹成 ""(= 已 off)，反而毁掉自动恢复。映射表只应由
+        显式 /workspace、/workspace off 与成功的续接恢复来写。"""
         ag = self._bridge.agent if self._bridge else None
         if info:
             self._ws_name = info.get('name') or ''
@@ -4349,7 +4376,8 @@ class SB:
             except Exception:
                 pass
             # 持久化绑定/off → /continue 即时恢复，不必先聊一轮留 PROJECT MODE 块。
-            workspace_cmd.session_ws_set(getattr(ag, "log_path", "") or "", pm_path or "")
+            if persist:
+                workspace_cmd.session_ws_set(getattr(ag, "log_path", "") or "", pm_path or "")
         at_complete.get_index(self._at_root()).warm()   # 预热新根（或 CWD）
 
     def _do_workspace_activate(self, path: str) -> str:
@@ -4509,7 +4537,10 @@ class SB:
                 self.commit([_DIM + '┄┄ ' + _t('msg.continue_ready', msg=msg) + ' ┄┄' + _RST])
                 # 自动恢复 workspace：续接的会话若在某个已登记 workspace 里工作过，
                 # 重新绑定（必要时重建 junction），不触碰 project_mode 的进程锚。
-                self._bind_workspace(None)
+                # persist=False：reset 绑定绝不写 session→ws 映射表——原地续把
+                # agent.log_path 指回 path，若持久化会把本会话映射抹成 ""，在读回
+                # 之前就毁掉自动恢复。
+                self._bind_workspace(None, persist=False)
                 try:
                     rec = workspace_cmd.session_ws_get(path)   # 路径 / "" (off) / None(无记录)
                     if rec is not None:
@@ -5668,6 +5699,14 @@ class SB:
             elif o == 0x01:                       # Ctrl+A — select all
                 if self.buf:
                     self._sel = 0; self.pos = len(self.buf)
+            elif o == 0x07:                       # Home — jump to line start
+                self._sel = None
+                _, _, ls, _ = self._line_region()
+                self.pos = ls
+            elif o == 0x14:                       # End — jump to line end
+                self._sel = None
+                _, _, _, le = self._line_region()
+                self.pos = le
             elif o == 0x18:                       # Ctrl+X — cut selection
                 r = self._sel_range()
                 if r:

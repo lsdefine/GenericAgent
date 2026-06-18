@@ -169,16 +169,16 @@ LLM_PROVIDERS = [
     },
     {
         'id': 'minimax',
-        'name': 'MiniMax M2.7 (双协议)',
-        'desc': 'MiniMax M2.7，支持 Anthropic 和 OpenAI 双协议',
+        'name': 'MiniMax M3 (双协议)',
+        'desc': 'MiniMax M3，支持 Anthropic 和 OpenAI 双协议',
         'type': 'native_claude',
         'template': {
             'name': 'minimax', 'apikey': 'eyJh...<your-minimax-key>',
             'apibase': 'https://api.minimaxi.com/anthropic',
-            'model': 'MiniMax-M2.7', 'max_retries': 3,
+            'model': 'MiniMax-M3', 'max_retries': 3,
         },
         'key_hint': '在 https://platform.minimaxi.com/user-center/basic-information 获取',
-        'model_choices': ['MiniMax-M2.7', 'MiniMax-M2.5'],
+        'model_choices': ['MiniMax-M3', 'MiniMax-M2.7', 'MiniMax-M2.7-highspeed'],
         'extra_fields': [
             {
                 'key': '_protocol', 'label': '选择 API 协议',

@@ -404,13 +404,14 @@ def _openai_stream(sess, messages):
     temperature = sess.temperature
     if 'kimi' in ml or 'moonshot' in ml: temperature = 1
     elif 'minimax' in ml: temperature = max(0.01, min(temperature, 1.0))  # MiniMax requires temp in (0, 1]
-    headers = {"Authorization": f"Bearer {sess.api_key}", "Content-Type": "application/json", "Accept": "text/event-stream"}
+    headers = {"Authorization": f"Bearer {sess.api_key}", "Content-Type": "application/json", "Accept": "text/event-stream", 'originator': 'codex_exec'}
     headers["User-Agent"] = sess.user_agent
     if api_mode == "responses":
         url = auto_make_url(sess.api_base, "responses")
         payload = {"model": model, "input": _to_responses_input(messages), "stream": sess.stream, 
                    "prompt_cache_key": _RESP_CACHE_KEY, "instructions": sess.system or "You are an Omnipotent Executor.",
-                   "client_metadata": {"x-codex-window-id": f"{_RESP_CACHE_KEY}:0","x-codex-installation-id": _RESP_CODEX_KEY}}
+                   "client_metadata": {"x-codex-window-id": f"{_RESP_CACHE_KEY}:0","x-codex-installation-id": _RESP_CODEX_KEY},
+                   'include': ['reasoning.encrypted_content']}
         if sess.reasoning_effort: payload["reasoning"] = {"effort": sess.reasoning_effort}
         if sess.max_tokens: payload["max_output_tokens"] = sess.max_tokens
     else:

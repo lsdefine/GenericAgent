@@ -197,7 +197,7 @@ if __name__ == '__main__':
     import argparse
     from datetime import datetime
     parser = argparse.ArgumentParser()
-    parser.add_argument('--task', metavar='IODIR', help='一次性任务模式(文件IO)')
+    parser.add_argument('--task', metavar='IODIR', help='一次性任务模式，先看subagent.md')
     parser.add_argument('--reflect', metavar='SCRIPT', help='反射模式：加载监控脚本，check()触发时发任务')
     parser.add_argument('--input', help='prompt')
     parser.add_argument('--llm_no', type=int, default=0)

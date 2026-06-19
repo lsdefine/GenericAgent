@@ -8688,9 +8688,37 @@ class RewindTreeScreen(ModalScreen):
         self._ensure_line_visible("#rw3_rtop", self.seg_idx + 3)
 
 
+def _patch_textual_linux_input_decoder() -> None:
+    """Keep malformed terminal bytes from killing the Textual input thread."""
+    if sys.platform == "win32":
+        return
+    try:
+        from codecs import getincrementaldecoder as original_getdecoder
+        import textual.drivers.linux_driver as linux_driver
+    except Exception:
+        return
+    if getattr(linux_driver, "_ga_utf8_decoder_patched", False):
+        return
+
+    def getincrementaldecoder(encoding: str):
+        decoder_cls = original_getdecoder(encoding)
+        if encoding.replace("_", "-").lower() != "utf-8":
+            return decoder_cls
+
+        class Utf8ReplaceDecoder(decoder_cls):
+            def __init__(self, errors: str = "replace") -> None:
+                super().__init__(errors="replace" if errors == "strict" else errors)
+
+        return Utf8ReplaceDecoder
+
+    linux_driver.getincrementaldecoder = getincrementaldecoder
+    linux_driver._ga_utf8_decoder_patched = True
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     build_arg_parser().parse_args(argv)
     _warn_mintty()
+    _patch_textual_linux_input_decoder()
     GenericAgentTUI().run()
     return 0
 

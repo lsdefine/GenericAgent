@@ -13,6 +13,7 @@ sys.path.append(os.path.abspath(script_dir))
 
 import streamlit as st
 import time, json, re, threading, queue
+from datetime import timedelta
 from agentmain import GeneraticAgent
 import chatapp_common  # activate /continue command (monkey patches GeneraticAgent)
 from continue_cmd import handle_frontend_command, reset_conversation, list_sessions, extract_ui_messages
@@ -34,13 +35,27 @@ if LANG not in ('zh', 'en'): LANG = 'zh'
 I18N = {
     'zh': {
         'force_stop': '强行停止任务',
-        'reinject_tools': '重新注入工具',
         'desktop_pet': '🐱 桌面宠物',
+        'suggest_btn': '🎯 给我找点事做',
+        'suggest_prompt': '按照自主行动的规划部分，充分分析我的情况，给我生成一批TODO，务必让我感兴趣',
+        'auto_start': '开始空闲自主行动',
+        'auto_pause': '⏸️ 禁止自主行动',
+        'auto_enable': '▶️ 允许自主行动',
+        'auto_on_cap': '🟢 自主行动运行中，会在你离开它30分钟后自动进行',
+        'auto_off_cap': '🔴 自主行动已停止',
+        'auto_prompt': '[AUTO]🤖 用户已经离开超过30分钟，作为自主智能体，请阅读自动化sop，执行自动任务。',
     },
     'en': {
         'force_stop': 'Force Stop',
-        'reinject_tools': 'Reinject Tools',
         'desktop_pet': '🐱 Desktop Pet',
+        'suggest_btn': '🎯 Suggest tasks',
+        'suggest_prompt': 'Following the planning section of autonomous sop, analyze my situation thoroughly and generate a batch of TODOs that will interest me.',
+        'auto_start': 'Start idle auto-action',
+        'auto_pause': '⏸️ Pause auto-action',
+        'auto_enable': '▶️ Enable auto-action',
+        'auto_on_cap': '🟢 Auto-action enabled, triggers after 30min idle',
+        'auto_off_cap': '🔴 Auto-action disabled',
+        'auto_prompt': '[AUTO]🤖 User has been idle for over 30 minutes. As an autonomous agent, read the automation SOP and execute automatic tasks.',
     },
 }
 def T(key): return I18N.get(LANG, I18N['zh']).get(key, key)
@@ -72,14 +87,6 @@ def render_sidebar():
         agent.next_llm(selected_idx); st.rerun(scope="fragment")
     if st.button(T('force_stop')):
         agent.abort(); st.toast("Stop signal sended"); st.rerun()
-    if st.button(T('reinject_tools')):
-        agent.llmclient.last_tools = ''
-        try:
-            hist_path = os.path.join(script_dir, '..', 'assets', 'tool_usable_history.json')
-            with open(hist_path, 'r', encoding='utf-8') as f: tool_hist = json.load(f)
-            agent.llmclient.backend.history.extend(tool_hist)
-            st.toast(f"Tools injected")
-        except Exception as e: st.toast(f"Injected tools failed: {e}")
     if st.button(T('desktop_pet')):
         kwargs = {'creationflags': 0x08} if sys.platform == 'win32' else {}
         pet_script = os.path.join(script_dir, 'desktop_pet_v2.pyw')
@@ -103,25 +110,44 @@ def render_sidebar():
         agent._turn_end_hooks['pet'] = _pet_hook
         st.toast("Desktop pet started")
     
-    if LANG == 'zh':
-        if st.button('🎯 给我找点事做'):
-            st.session_state['_inject_prompt'] = '按照自主行动的规划部分，充分分析我的情况，给我生成一批TODO，务必让我感兴趣'
-            st.rerun(scope="app")
-        st.divider()
-        if st.button("开始空闲自主行动"):
-            st.session_state.last_reply_time = int(time.time()) - 1800
+    if st.button(T('suggest_btn')):
+        st.session_state['_inject_prompt'] = T('suggest_prompt')
+        st.rerun(scope="app")
+    st.divider()
+    st.markdown("""<style>
+    [data-testid="stSidebar"] .stTextArea textarea {
+        field-sizing: content; min-height: 1.6em !important; height: auto !important;
+    }
+    </style>""", unsafe_allow_html=True)
+    def _sync_loop_prompt():
+        st.session_state.loop_prompt = st.session_state.loop_prompt_input
+    loop_prompt = st.text_area("Loop prompt", value=st.session_state.get('loop_prompt', "继续" if LANG=='zh' else 'next'), key="loop_prompt_input", height=1, on_change=_sync_loop_prompt)
+    if st.session_state.get('loop_enabled'):
+        if st.button("⏹️ Stop Loop"):
+            st.session_state.loop_enabled = False
+            st.toast("⏹️ Loop stopped"); st.rerun(scope="app")
+        st.caption("🔁 Looping")
+    else:
+        if st.button("🔁 Loop!"):
+            st.session_state.loop_enabled = True
+            st.session_state.loop_prompt = loop_prompt
+            st.session_state['_inject_prompt'] = loop_prompt
+            st.toast("🔁 Looping"); st.rerun(scope="app")
+    st.divider()
+    if st.button(T('auto_start')):
+        st.session_state.last_reply_time = int(time.time()) - 1800
+        st.session_state.autonomous_enabled = True
+        st.rerun(scope="app")
+    if st.session_state.autonomous_enabled:
+        if st.button(T('auto_pause')):
+            st.session_state.autonomous_enabled = False
+            st.toast(T('auto_pause')); st.rerun(scope="app")
+        st.caption(T('auto_on_cap'))
+    else:
+        if st.button(T('auto_enable'), type="primary"):
             st.session_state.autonomous_enabled = True
-            st.toast("已将上次回复时间设为1800秒前，自主行动已激活"); st.rerun(scope="app")
-        if st.session_state.autonomous_enabled:
-            if st.button("⏸️ 禁止自主行动"):
-                st.session_state.autonomous_enabled = False
-                st.toast("⏸️ 已禁止自主行动"); st.rerun(scope="app")
-            st.caption("🟢 自主行动运行中，会在你离开它30分钟后自动进行")
-        else:
-            if st.button("▶️ 允许自主行动", type="primary"):
-                st.session_state.autonomous_enabled = True
-                st.toast("✅ 已允许自主行动"); st.rerun(scope="app")
-            st.caption("🔴 自主行动已停止")
+            st.toast("✅"); st.rerun(scope="app")
+        st.caption(T('auto_off_cap'))
 with st.sidebar: render_sidebar()
 
 def fold_turns(text):
@@ -226,6 +252,10 @@ def render_main_stream(prompt=None):
     if response:
         st.session_state.messages.append({"role": "assistant", "content": response})
         st.session_state.last_reply_time = int(time.time())
+        # ── 循环回调：回答完成后自动注入下一条 ──
+        if st.session_state.get('loop_enabled'):
+            st.session_state['_inject_prompt'] = st.session_state.get('loop_prompt', '继续')
+            st.rerun()
 
 if "messages" not in st.session_state: st.session_state.messages = []
 for msg in st.session_state.messages:
@@ -334,5 +364,15 @@ elif st.session_state.get('display_queue') is not None:
     # No new prompt but a task is mid-flight (typically a /btw rerun) — resume drain.
     render_main_stream()
 
-if st.session_state.autonomous_enabled:
-    st.markdown(f"""<div id="last-reply-time" style="display:none">{st.session_state.get('last_reply_time', int(time.time()))}</div>""", unsafe_allow_html=True)
+# ── 空闲自主行动：fragment 定时检测，替代 launch.pyw 的 idle_monitor ──
+@st.fragment(run_every=timedelta(minutes=5))
+def _idle_checker():
+    if not st.session_state.get('autonomous_enabled'): return
+    if st.session_state.get('display_queue') is not None: return   # 正在运行中
+    if st.session_state.get('loop_enabled'): return                # 循环模式自己管
+    last = st.session_state.get('last_reply_time', int(time.time()))
+    if time.time() - last > 1800:
+        st.session_state['_inject_prompt'] = T('auto_prompt')
+        st.session_state['last_reply_time'] = int(time.time())     # 防重入
+        st.rerun(scope="app")
+_idle_checker()

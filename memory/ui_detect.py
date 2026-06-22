@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """
-UI元素检测 - YOLO + RapidOCR
+UI元素检测 - 基于 OmniParser-v2.0 的 icon_detect YOLO 模型 + RapidOCR
+
+首次使用前必须准备对应权重；这是 OmniParser-v2.0 的 icon_detect YOLO 模型。
+若缺失模型文件，新用户/AI 应搜索并下载 OmniParser-v2.0 icon_detect YOLO 权重。
+
 用法:
   from ui_detect import detect
   elements = detect("screenshot.png")          # 默认match模式

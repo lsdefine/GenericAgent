@@ -1,13 +1,9 @@
-import webview, threading, subprocess, sys, time, os, ctypes, atexit, socket, random, webbrowser
-from urllib.request import urlopen
-from urllib.error import URLError
+import webview, threading, subprocess, sys, time, os, ctypes, atexit, socket, random
 
 WINDOW_WIDTH, WINDOW_HEIGHT, RIGHT_PADDING, TOP_PADDING = 1200, 900, 0, 50
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 frontends_dir = os.path.join(script_dir, "frontends")
-app_url = ''
-window = None
 
 def find_free_port(lo=18501, hi=18599):
     ports = list(range(lo, hi+1)); random.shuffle(ports)
@@ -16,83 +12,15 @@ def find_free_port(lo=18501, hi=18599):
         except OSError: continue
     raise RuntimeError(f'No free port in {lo}-{hi}')
 
-def get_screen_size():
-    try:
-        user32 = ctypes.windll.user32
-        return user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
-    except:
-        return 1920, 1080
-
-def get_window_position():
-    screen_width, screen_height = get_screen_size()
-    x_pos = max(0, (screen_width - WINDOW_WIDTH) // 2)
-    y_pos = max(0, (screen_height - WINDOW_HEIGHT) // 2)
-    return x_pos, y_pos
-
-def wait_for_streamlit(port, timeout=READY_TIMEOUT):
-    deadline = time.time() + timeout
-    url = f'http://localhost:{port}'
-    while time.time() < deadline:
-        try:
-            with urlopen(url, timeout=2) as resp:
-                if resp.status == 200: return True
-        except (URLError, OSError):
-            time.sleep(0.5)
-    return False
-
-def focus_native_window(title, timeout=15):
-    if os.name != 'nt': return False
-    user32 = ctypes.windll.user32
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        hwnd = user32.FindWindowW(None, title)
-        if hwnd:
-            user32.ShowWindow(hwnd, 9)
-            user32.SetForegroundWindow(hwnd)
-            return True
-        time.sleep(0.5)
-    return False
-
-def post_start_tasks():
-    if window is not None:
-        try: window.restore()
-        except: pass
-        try: window.show()
-        except: pass
-    if not focus_native_window(APP_TITLE):
-        print('[Launch] WebView window was not brought to foreground, opening browser fallback')
-        webbrowser.open(app_url)
+def get_screen_width():
+    try: return ctypes.windll.user32.GetSystemMetrics(0)
+    except: return 1920
 
 def start_streamlit(port):
     global proc
     cmd = [sys.executable, "-m", "streamlit", "run", os.path.join(frontends_dir, "stapp.py"), "--server.port", str(port), "--server.address", "localhost", "--server.headless", "true", "--client.toolbarMode", "viewer"]
     proc = subprocess.Popen(cmd)
     atexit.register(proc.kill)
-
-def inject(text):
-    window.evaluate_js(f"""
-        const textarea = document.querySelector('textarea[data-testid="stChatInputTextArea"]');
-        if (textarea) {{
-            // 1. 用原生 setter 设置值（绕过 React）
-            const nativeTextAreaValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
-            nativeTextAreaValueSetter.call(textarea, {repr(text)});
-            // 2. 触发 React 的 input 事件
-            textarea.dispatchEvent(new Event('input', {{ bubbles: true }}));
-            // 3. 触发 change 事件（有些组件需要）
-            textarea.dispatchEvent(new Event('change', {{ bubbles: true }}));
-            // 4. 延迟提交
-            setTimeout(() => {{
-                const btn = document.querySelector('[data-testid="stChatInputSubmitButton"]');
-                if (btn) {{btn.click();console.log('Submitted:', {repr(text)});}}
-            }}, 200);
-        }}""")
-
-def get_last_reply_time():
-    last = window.evaluate_js("""
-        const el = document.getElementById('last-reply-time');
-        el ? parseInt(el.textContent) : 0;
-    """) or 0
-    return last or int(time.time())
 
 PASTE_HOOK_JS = """if (!window._pasteHooked) { window._pasteHooked = true;
     document.addEventListener('paste', e => {
@@ -112,21 +40,13 @@ PASTE_HOOK_JS = """if (!window._pasteHooked) { window._pasteHooked = true;
     }, true);
 }"""
 
-def idle_monitor():
-    last_trigger_time = 0
+def paste_hook_injector():
+    """注入剪贴板粘贴图片钩子，等窗口加载后执行一次，之后每60秒补注入防页面刷新丢失"""
+    time.sleep(5)  # 等 webview 加载
     while True:
-        time.sleep(5)
-        try:
-            window.evaluate_js(PASTE_HOOK_JS)
-            now = time.time()
-            if now - last_trigger_time < 120: continue
-            last_reply = get_last_reply_time()
-            if now - last_reply > 1800:
-                print('[Idle Monitor] Detected idle state, injecting task...')
-                inject("[AUTO]🤖 用户已经离开超过30分钟，作为自主智能体，请阅读自动化sop，执行自动任务。")
-                last_trigger_time = now
-        except Exception as e:
-            print(f'[Idle Monitor] Error: {e}')
+        try: window.evaluate_js(PASTE_HOOK_JS)
+        except: pass
+        time.sleep(60)
 
 if __name__ == '__main__':
     import argparse
@@ -187,16 +107,14 @@ if __name__ == '__main__':
         print('[Launch] Task Scheduler started (duplicate prevented by scheduler port lock)')
     else: print('[Launch] Task Scheduler not enabled (--sched)')
 
-    monitor_thread = threading.Thread(target=idle_monitor, daemon=True)
-    monitor_thread.start()
-    app_url = f'http://localhost:{port}'
-    if not wait_for_streamlit(port):
-        print(f'[Launch] Streamlit not ready after {READY_TIMEOUT}s, opening browser fallback: {app_url}')
-        webbrowser.open(app_url)
-        sys.exit(0)
-    x_pos, y_pos = get_window_position()
+    threading.Thread(target=paste_hook_injector, daemon=True).start()
+    if os.name == 'nt':
+        screen_width = get_screen_width()
+        x_pos = screen_width - WINDOW_WIDTH - RIGHT_PADDING
+    else: x_pos = 100
+    time.sleep(2) 
     window = webview.create_window(
-        title=APP_TITLE, url=app_url,
-        width=WINDOW_WIDTH, height=WINDOW_HEIGHT, x=x_pos, y=y_pos,
+        title='GenericAgent', url=f'http://localhost:{port}',
+        width=WINDOW_WIDTH, height=WINDOW_HEIGHT, x=x_pos, y=TOP_PADDING,
         resizable=True, text_select=True)
-    webview.start(post_start_tasks)
+    webview.start()

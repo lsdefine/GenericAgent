@@ -553,7 +553,7 @@ class GenericAgentHandler(BaseHandler):
         else:
             tc = tool_calls[0]; tool_name, args = tc['tool_name'], tc['args']   # at least one because no_tool
             clean_args = {k: v for k, v in args.items() if not k.startswith('_')}
-            summary = f"调用工具{tool_name}, args: {clean_args}"
+            summary = f"{tool_name}, args: {clean_args}"
             if tool_name == 'no_tool': summary = "直接回答了用户问题"
             next_prompt += "\n\n\n[SYSTEM] 必须在回复文本中包含<summary>！\n\n"
             summary = smart_format(summary.replace('\n', ''), max_str_len=40)
@@ -561,15 +561,17 @@ class GenericAgentHandler(BaseHandler):
         self.history_info.append(f'[Agent] {summary}')
         _plan = self._in_plan_mode()
 
-        if turn % 75 == 0 and (not _plan):
-            next_prompt += f"\n\n[DANGER] 已连续执行第 {turn} 轮。必须总结情况进行ask_user，不允许继续重试。"
+        if turn % 175 == 0 and (not _plan):
+            next_prompt += f"\n\n[DANGER] Turn {turn}. Must call ask_user to summarize progress and get direction. No more blind retries."
         elif turn % 7 == 0:
-            next_prompt += f"\n\n[SYSTEM] 已连续执行第 {turn} 轮。建议调用update_working_checkpoint保存关键上下文。禁止无效重试；若无有效进展，必须切换策略：1. 探测物理边界 2. **重读相关SOP**"
+            next_prompt += f"\n\n[SYSTEM] Turn {turn}. Call update_working_checkpoint to save key context. Stop ineffective retries; if no progress, switch strategy: 1) Probe physical boundaries 2) **Re-read relevant SOPs**"
+        elif turn % 25 == 0:
+            next_prompt += f"\n\n[SYSTEM] Turn {turn}. Write checkpoints/key findings/tried approaches to a file for future reference. Avoid losing critical info."
         elif turn % 10 == 0: next_prompt += get_global_memory()
 
         if _plan and turn >= 10 and turn % 5 == 0:
             next_prompt = f"[Plan Hint] 正在计划模式。必须 file_read({_plan}) 确认当前步骤，回复开头引用：📌 当前步骤：...\n\n" + next_prompt
-        if _plan and turn >= 120: next_prompt += f"\n\n[DANGER] Plan模式已运行 {turn} 轮，已达上限。必须 ask_user 汇报进度并确认是否继续。"
+        if _plan and turn >= 190: next_prompt += f"\n\n[DANGER] Plan模式已运行 {turn} 轮，已达上限。必须 ask_user 汇报进度并确认是否继续。"
 
         injkeyinfo = consume_file(self.parent.task_dir, '_keyinfo')
         injprompt = consume_file(self.parent.task_dir, '_intervene')

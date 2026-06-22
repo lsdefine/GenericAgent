@@ -33,6 +33,7 @@ from typing import Optional
 
 _USER_SHELL: tuple[list[str], str] | None = None
 
+COMMIT_SIGNATURE_PROMPT = 'When you create a git commit, append "Co-Authored-By: GenericAgent <bot@gaagent.ai>" as the final line of the commit message.'
 
 def detect_user_shell() -> tuple[list[str], str]:
     """Return `([executable, ...flags_for_-c], display_name)` for the user's

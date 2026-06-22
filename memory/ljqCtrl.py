@@ -21,6 +21,8 @@ try:
 	import cv2
 except: pass
 
+ctypes.windll.user32.SetProcessDPIAware()
+
 _hdc = ctypes.windll.user32.GetDC(0)
 swidth = ctypes.windll.gdi32.GetDeviceCaps(_hdc, 118)   # DESKTOPHORZRES (物理)
 sheight = ctypes.windll.gdi32.GetDeviceCaps(_hdc, 117)   # DESKTOPVERTRES
@@ -158,9 +160,9 @@ def FindBlock(fn, wrect=None, verbose=0, threshold=0.8):
 	obj = (oj + wrect[0] + tsw//2, oi + wrect[1] + tsh//2)
 	if verbose:
 		print(f'Max match: {max_val:.4f} at ({oj}, {oi}) cost: {time.process_time() - tic:.3f}s')
-		sscr = scr.crop([oj, oi, oj+tsw, oi+tsh])
-		sscr.show()
-	return obj, max_val > threshold
+		#sscr = scr.crop([oj, oi, oj+tsw, oi+tsh])
+		#sscr.show()
+	return obj, max_val
 
 def ScreenCapAt(x, y, r=100):
 	"""物理坐标(x,y)为中心±r的屏幕截图 → PIL Image"""

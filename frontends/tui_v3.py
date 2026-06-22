@@ -1373,6 +1373,8 @@ class AgentBridge:
             self.agent.llmclient = self.agent.llmclients[llm_no % len(self.agent.llmclients)]
         self.agent.inc_out = True
         self.agent.verbose = True
+        from frontends.slash_cmds import COMMIT_SIGNATURE_PROMPT
+        self.agent.extra_sys_prompts.append(COMMIT_SIGNATURE_PROMPT)
         # 默认普通模式：设 None 让 project_mode 插件不读 pid 文件锚（与 v2 一致）。
         # /workspace 绑定时改为项目名 + 真实路径。
         self.agent._ga_project_mode_name = None

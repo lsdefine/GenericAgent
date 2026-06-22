@@ -2043,8 +2043,10 @@ class AgentSession:
 
 def default_agent_factory() -> Any:
     from agentmain import GenericAgent
+    from frontends.slash_cmds import COMMIT_SIGNATURE_PROMPT
     agent = GenericAgent()
     agent.inc_out = True
+    agent.extra_sys_prompts.append(COMMIT_SIGNATURE_PROMPT)
     return agent
 
 

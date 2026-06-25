@@ -11,6 +11,19 @@ use tauri::Manager;
 use std::os::windows::process::CommandExt;
 
 static BRIDGE_PROCESS: Mutex<Option<Child>> = Mutex::new(None);
+const DEFAULT_MAIN_WINDOW_WIDTH: f64 = 1280.0;
+const DEFAULT_MAIN_WINDOW_HEIGHT: f64 = 800.0;
+const MIN_MAIN_WINDOW_WIDTH: f64 = 480.0;
+const MIN_MAIN_WINDOW_HEIGHT: f64 = 320.0;
+
+type SettingsMap = serde_json::Map<String, serde_json::Value>;
+
+#[derive(Debug, PartialEq)]
+struct MainWindowSettings {
+    width: Option<f64>,
+    height: Option<f64>,
+    maximized: Option<bool>,
+}
 
 /// Get project root (parent of frontends/)
 fn project_root() -> PathBuf {
@@ -155,7 +168,7 @@ fn settings_path() -> PathBuf {
 }
 
 /// Read the settings file as a JSON object (empty object when missing/unparseable).
-fn read_settings() -> serde_json::Map<String, serde_json::Value> {
+fn read_settings() -> SettingsMap {
     let path = settings_path();
     if let Ok(content) = std::fs::read_to_string(&path) {
         if let Ok(serde_json::Value::Object(m)) = serde_json::from_str(&content) {
@@ -163,6 +176,41 @@ fn read_settings() -> serde_json::Map<String, serde_json::Value> {
         }
     }
     serde_json::Map::new()
+}
+
+fn setting_dimension(settings: &SettingsMap, key: &str, fallback_key: &str, min: f64) -> Option<f64> {
+    settings
+        .get(key)
+        .or_else(|| settings.get(fallback_key))
+        .and_then(|v| v.as_f64())
+        .filter(|v| v.is_finite() && *v >= min)
+}
+
+fn main_window_settings_from(settings: &SettingsMap) -> MainWindowSettings {
+    MainWindowSettings {
+        width: setting_dimension(settings, "window_width", "width", MIN_MAIN_WINDOW_WIDTH),
+        height: setting_dimension(settings, "window_height", "height", MIN_MAIN_WINDOW_HEIGHT),
+        maximized: settings.get("maximized").and_then(|v| v.as_bool()),
+    }
+}
+
+fn read_main_window_settings() -> MainWindowSettings {
+    main_window_settings_from(&read_settings())
+}
+
+fn apply_main_window_settings(window: &tauri::WebviewWindow) {
+    let settings = read_main_window_settings();
+    if settings.width.is_some() || settings.height.is_some() {
+        let _ = window.set_size(tauri::LogicalSize::new(
+            settings.width.unwrap_or(DEFAULT_MAIN_WINDOW_WIDTH),
+            settings.height.unwrap_or(DEFAULT_MAIN_WINDOW_HEIGHT),
+        ));
+    }
+    match settings.maximized {
+        Some(true) => { let _ = window.maximize(); }
+        Some(false) => { let _ = window.unmaximize(); }
+        None => {}
+    }
 }
 
 /// Merge `updates` into the existing settings file and write it back, preserving any keys
@@ -671,6 +719,7 @@ fn show_bridge_window(app_handle: &tauri::AppHandle) {
     if let Some(main_win) = app_handle.get_webview_window("main") {
         let url = tauri::Url::parse("http://127.0.0.1:14168/").unwrap();
         let _ = main_win.navigate(url);
+        apply_main_window_settings(&main_win);
         let _ = main_win.show();
         let _ = main_win.set_focus();
     }
@@ -772,6 +821,7 @@ pub fn run() {
             // Show the loading window immediately so the first-run prepare isn't a blank screen.
             // The window starts on loading.html (a local page), so no "connection refused" flash.
             if let Some(w) = app.get_webview_window("main") {
+                apply_main_window_settings(&w);
                 let _ = w.show();
             }
 
@@ -866,6 +916,7 @@ pub fn run() {
                                 });
                             "#);
                         }
+                        apply_main_window_settings(&w);
                         let _ = w.show();
                         let _ = w.set_focus();
                     }
@@ -905,4 +956,57 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn main_window_settings_accept_explicit_keys() {
+        let settings = serde_json::json!({
+            "window_width": 1024,
+            "window_height": 720,
+            "maximized": false
+        });
+        let serde_json::Value::Object(settings) = settings else { panic!("object expected"); };
+
+        assert_eq!(main_window_settings_from(&settings), MainWindowSettings {
+            width: Some(1024.0),
+            height: Some(720.0),
+            maximized: Some(false),
+        });
+    }
+
+    #[test]
+    fn main_window_settings_accept_legacy_size_keys() {
+        let settings = serde_json::json!({
+            "width": 900,
+            "height": 640,
+            "maximized": true
+        });
+        let serde_json::Value::Object(settings) = settings else { panic!("object expected"); };
+
+        assert_eq!(main_window_settings_from(&settings), MainWindowSettings {
+            width: Some(900.0),
+            height: Some(640.0),
+            maximized: Some(true),
+        });
+    }
+
+    #[test]
+    fn main_window_settings_ignore_invalid_values() {
+        let settings = serde_json::json!({
+            "window_width": 120,
+            "window_height": "large",
+            "maximized": "false"
+        });
+        let serde_json::Value::Object(settings) = settings else { panic!("object expected"); };
+
+        assert_eq!(main_window_settings_from(&settings), MainWindowSettings {
+            width: None,
+            height: None,
+            maximized: None,
+        });
+    }
 }

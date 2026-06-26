@@ -118,6 +118,39 @@ def _parse_native_history(pairs):
     return history
 
 
+def _derive_hist_info(history):
+    """从 native history 重建 history_info(轮级纪要):真实用户提问 → `[USER]: …`;每条
+    assistant(=一轮) → `[Agent] <summary>`(无 summary 取首行)。与 ga.turn_end_callback /
+    worldline 树同口径。纯函数、不依赖 worldline,供续接 opt-in 恢复工作记忆(见 restore_wm)。"""
+    def _all_text(m):
+        c = m.get('content') if isinstance(m, dict) else None
+        if isinstance(c, str): return c
+        if isinstance(c, list):
+            return '\n'.join(b.get('text', '') for b in c
+                             if isinstance(b, dict) and b.get('type') == 'text')
+        return ''
+    def _is_tool_result(m):
+        c = m.get('content') if isinstance(m, dict) else None
+        return isinstance(c, list) and any(
+            isinstance(b, dict) and b.get('type') == 'tool_result' for b in c)
+    out = []
+    for m in history or []:
+        if not isinstance(m, dict): continue
+        role = m.get('role')
+        if role == 'user':
+            if _is_tool_result(m): continue            # tool_result 轮不是提问
+            t = _all_text(m).strip()
+            if t: out.append(f'[USER]: {t}')
+        elif role == 'assistant':
+            txt = re.sub(r'```.*?```|<thinking>.*?</thinking>', '', _all_text(m), flags=re.DOTALL)
+            mt = re.search(r'<summary>(.*?)</summary>', txt, re.DOTALL)
+            s = mt.group(1).strip()[:80] if (mt and mt.group(1).strip()) else ''
+            if not s:
+                s = next((ln.strip()[:80] for ln in txt.splitlines() if ln.strip()), '（无摘要）')
+            out.append(f'[Agent] {s}')
+    return out
+
+
 _PREVIEW_WIN = 32 * 1024
 
 # Content-grep budget for `/continue` search box: read at most this many bytes
@@ -1025,9 +1058,13 @@ def begin_fresh_session(agent, agent_id=None):
     _clear_conversation_state(agent)
 
 
-def _load_history_into(agent, path):
+def _load_history_into(agent, path, restore_wm=False):
     """把 `path` 解析进 backend.history(native;否则降级摘要)。镜像 restore() 的解析,
-    但不 abort/不快照(日志重指由调用方先做好)。返回 (msg, is_full)。"""
+    但不 abort/不快照(日志重指由调用方先做好)。返回 (msg, is_full)。
+
+    `restore_wm`(默认 False,仅显式传入的调用方启用,如 worldline TUI):从同一份日志
+    派生 history_info 写回 `agent.history`,使续接后工作记忆不丢。默认关闭 → 其它前端
+    行为完全不变。"""
     try:
         with open(path, encoding='utf-8', errors='replace') as fh:
             content = fh.read()
@@ -1040,6 +1077,8 @@ def _load_history_into(agent, path):
     name = os.path.basename(path)
     if history is not None:
         _replace_backend_history(agent, history)
+        if restore_wm and hasattr(agent, 'history'):
+            agent.history = _derive_hist_info(history)   # 续接恢复工作记忆(opt-in)
         return f'✅ 已恢复 {len(pairs)} 轮完整对话（{name}）', True
     from chatapp_common import _restore_native_history, _restore_text_pairs
     summary = _restore_text_pairs(content) or _restore_native_history(content)
@@ -1059,11 +1098,12 @@ def _is_empty_log(path):
         return True
 
 
-def continue_inplace(agent, path, agent_id=None, allow_empty=False):
+def continue_inplace(agent, path, agent_id=None, allow_empty=False, restore_wm=False):
     """原地续:把 agent 的日志指回 `path` 本身,之后轮次追加到 X,延续同一会话。
     调用方应已确认空闲(session_occupant 为 None);抢锁失败(被占)返回错误。
     `allow_empty`(仅 worldline UI 传):日志为空时不报错,按【空会话】恢复(清空对话,
-    由调用方按 `.ga_rewind` 树重连),用于"回退至会话起点"的会话。返回 (msg, ok)。"""
+    由调用方按 `.ga_rewind` 树重连),用于"回退至会话起点"的会话。
+    `restore_wm`(opt-in):续接后从日志派生 history_info 恢复工作记忆。返回 (msg, ok)。"""
     try: agent.abort()
     except Exception: pass
     if not acquire_lock(path, agent_id):       # 先抢到目标锁;失败则保持现状,不丢自己的锁
@@ -1072,16 +1112,17 @@ def continue_inplace(agent, path, agent_id=None, allow_empty=False):
     if cur and os.path.basename(cur) != os.path.basename(path):
         release_lock(cur)                       # 目标到手,旧会话释放为空闲(同一文件则不放)
     _retarget_log(agent, path)
-    msg, ok = _load_history_into(agent, path)
+    msg, ok = _load_history_into(agent, path, restore_wm=restore_wm)
     if not ok and allow_empty and _is_empty_log(path):
         _replace_backend_history(agent, [])     # 空会话:清空对话(载入失败时它没被清)
         return '✅ 已恢复空会话（回退至会话起点；世界线树已重连）', True
     return msg, ok
 
 
-def continue_copy(agent, path, agent_id=None, allow_empty=False):
+def continue_copy(agent, path, agent_id=None, allow_empty=False, restore_wm=False):
     """拷贝续:铸新 logid、把 `path` 内容拷进去,在副本上续;`path` 原件不动。
-    用于"被占用→用户选拷贝"以及快照源。返回 (msg, ok)。"""
+    用于"被占用→用户选拷贝"以及快照源。`restore_wm`(opt-in)同 continue_inplace。
+    返回 (msg, ok)。"""
     try: agent.abort()
     except Exception: pass
     release_current(agent)
@@ -1092,7 +1133,7 @@ def continue_copy(agent, path, agent_id=None, allow_empty=False):
         pass
     acquire_lock(newp, agent_id)
     _retarget_log(agent, newp)
-    msg, ok = _load_history_into(agent, newp)
+    msg, ok = _load_history_into(agent, newp, restore_wm=restore_wm)
     if not ok and allow_empty and _is_empty_log(newp):
         _replace_backend_history(agent, [])
         return '✅ 已恢复空会话（回退至会话起点；世界线树已重连）', True

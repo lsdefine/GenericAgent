@@ -5881,9 +5881,9 @@ class GenericAgentTUI(App[None]):
         import continue_cmd as _cc
         try:
             if copy:
-                result, ok = _cc.continue_copy(sess.agent, path, sess.agent_id, allow_empty=True)
+                result, ok = _cc.continue_copy(sess.agent, path, sess.agent_id, allow_empty=True, restore_wm=True)
             else:
-                result, ok = _cc.continue_inplace(sess.agent, path, sess.agent_id, allow_empty=True)
+                result, ok = _cc.continue_inplace(sess.agent, path, sess.agent_id, allow_empty=True, restore_wm=True)
         except Exception as e:
             msg = f"❌ 恢复失败: {e}"
             self._system(msg); return msg
@@ -5912,15 +5912,8 @@ class GenericAgentTUI(App[None]):
             except Exception:
                 _log_hist = []
             sess.store.reconcile(_log_hist)
-            # 续接后恢复工作记忆【仅 TUI】:continue_cmd 把 handler.history_info 清空了,这里从
-            # 日志派生 history_info 写回 agent.history(下次 run 建 handler 时即成为其 history_info)。
-            # 与树 / live 会话同口径(都从日志派生),消除「续接不管 WM」的不一致。不碰 continue_cmd
-            # → 不影响 Telegram/Discord/Streamlit 等其它前端。
-            try:
-                if _log_hist and hasattr(sess.agent, "history"):
-                    sess.agent.history = sess.store._derive_hist_info(_log_hist)
-            except Exception:
-                pass
+            # 续接恢复工作记忆已由 continue_cmd 的 restore_wm=True 在加载日志时做掉
+            # (派生 history_info 写回 agent.history),此处不再重复。
         except Exception:
             pass
         def _finish():

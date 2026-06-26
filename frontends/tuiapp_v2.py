@@ -5285,13 +5285,12 @@ class GenericAgentTUI(App[None]):
         if sess.status == "running":
             self._system("Cannot rewind while running. /stop first."); return
         store = getattr(sess, "store", None)
-        history = sess.agent.llmclient.backend.history
-        # 先对账:让树对齐当前对话(顺带防外部 UI 改写日志的灾难),再按树的线性路径
-        # 建卡片,每个选项 = 一个真实节点 → 选中即可持久回退。
+        # 不在会话内对账:树由 _rw_commit 每轮提交,始终 ⊇ 当前对话;且此刻 backend.history
+        # 是压缩/删头后的 live,拿它对账会被误判「分歧」而弃树(见 worldline.reconcile)。
+        # 对账统一只在 /continue(全量日志刚载入、未压缩)时做。直接按树的线性路径建卡片,
+        # 每个选项 = 一个真实节点 → 选中即可持久回退。
         nodes = []   # [(node_id, title)] 最近→最旧,不含 origin
         if store is not None:
-            try: store.reconcile(history)
-            except Exception: pass
             if store.nodes and store.head in store.nodes:
                 for nid in store.linear_path():
                     if store.nodes[nid].get("kind") == "origin":
@@ -5357,14 +5356,11 @@ class GenericAgentTUI(App[None]):
         store = getattr(sess, "store", None)
         if store is None:
             self._system("No rewindable checkpoints."); return
-        # 打开即对账:把 live history 中树尚未记录的尾部(别的 UI 续聊时追加的)吸收进树。
-        # 这是防灾的单一咽喉点——restore 只能从已打开的世界线屏发起,对账后树恒 ⊇ 日志,
-        # 故随后任何 rewind 都不可能用陈旧树 rewrite_projection 抹掉外部轮次。
-        # 也统一了「空 store / 老会话」:n=0 即把整条历史合成为 conv-only 主干(界面不降级)。
-        try:
-            store.reconcile(sess.agent.llmclient.backend.history)
-        except Exception:
-            pass  # 对账失败不阻断;下面守卫兜底
+        # 不在会话内对账:树由 _rw_commit 每轮提交,打开世界线时已 ⊇ 当前对话;此刻
+        # backend.history 是压缩/删头后的 live,拿它对账会被误判分歧而弃树(见 reconcile)。
+        # 对账统一只在 /continue(全量日志刚载入、未压缩)时做;外部 UI 改写日志的灾难由
+        # 「每会话锁 + 心跳判活」拦截,不再依赖此处对账。空 store/老会话由 continue 路径
+        # 的对账建树,本处仅守卫:无节点则无可回退。
         if not (store.nodes and store.root_id in store.nodes):
             self._system("No rewindable checkpoints."); return  # 连一轮真实提问都没有
         # 三栏全屏可视化器(§3–§7):左压缩树 / 右上折叠段 / 右下详情+操作。
@@ -5892,10 +5888,17 @@ class GenericAgentTUI(App[None]):
                 old_root = os.path.normpath(os.path.join(
                     temp_dir, '.ga_rewind', RewindStore.key_for_log(path)))
                 sess.store.resume_from(old_root)
-            # 接管后立即对账:此刻 backend.history 已是日志全量(continue_* 末尾 _load_history_into)。
-            # 若源日志曾被不更新树的 UI 续写,树会滞后于日志 → 在这里吸收尾部,使树 ⊇ 日志,
-            # 杜绝之后 rewind 用陈旧树回写、抹掉外部轮次的灾难。
-            sess.store.reconcile(sess.agent.llmclient.backend.history)
+            # 接管后立即对账【日志 ↔ 树】。对账的基准是**日志**(全量真相源),不是压缩态
+            # backend.history —— 后者是有损派生物,拿它对账会让全量的树去迁就残缺内存(假
+            # 分歧弃树的根因)。这里显式从日志解析全量历史喂入,即便将来 continue 流程变化
+            # 或内存被压缩,对账恒以日志为准。用途:源日志若被不更新树的 UI 续写,树会滞后
+            # → 吸收尾部使树 ⊇ 日志,杜绝之后 rewind 用陈旧树回写、抹掉外部轮次的灾难。
+            try:
+                _log_hist = _cc._parse_native_history(
+                    _cc._pairs(open(new_log, encoding='utf-8', errors='replace').read())) or []
+            except Exception:
+                _log_hist = []
+            sess.store.reconcile(_log_hist)
         except Exception:
             pass
         def _finish():

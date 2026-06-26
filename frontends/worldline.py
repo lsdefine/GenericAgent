@@ -20,6 +20,7 @@ import difflib
 import hashlib
 import json
 import os
+import re
 import shutil
 import time
 from datetime import datetime
@@ -614,10 +615,71 @@ class RewindStore:
         故不含注入的易变内容)。用于 reconcile 判两段是否同一对话。"""
         return [t for t in (cls._msg_user_text(m).strip() for m in msgs) if t]
 
+    # ---------------------------------- 从日志/历史重建工作记忆(reconcile 吸收外部轮时补 WM)
+    @staticmethod
+    def _all_text(msg) -> str:
+        """消息里所有 text block 的拼接(含 tool_result 轮注入的 WORKING MEMORY 文本)。"""
+        if not isinstance(msg, dict):
+            return ""
+        c = msg.get("content")
+        if isinstance(c, str):
+            return c
+        if isinstance(c, list):
+            return "\n".join(b.get("text", "") for b in c
+                             if isinstance(b, dict) and b.get("type") == "text")
+        return ""
+
+    @classmethod
+    def _summary_of(cls, msg) -> str:
+        """从 assistant 消息提取 `<summary>`(GA 轮级纪要的来源);无则退化取首行。
+        与 ga.turn_end_callback 的提取口径一致,使从日志重建的 history_info 贴近原值。"""
+        text = re.sub(r'```.*?```|<thinking>.*?</thinking>', '',
+                      cls._all_text(msg), flags=re.DOTALL)
+        m = re.search(r'<summary>(.*?)</summary>', text, re.DOTALL)
+        if m and m.group(1).strip():
+            return m.group(1).strip()[:80]
+        for line in text.splitlines():
+            if line.strip():
+                return line.strip()[:80]
+        return "（无摘要）"
+
+    @classmethod
+    def _derive_hist_info(cls, history) -> list:
+        """从对话历史重建 `handler.history_info`(轮级纪要):真实用户提问 → `[USER]: …`;
+        每条 assistant(=一轮) → `[Agent] <summary>`。这正是 GA 原本构建 history_info 的
+        方式,故 reconcile 从日志吸收外部/老会话轮次时可据此把工作记忆补回(否则续接后
+        rewind 到这些轮,纪要会缺失 → 串味)。"""
+        out: list = []
+        for m in history:
+            if not isinstance(m, dict):
+                continue
+            role = m.get("role")
+            if role == "user":
+                q = cls._msg_user_text(m).strip()   # tool_result 轮 → ""(非提问,不计)
+                if q:
+                    out.append(f"[USER]: {q}")
+            elif role == "assistant":
+                out.append(f"[Agent] {cls._summary_of(m)}")
+        return out
+
+    @classmethod
+    def _key_info_of(cls, history) -> Optional[str]:
+        """取历史里最后一个注入的 `<key_info>…</key_info>`(agent 便签);无则 None。"""
+        ki = None
+        for m in history:
+            for mt in re.finditer(r'<key_info>(.*?)</key_info>', cls._all_text(m), re.DOTALL):
+                ki = mt.group(1).strip()
+        return ki
+
     def reconcile(self, history: list) -> int:
-        """把 live history 里树尚未记录的尾部轮次吸收成 conv-only 节点,使树追平日志。
-        供「带 worldline 的 UI」在打开世界线 / 接管日志前调用 —— 别的(不更新树的)
-        UI 往同一日志追加后,若不对账,树会滞后;一旦在滞后状态 rewind,
+        """把 live history 里树尚未记录的尾部轮次吸收成节点,使树追平日志。
+
+        ⚠️ **契约**:`history` 必须是**日志解析出的全量历史**(`_parse_native_history`),
+        **禁止传压缩态的 `backend.history`**。对账是「日志 ↔ 树」两个全量真相源之间的事;
+        喂压缩/删头后的内存会让全量的树去迁就残缺副本——前缀比对失败 → 误判分歧 → 弃树
+        另起(详见下方安全闸)。调用方负责从日志取全量历史。
+
+        用途:别的(不更新树的)UI 往同一日志追加后树会滞后;一旦在滞后状态 rewind,
         `rewrite_projection` 会拿陈旧树回写、**抹掉那些外部轮次**(灾难性丢失)。
         对账后树恒 ⊇ 日志,故 rewind 物理上不可能 clobber 未见过的轮次。
 
@@ -655,7 +717,11 @@ class RewindStore:
                           for i in range(s, end)
                           if self._msg_user_text(history[i]).strip()), "")
             title = (title or "（外部续接）").replace("\n", " ").strip()[:80]
-            self.commit(title or "（外部续接）", kind="edit", history=list(history[:end]))
+            seg_hist = list(history[:end])
+            # 吸收时一并从日志重建工作记忆 → 续接/外部轮也能随 rewind 同步纪要(修缺口B)。
+            self.commit(title or "（外部续接）", kind="edit", history=seg_hist,
+                        hist_info=self._derive_hist_info(seg_hist),
+                        key_info=self._key_info_of(seg_hist))
             absorbed += end - s
         return absorbed
 

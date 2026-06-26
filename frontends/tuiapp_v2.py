@@ -5505,6 +5505,10 @@ class GenericAgentTUI(App[None]):
         return turns
 
     def _do_rewind(self, n: int) -> str:
+        """【降级兜底·非持久】纯内存截断 backend.history。仅在【没有 checkpoint 树】时用
+        (store 创建失败 / 会话刚开还没 commit)。缺陷:砍的是压缩态内存——够不到已删头的轮、
+        留下的是被截断的残骸、不恢复文件、不回退 working memory。有树时一律走持久的
+        树重建路径(_rw_restore_node → restore_plan),不要用本方法。"""
         sess = self.current
         turns = self._rewindable_turns()
         if not (1 <= n <= len(turns)):
@@ -5530,7 +5534,7 @@ class GenericAgentTUI(App[None]):
                 inp.focus()
                 self._resize_input(inp)
             except Exception: pass
-        return f"已回退 {n} 轮（移除 {removed} 条历史）"
+        return f"↩ 已回退 {n} 轮（内存级·不持久，移除 {removed} 条历史）"
 
     def _cmd_clear(self, args, raw):
         self.current.messages.clear()

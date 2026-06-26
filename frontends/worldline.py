@@ -183,6 +183,15 @@ class RewindStore:
             conv = self._put_blob(
                 json.dumps(delta, ensure_ascii=False, default=str).encode("utf-8"))
 
+        # 工作记忆默认【从 history 派生】(与 reconcile 同口径 → 树的 WM 恒由日志重建、彼此
+        # 对齐)。显式传入才尊重(测试/特殊调用)。关键:/continue 会把 handler.history_info
+        # 清空,若仍取 live 纪要,长度与树派生的不一致 → 增量算空、续接后新轮纪要补不进树。
+        # 从 history(集成层喂日志全量)派生则永远对齐,不受 live 纪要被重置影响。
+        if history is not None and hist_info is None:
+            hist_info = self._derive_hist_info(history)
+        if history is not None and key_info is None:
+            key_info = self._key_info_of(history)
+
         # 工作记忆增量(与 conv 同构):history_info 轮级摘要切本段增量存 blob;key_info
         # 覆盖式小便签直接内联。两者皆可选,老树/外部续接未传则为 None(恢复时跳过,不动现场)。
         hinfo = None

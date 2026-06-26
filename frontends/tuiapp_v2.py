@@ -4299,7 +4299,6 @@ class GenericAgentTUI(App[None]):
         try:
             title = (getattr(sess, "_rw_title", "") or "checkpoint").replace("\n", " ").strip()[:80]
             agent = sess.agent
-            handler = getattr(agent, "handler", None)
             # 喂给树的对话取【日志全量】而非压缩态 backend.history:长会话删头后 backend.history
             # 是后缀,据它切增量会丢轮。日志只增不改,据它切永远精确(commit 内部再以树真实
             # 长度对齐)。读/解析失败退回 backend.history(短会话二者本就相等)。
@@ -4314,12 +4313,9 @@ class GenericAgentTUI(App[None]):
                         history = _full
                 except Exception:
                     pass
-            # 工作记忆一并入树:history_info(轮级纪要,不受压缩裁剪) + key_info(便签),供 rewind 硬同步。
-            hist_info = list(getattr(handler, "history_info", None)
-                             or getattr(agent, "history", None) or [])
-            key_info = (getattr(handler, "working", None) or {}).get("key_info")
-            store.commit(title or "checkpoint", history=history,
-                         hist_info=hist_info, key_info=key_info)
+            # 工作记忆不取 live handler.history_info(/continue 会清空它,且与树派生口径不一致);
+            # 交给 commit 从日志全量 history 统一派生 → 树的 WM 恒由日志重建、互相对齐。
+            store.commit(title or "checkpoint", history=history)
             store._rw_cursor = None   # 继续提问 → 新末端成为当前,清除 rewind 游标
         except Exception:
             pass

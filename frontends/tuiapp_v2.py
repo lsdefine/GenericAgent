@@ -4299,12 +4299,20 @@ class GenericAgentTUI(App[None]):
         try:
             title = (getattr(sess, "_rw_title", "") or "checkpoint").replace("\n", " ").strip()[:80]
             agent = sess.agent
-            # 喂给树的对话取【日志全量】而非压缩态 backend.history:长会话删头后 backend.history
-            # 是后缀,据它切增量会丢轮。日志只增不改,据它切永远精确(commit 内部再以树真实
-            # 长度对齐)。读/解析失败退回 backend.history(短会话二者本就相等)。
+            # 喂给树的对话:常态直接用 backend.history(快);仅当**检测到删头**(backend.history
+            # 被 pop 过头、与树对不上)才回退到「解析整个日志」拿全量(慢路径)。这样长会话每段
+            # 收尾不必每次解析大日志,又能在真删头时保证不丢轮(commit 内部再以树真实长度对齐)。
             history = agent.llmclient.backend.history
             log_path = getattr(agent, "log_path", "") or ""
-            if log_path:
+            # 廉价删头检测:删头先 pop 掉首问 → 树首问与 live 首问对不上即判定删过头。
+            try:
+                tree_first = store.first_question()
+                live_first = next((store._msg_user_text(m).strip() for m in history
+                                   if store._msg_user_text(m).strip()), None)
+                trimmed = bool(tree_first and live_first and tree_first != live_first)
+            except Exception:
+                trimmed = False
+            if trimmed and log_path:
                 try:
                     import continue_cmd as _cc
                     _full = _cc._parse_native_history(

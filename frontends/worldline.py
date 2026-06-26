@@ -746,6 +746,17 @@ class RewindStore:
                 return msg
         return None
 
+    def first_question(self) -> Optional[str]:
+        """当前 HEAD 路径上**第一条真实用户提问**的文本;空树 → None。沿路径读各节点
+        conv（通常首个真实节点即命中,O(1) blob 读）。供集成层**廉价检测 backend.history
+        是否被删头**:删头先 pop 掉首问,故 live 首问与此对不上 ⇒ 删过头(该回退到日志)。"""
+        for nid in self.path_to(self.head):
+            for msg in self._node_conv(nid):
+                t = self._msg_user_text(msg).strip()
+                if t:
+                    return t
+        return None
+
 
 # ============================================================================
 # 世界线视图模型 + 压缩 + 导航(从 rewind_tree_view.py 抽出的 UI 无关后端)

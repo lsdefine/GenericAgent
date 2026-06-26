@@ -4299,9 +4299,22 @@ class GenericAgentTUI(App[None]):
         try:
             title = (getattr(sess, "_rw_title", "") or "checkpoint").replace("\n", " ").strip()[:80]
             agent = sess.agent
-            history = agent.llmclient.backend.history
-            # 工作记忆一并入树:history_info(轮级纪要) + key_info(便签),供 rewind 硬同步。
             handler = getattr(agent, "handler", None)
+            # 喂给树的对话取【日志全量】而非压缩态 backend.history:长会话删头后 backend.history
+            # 是后缀,据它切增量会丢轮。日志只增不改,据它切永远精确(commit 内部再以树真实
+            # 长度对齐)。读/解析失败退回 backend.history(短会话二者本就相等)。
+            history = agent.llmclient.backend.history
+            log_path = getattr(agent, "log_path", "") or ""
+            if log_path:
+                try:
+                    import continue_cmd as _cc
+                    _full = _cc._parse_native_history(
+                        _cc._pairs(open(log_path, encoding="utf-8", errors="replace").read()))
+                    if _full:
+                        history = _full
+                except Exception:
+                    pass
+            # 工作记忆一并入树:history_info(轮级纪要,不受压缩裁剪) + key_info(便签),供 rewind 硬同步。
             hist_info = list(getattr(handler, "history_info", None)
                              or getattr(agent, "history", None) or [])
             key_info = (getattr(handler, "working", None) or {}).get("key_info")

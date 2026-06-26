@@ -173,8 +173,11 @@ class RewindStore:
 
         conv = None
         if history is not None:
-            parent_len = self.nodes[parent].get("hist_len") if parent is not None else 0
-            parent_len = parent_len or 0          # None(旧节点) / origin → 0
+            # 增量起点用【树重建的真实长度】而非 stored hist_len。原因:_rw_commit 喂的 history
+            # 取自日志全量(见集成层),而 stored hist_len 可能是早先压缩态 commit 留下的脏值;
+            # 删头后绝对下标会越界丢轮。以树实际已有长度为准:delta = 日志里树还没有的尾部 →
+            # 既不丢轮,也能自愈此前因压缩漏掉的轮(日志只增不改,恒 ⊇ 树)。
+            parent_len = len(self.rebuild_history(parent)) if parent is not None else 0
             delta = list(history[parent_len:])
             hist_len = len(history)
             conv = self._put_blob(
@@ -185,8 +188,7 @@ class RewindStore:
         hinfo = None
         hinfo_len = None
         if hist_info is not None:
-            parent_hlen = self.nodes[parent].get("hinfo_len") if parent is not None else 0
-            parent_hlen = parent_hlen or 0
+            parent_hlen = len(self.rebuild_hist_info(parent)) if parent is not None else 0
             hdelta = list(hist_info[parent_hlen:])
             hinfo_len = len(hist_info)
             hinfo = self._put_blob(

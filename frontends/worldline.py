@@ -151,12 +151,17 @@ class RewindStore:
             self.tracked.add(rel)
 
     def commit(self, title: str, hist_len: int | None = None, kind: str = "edit",
-               history: list | None = None) -> str:
+               history: list | None = None, hist_info: list | None = None,
+               key_info: str | None = None) -> str:
         """段末落节点：继承 HEAD.files，把本段触碰文件的「改后」内容写进新节点。
 
         `history` 给定时(对话树化)：切 `history[parent.hist_len:当前]` 为本轮对话增量，
         存成 content-addressable conv blob，节点记其 hash + `hist_len=len(history)`。
         此刻索引可靠 → 增量精确，恢复时沿路径拼回即可，不再靠会漂的绝对下标。
+
+        `hist_info`/`key_info` 给定时(工作记忆树化)：`hist_info` 是轮级摘要列表,与 conv
+        同构切增量存 blob;`key_info` 是小便签(<200 token),直接内联进节点。rewind 时
+        一并恢复 → 纪要与历史**硬同步**,杜绝旧 rewind「历史回退了、纪要没回」的串味。
 
         无触碰文件时也会落节点（纯对话推进也是 checkpoint）。返回新节点 id。"""
         self._ensure_origin()        # 第一次提交前先确保有「会话起点」根
@@ -174,6 +179,18 @@ class RewindStore:
             conv = self._put_blob(
                 json.dumps(delta, ensure_ascii=False, default=str).encode("utf-8"))
 
+        # 工作记忆增量(与 conv 同构):history_info 轮级摘要切本段增量存 blob;key_info
+        # 覆盖式小便签直接内联。两者皆可选,老树/外部续接未传则为 None(恢复时跳过,不动现场)。
+        hinfo = None
+        hinfo_len = None
+        if hist_info is not None:
+            parent_hlen = self.nodes[parent].get("hinfo_len") if parent is not None else 0
+            parent_hlen = parent_hlen or 0
+            hdelta = list(hist_info[parent_hlen:])
+            hinfo_len = len(hist_info)
+            hinfo = self._put_blob(
+                json.dumps(hdelta, ensure_ascii=False, default=str).encode("utf-8"))
+
         nid = self._new_id()
         self.nodes[nid] = {
             "parent": parent,
@@ -184,6 +201,9 @@ class RewindStore:
             "hist_len": hist_len,
             "files": files,
             "conv": conv,
+            "hinfo": hinfo,
+            "hinfo_len": hinfo_len,
+            "kinfo": key_info,
         }
         if parent is not None:
             self.nodes[parent]["children"].append(nid)
@@ -362,6 +382,9 @@ class RewindStore:
             ch = node.get("conv")          # 对话增量 blob 也是引用
             if ch:
                 referenced.add(ch)
+            hh = node.get("hinfo")         # 工作记忆纪要增量 blob 同样是引用
+            if hh:
+                referenced.add(hh)
         for h in self.baseline.values():
             if h is not _ABSENT:
                 referenced.add(h)
@@ -529,6 +552,45 @@ class RewindStore:
         for nid in self.path_to(node_id):
             hist.extend(self._node_conv(nid))
         return hist
+
+    # ------------------------------------------------------ 工作记忆(随对话回退)
+    def _node_hinfo(self, node_id) -> list:
+        """单节点的 working-memory 纪要增量（list）。无 / 读失败 → []（容错降级）。"""
+        h = self.nodes.get(node_id, {}).get("hinfo")
+        if not h:
+            return []
+        try:
+            data = json.loads(self._get_blob(h).decode("utf-8"))
+            return data if isinstance(data, list) else []
+        except Exception:
+            return []
+
+    def rebuild_hist_info(self, node_id) -> list:
+        """沿 root→node_id 拼接各节点纪要增量，重建 `handler.history_info`。
+        与 `rebuild_history` 同构：纪要随对话一起精确回退，恢复后两者自洽。"""
+        out: list = []
+        for nid in self.path_to(node_id):
+            out.extend(self._node_hinfo(nid))
+        return out
+
+    def key_info_at(self, node_id) -> str:
+        """node_id 处生效的 key_info：沿 root→node 取最后一个非 None 的 `kinfo`
+        （key_info 是覆盖式小便签，不像纪要那样累加）。无则空串。"""
+        ki = ""
+        for nid in self.path_to(node_id):
+            v = self.nodes[nid].get("kinfo")
+            if v is not None:
+                ki = v
+        return ki
+
+    def path_has_wm(self, node_id) -> bool:
+        """root→node 路径上是否记录过工作记忆（hinfo/kinfo）。老树（本特性之前）
+        全为 None → False：恢复时据此跳过 WM 同步，不抹掉现场纪要（向后兼容）。"""
+        for nid in self.path_to(node_id):
+            nd = self.nodes.get(nid, {})
+            if nd.get("hinfo") is not None or nd.get("kinfo") is not None:
+                return True
+        return False
 
     # ----------------------------------------------------- 对账(防外部改写灾难)
     @staticmethod
@@ -926,9 +988,10 @@ def restore_plan(store, node_id, mode: str = "both", to: str = "before",
     `apply_code`(还原文件,前自动留 redo 点)、移 HEAD、重写投影日志。
 
     返回 None(无效) 或 dict:
-      {history: list|None(仅 conv 变更时), changed: [(rel,action)], prefill: str,
+      {history: list|None(仅 conv 变更时), hist_info: list|None, key_info: str|None,
+       changed: [(rel,action)], prefill: str,
        at_origin: bool, target: str, title: str, to: str}
-    —— 前端据此:赋 backend.history、重建界面消息、prefill 输入框、刷新。"""
+    —— 前端据此:赋 backend.history、同步 working memory、重建界面消息、prefill 输入框、刷新。"""
     if store is None or not node_id or node_id not in store.nodes:
         return None
     nd = store.nodes[node_id]
@@ -946,8 +1009,14 @@ def restore_plan(store, node_id, mode: str = "both", to: str = "before",
             prefill = (user_msg_text(um) if um else "") or nd.get("title", "")
 
     history = None
+    hist_info = None
+    key_info = None
     if mode in ("both", "conv"):
         history = store.rebuild_history(target)
+        # 工作记忆随对话一起回退;仅当树确实记过 WM 才返回(老树 → None,调用方跳过不动现场)。
+        if store.path_has_wm(target):
+            hist_info = store.rebuild_hist_info(target)
+            key_info = store.key_info_at(target)
     changed = []
     if mode in ("both", "code"):
         try:
@@ -959,6 +1028,8 @@ def restore_plan(store, node_id, mode: str = "both", to: str = "before",
         rewrite_projection(store, target, log_path)
     return {
         "history": history,
+        "hist_info": hist_info,
+        "key_info": key_info,
         "changed": changed,
         "prefill": prefill,
         "at_origin": at_origin,

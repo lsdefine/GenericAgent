@@ -4298,8 +4298,15 @@ class GenericAgentTUI(App[None]):
             return
         try:
             title = (getattr(sess, "_rw_title", "") or "checkpoint").replace("\n", " ").strip()[:80]
-            history = sess.agent.llmclient.backend.history
-            store.commit(title or "checkpoint", history=history)
+            agent = sess.agent
+            history = agent.llmclient.backend.history
+            # 工作记忆一并入树:history_info(轮级纪要) + key_info(便签),供 rewind 硬同步。
+            handler = getattr(agent, "handler", None)
+            hist_info = list(getattr(handler, "history_info", None)
+                             or getattr(agent, "history", None) or [])
+            key_info = (getattr(handler, "working", None) or {}).get("key_info")
+            store.commit(title or "checkpoint", history=history,
+                         hist_info=hist_info, key_info=key_info)
             store._rw_cursor = None   # 继续提问 → 新末端成为当前,清除 rewind 游标
         except Exception:
             pass
@@ -5406,6 +5413,7 @@ class GenericAgentTUI(App[None]):
         if res["history"] is not None:           # 对话有变更(both/conv)
             hist[:] = res["history"]
             removed = max(0, old_len - len(res["history"]))
+            self._rw_sync_working_memory(sess, res)  # 纪要/便签随对话硬同步回退点
             self._rw_rebuild_display(sess)        # 从重写后的投影重组界面历史消息
         self._remount_current_session()
         self._refresh_topbar()
@@ -5420,6 +5428,29 @@ class GenericAgentTUI(App[None]):
             where = "空起点" if at_origin else f"「{title}」之前"
         return (f"↩ 已回退到{where}（{label}）：清除 {removed} 条上下文，"
                 f"代码恢复 {len(res['changed'])} 个文件")
+
+    def _rw_sync_working_memory(self, sess, res) -> None:
+        """rewind 时把 working memory(history_info 纪要 + key_info 便签)硬同步到回退点,
+        与 backend.history 一致 —— 消灭旧 rewind「历史回退了、纪要没回」的串味。
+
+        WM 注入(`_get_anchor_prompt`)读的是 handler.history_info,故就地 [:] 替换它;
+        agent.history 指向同一列表,一并对齐。老树无 WM 记录时 res 给 None → 跳过,
+        不动现场纪要(向后兼容)。纪要是旁路,故障静默,绝不打断恢复。"""
+        try:
+            agent = sess.agent
+            handler = getattr(agent, "handler", None)
+            hi = res.get("hist_info")
+            if hi is not None and handler is not None and isinstance(
+                    getattr(handler, "history_info", None), list):
+                handler.history_info[:] = list(hi)       # 就地替换:WM 注入读的就是它
+                try: agent.history = handler.history_info  # 让 agent.history 指向同一列表
+                except Exception: pass
+            ki = res.get("key_info")
+            if ki is not None and handler is not None and isinstance(
+                    getattr(handler, "working", None), dict):
+                handler.working["key_info"] = ki
+        except Exception:
+            pass
 
     def _rw_rebuild_display(self, sess) -> None:
         """rewind 后重组**界面历史消息**:从已重写成新 HEAD 路径的投影日志重新解析

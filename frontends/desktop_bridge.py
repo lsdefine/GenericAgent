@@ -1391,10 +1391,23 @@ async def plan_handler(request):
     return json_ok(manager.plan_snapshot(sid))
 
 
+# The desktop frontend only ever asks /path/open to launch one of three
+# well-known targets: the user's mykey.py, its template, or a file that lives
+# under the per-session upload directory. Any other ``kind`` value is treated
+# as an attacker probing for a path → OS-launcher gadget — the bridge listens
+# on a loopback socket with ``Access-Control-Allow-Origin: *`` and no
+# authentication, so a drive-by web page could otherwise POST an arbitrary
+# absolute path here and have ``os.startfile`` / ``open`` / ``xdg-open``
+# launch it on the user's machine (CWE-78).
+_PATH_OPEN_ALLOWED_KINDS = frozenset({"mykey", "mykeyTemplate", "upload"})
+
+
 async def path_open_handler(request):
     data = await read_json(request)
     kind = data.get("kind", "")
     mode = data.get("mode", "open")
+    if kind not in _PATH_OPEN_ALLOWED_KINDS:
+        return json_ok({"ok": False, "error": "unsupported kind"}, status=403)
     if kind == "mykey":
         target = Path(manager.ga_root) / "mykey.py"
         if not target.exists():
@@ -1402,7 +1415,7 @@ async def path_open_handler(request):
             target = template if template.exists() else target
     elif kind == "mykeyTemplate":
         target = Path(manager.ga_root) / "mykey_template.py"
-    elif kind == "upload":
+    else:  # kind == "upload"
         raw = Path(data.get("path") or "")
         try:
             resolved = raw.resolve()
@@ -1411,8 +1424,6 @@ async def path_open_handler(request):
         except (ValueError, OSError):
             return json_ok({"ok": False, "error": "path not in upload dir"}, status=403)
         target = resolved
-    else:
-        target = Path(data.get("path") or data.get("target") or manager.ga_root)
     target = target.resolve()
     if not target.exists():
         return json_ok({"ok": False, "error": f"File not found: {target}"}, status=404)

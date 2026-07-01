@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from itertools import count
 from typing import Any, Callable, Optional
 
+
 def _ensure_tui_deps() -> None:
     """Try the imports; on first miss, pip-install the wheel and retry once.
     Keeps `ga-cli` working on a fresh Python (Windows / macOS / Linux) where
@@ -1456,7 +1457,7 @@ from worldline import (
     RewindStore, restore_plan,
     ellipsize, rel_time, files_summary, kind_glyph, kind_label,
     CheckpointTree, tree_from_store, CompressedTree,
-    _order_depths, next_same_depth, nearest_depth_node, parent_sibling_first_child,
+    _order_depths, next_same_depth, nearest_depth_node,
 )
 # RewindTreeScreen 等三栏树 UI 已内联到本文件末尾(原 rewind_tree_view.py),跟随 v2 主题配色。
 
@@ -4287,42 +4288,68 @@ class GenericAgentTUI(App[None]):
         except Exception:
             pass
 
+    def _rw_log_history(self, sess: AgentSession):
+        """按 continue 的 native-log 口径读取当前会话 history。
+
+        worldline 的持久对话层以 `model_responses_*.txt` 为真相源;live backend.history
+        只是异常 fallback。cache 仅按文件 stat 避免同一版本重复解析,不改变语义。"""
+        log_path = getattr(sess.agent, "log_path", "") or ""
+        if not log_path:
+            return None
+        try:
+            st = os.stat(log_path)
+        except OSError:
+            return None
+        key = (log_path, int(st.st_size), int(getattr(st, "st_mtime_ns", int(st.st_mtime * 1_000_000_000))))
+        cache = getattr(sess, "_rw_log_hist_cache", None)
+        if isinstance(cache, dict) and cache.get("key") == key:
+            return list(cache.get("history") or [])
+        try:
+            import continue_cmd as _cc
+            hist = _cc.parse_native_log(log_path, allow_empty=True)
+        except Exception:
+            hist = None
+        if hist is None:
+            return None
+        sess._rw_log_hist_cache = {"key": key, "history": list(hist)}
+        return list(hist)
+
+    def _rw_title_from_delta(self, store, history: list, fallback: str) -> str:
+        """checkpoint 标题跟随**实际写入树的日志增量**;避免残缺/未配对 prompt 误成节点名。"""
+        try:
+            parent = store.head if store.head in store.nodes else store.root_id
+            parent_len = len(store.rebuild_history(parent)) if parent is not None else 0
+            for msg in list(history or [])[parent_len:]:
+                text = store._msg_user_text(msg).strip()
+                if text:
+                    return text.replace("\n", " ").strip()[:80]
+        except Exception:
+            pass
+        return (fallback or "checkpoint").replace("\n", " ").strip()[:80]
+
     def _rw_commit(self, sess: AgentSession) -> None:
         """用户提问段完成时落一个 checkpoint 节点(对话推进也算 checkpoint)。
 
-        title 取本次用户输入;传整条 `backend.history` 给 store —— commit 会切本轮
-        增量 `history[parent.hist_len:]` 存成 conv blob(树=真相源),恢复时按路径拼回。
-        store 故障一律静默(rewind 是旁路安全网,绝不冒泡打断任务收尾)。"""
+        对话来源正常取 native log(continue 同口径、完整 Prompt→Response pairs);只有日志读不到
+        /非 native 时才 fallback 到 live backend.history。store 故障一律静默(rewind 是旁路
+        安全网,绝不冒泡打断任务收尾)。"""
         store = getattr(sess, "store", None)
         if store is None:
             return
         try:
-            title = (getattr(sess, "_rw_title", "") or "checkpoint").replace("\n", " ").strip()[:80]
             agent = sess.agent
-            # 喂给树的对话:常态直接用 backend.history(快);仅当**检测到删头**(backend.history
-            # 被 pop 过头、与树对不上)才回退到「解析整个日志」拿全量(慢路径)。这样长会话每段
-            # 收尾不必每次解析大日志,又能在真删头时保证不丢轮(commit 内部再以树真实长度对齐)。
-            history = agent.llmclient.backend.history
-            log_path = getattr(agent, "log_path", "") or ""
-            # 廉价删头检测:删头先 pop 掉首问 → 树首问与 live 首问对不上即判定删过头。
-            try:
-                tree_first = store.first_question()
-                live_first = next((store._msg_user_text(m).strip() for m in history
-                                   if store._msg_user_text(m).strip()), None)
-                trimmed = bool(tree_first and live_first and tree_first != live_first)
-            except Exception:
-                trimmed = False
-            if trimmed and log_path:
-                try:
-                    import continue_cmd as _cc
-                    _full = _cc._parse_native_history(
-                        _cc._pairs(open(log_path, encoding="utf-8", errors="replace").read()))
-                    if _full:
-                        history = _full
-                except Exception:
-                    pass
+            history = self._rw_log_history(sess)
+            if history is None:
+                history = agent.llmclient.backend.history
+            parent = store.head if store.head in store.nodes else store.root_id
+            parent_len = len(store.rebuild_history(parent)) if parent is not None else 0
+            if len(history or []) <= parent_len:
+                store._touched.clear()  # 残缺/未配对轮不进树,本段文件触碰也不能污染下一轮
+                store.save()
+                return
+            title = self._rw_title_from_delta(store, history, getattr(sess, "_rw_title", ""))
             # 工作记忆不取 live handler.history_info(/continue 会清空它,且与树派生口径不一致);
-            # 交给 commit 从日志全量 history 统一派生 → 树的 WM 恒由日志重建、互相对齐。
+            # 交给 commit 从日志 history 统一派生 → 树的 WM 恒由日志重建、互相对齐。
             store.commit(title or "checkpoint", history=history)
             store._rw_cursor = None   # 继续提问 → 新末端成为当前,清除 rewind 游标
         except Exception:
@@ -5415,11 +5442,14 @@ class GenericAgentTUI(App[None]):
         res = restore_plan(store, node_id, mode=mode, to=to, log_path=log_path)
         if res is None:
             return "❌ 无效的 checkpoint"
-        # rewind 游标:to=before(回到 X 之前,内部 HEAD=parent)时,用户心中「当前」仍是
-        # 选中的 X → 记下供世界线面板把 ◉ 标在 X(下次打开仍停在 X)。to=at 则就在该节点,
-        # 用 HEAD 即可。继续提问(commit)时清除。
+        # rewind 游标(世界线面板 ◉「当前位置」标记):
+        # - both:to=before 时标选中节点(用户心中的「当前」是它),to=at 标 HEAD;
+        # - conv/code:HEAD 落在桥接节点上,标桥接(res["target"])。
         try:
-            store._rw_cursor = node_id if (to == "before") else None
+            if mode in ("conv", "code"):
+                store._rw_cursor = res["target"]
+            else:
+                store._rw_cursor = node_id if (to == "before") else None
         except Exception:
             pass
         removed = 0
@@ -5558,9 +5588,11 @@ class GenericAgentTUI(App[None]):
         # stream leaves `consumed` False.
         last_user_text = None
         consumed = False
+        assistant_len = 0
         for m in reversed(sess.messages):
             if m.role == "assistant" and (m.content or "").strip():
                 consumed = True
+                assistant_len = len(m.content or "")
             elif m.role == "user":
                 last_user_text = m.content
                 break
@@ -6709,7 +6741,8 @@ class GenericAgentTUI(App[None]):
             try: item = dq.get(timeout=0.25)
             except queue.Empty: continue
             if "next" in item:
-                buf += str(item.get("next") or "")
+                piece = str(item.get("next") or "")
+                buf += piece
                 self.call_from_thread(self._on_stream, agent_id, task_id, buf, False)
             if "done" in item:
                 done_text = str(item.get("done") or buf)
@@ -8080,6 +8113,10 @@ def render_tree(ct: CompressedTree, selected_key: int) -> List[RenderRow]:
         lbl_style = f"bold {C_FG} on {C_ALT_BG}" if key == selected_key else (
             base if d.depth == sel_depth else C_MUTED)
         line.append(ct.label(key), style=lbl_style)
+        _en = ct.end_node(key)
+        if getattr(_en, "rw_tag", None):
+            line.append(f"（{_en.rw_tag}）",
+                        style=C_AMBER if key == selected_key else C_DIM)
         line.append(f"   {rel_time(ct.end_node(key).ago)}", style=C_DIM)
         rows.append(RenderRow(key=key, depth=d.depth, text=line, node_start=node_start))
         kids = d.children
@@ -8466,6 +8503,8 @@ class RewindTreeScreen(ModalScreen):
                         style=(C_CYAN if self.focus_right else C_DIM) if active else C_DIM)
             line.append(f"{g} ", style=C_GREEN if active else gs)
             line.append(ellipsize(n.title, 54), style=rs)
+            if n.rw_tag:
+                line.append(f"（{n.rw_tag}）", style=C_AMBER if active else C_DIM)
             line.append(f"   {rel_time(n.ago)}", style=C_DIM)
             lines.append(line); idxs.append(i)
         # 末尾占位项(尚未创建,用括号标注);圆点字形,颜色同普通记录(new)/绿(current)。

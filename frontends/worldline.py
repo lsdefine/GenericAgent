@@ -66,8 +66,6 @@ class RewindStore:
 
         # 段内暂存：本段触碰过的相对路径（commit 时落定）。
         self._touched: set[str] = set()
-        # 最近一次 restore 的 redo 点（内存级软保险②），结构同 node.files。
-        self._redo: dict | None = None
 
         self.load()
         if self.nodes:
@@ -226,6 +224,56 @@ class RewindStore:
         self.save()
         return nid
 
+    def commit_bridge(self, *, parent: str, conv_delta: list | None,
+                      hinfo_delta: list | None, kinfo: str | None,
+                      files_override: dict | None, title: str,
+                      rw_tag: str) -> str:
+        """落一个**桥接节点**(仅会话/仅代码回退用):承载「对话与代码来自不同节点」的
+        交叉态,使该状态成为树里的一等节点(三种回退模式对它都可用)。
+
+        与 `commit` 的区别:不走 `_touched`/继承派生,对话/WM 增量与文件均**显式给定**。
+        - `conv_delta`/`hinfo_delta`:本节点自带的对话/纪要增量(list),存 blob(内容寻址,
+          大多复用已有 blob);None 则不带(空会话桥接)。
+        - `kinfo`:覆盖式便签,直接内联。
+        - `files_override`:显式 files map;None → 继承 parent。
+        - `rw_tag`:来源标注(`仅会话回退`/`仅代码回退`/`仅会话回退到聊天起点`),独立于 title。
+
+        parent 必须是现存节点(由 restore_plan 保证)。返回新节点 id,HEAD 指向它。"""
+        if parent not in self.nodes:
+            parent = self.root_id if self.root_id in self.nodes else self.head
+        files = (dict(files_override) if files_override is not None
+                 else dict(self.nodes[parent]["files"]))
+        conv = None
+        if conv_delta:
+            conv = self._put_blob(
+                json.dumps(conv_delta, ensure_ascii=False, default=str).encode("utf-8"))
+        hinfo = None
+        hinfo_len = None
+        if hinfo_delta:
+            hinfo_len = len(self.rebuild_hist_info(parent)) + len(hinfo_delta)
+            hinfo = self._put_blob(
+                json.dumps(hinfo_delta, ensure_ascii=False, default=str).encode("utf-8"))
+        nid = self._new_id()
+        self.nodes[nid] = {
+            "parent": parent,
+            "children": [],
+            "title": title,
+            "created": time.time(),
+            "kind": "edit",
+            "hist_len": len(self.rebuild_history(parent)) + len(conv_delta or []),
+            "files": files,
+            "conv": conv,
+            "hinfo": hinfo,
+            "hinfo_len": hinfo_len,
+            "kinfo": kinfo,
+            "rw_tag": rw_tag,
+        }
+        self.nodes[parent]["children"].append(nid)
+        self.head = nid
+        self._touched.clear()
+        self.save()
+        return nid
+
     # ------------------------------------------------------------- navigation
     def rewind_head(self, node_id) -> None:
         """移动 HEAD(不动文件)。从非叶 HEAD 下次 commit 即 append 子节点 = fork。
@@ -255,17 +303,10 @@ class RewindStore:
         """把工作区文件还原到 node_id 的状态。`node_id=None` → 还原到 baseline
         (任何 checkpoint 之前的原始状态,用于「回退到根之前」)。
 
-        - **只动本 store 追踪过的路径**（self.tracked），绝不碰未记录文件（软保险①）。
-        - restore 前先把这些路径的当前内容存进 redo 点（软保险②）——误覆盖也能找回。
+        - **只动本 store 追踪过的路径**（self.tracked），绝不碰未记录文件。
         返回 [(rel, action)]，action ∈ {restored, deleted}。"""
         if node_id is not None and node_id not in self.nodes:
             raise KeyError(node_id)
-
-        # 软保险②：redo 点（记录当前 = 即将被覆盖的状态）。
-        redo_files: dict[str, str | None] = {}
-        for rel in self.tracked:
-            redo_files[rel] = self._snapshot(self._abs(rel))
-        self._redo = {"from": self.head, "files": redo_files}
 
         changed: list[tuple[str, str]] = []
         for rel in self.tracked:
@@ -400,10 +441,6 @@ class RewindStore:
         for h in self.baseline.values():
             if h is not _ABSENT:
                 referenced.add(h)
-        if self._redo:
-            for h in self._redo["files"].values():
-                if h is not _ABSENT:
-                    referenced.add(h)
         removed = 0
         if not os.path.isdir(self.objects_dir):
             return 0
@@ -817,6 +854,7 @@ class CheckpointNode:
     kind: str = "edit"
     files: List[str] = field(default_factory=list)
     ago: Optional[int] = 0
+    rw_tag: Optional[str] = None  # 桥接来源标注(仅会话/仅代码回退);普通节点 None
 
 
 class CheckpointTree:
@@ -853,6 +891,7 @@ def tree_from_store(store, now: float) -> CheckpointTree:
             kind="current" if nid == store.head else nd.get("kind", "edit"),
             files=_changed_files(store, nid),
             ago=int(max(0, now - nd.get("created", now))),
+            rw_tag=nd.get("rw_tag"),
         )
     t.root_id = store.root_id
     return t
@@ -981,24 +1020,6 @@ def nearest_depth_node(order, sel, delta):
     return order[best][0]
 
 
-def parent_sibling_first_child(ct, sel, direction):
-    d = ct.disp[sel]
-    if d.parent_key is None:
-        return sel
-    parent = ct.disp[d.parent_key]
-    if parent.parent_key is None:
-        return sel
-    siblings = ct.disp[parent.parent_key].children
-    if parent.key not in siblings or len(siblings) <= 1:
-        return sel
-    start = siblings.index(parent.key)
-    step = 1 if direction >= 0 else -1
-    for off in range(1, len(siblings)):
-        sib = ct.disp[siblings[(start + step * off) % len(siblings)]]
-        if sib.children:
-            return sib.children[0]
-    return sel
-
 
 # ============================================================================
 # 恢复编排(UI 无关):算出回退后的对话/文件/prefill 并落地,前端只刷新自己的显示
@@ -1073,13 +1094,17 @@ def restore_plan(store, node_id, mode: str = "both", to: str = "before",
         target = parent(node) / origin。
       - **at**(末尾占位项):在该节点处**继续**(HEAD→node,不清除、无 prefill)。
     `mode`: both/conv/code。会就地:重建对话(返回 history,调用方自行赋给 backend)、
-    `apply_code`(还原文件,前自动留 redo 点)、移 HEAD、重写投影日志。
+    `apply_code`(还原文件)、移 HEAD、重写投影日志。
 
     返回 None(无效) 或 dict:
-      {history: list|None(仅 conv 变更时), hist_info: list|None, key_info: str|None,
+      {history: list|None(对话变更时), hist_info: list|None, key_info: str|None,
        changed: [(rel,action)], prefill: str,
        at_origin: bool, target: str, title: str, to: str}
-    —— 前端据此:赋 backend.history、同步 working memory、重建界面消息、prefill 输入框、刷新。"""
+    `target` 字段:both = 落点节点;conv/code = 桥接节点 id(前端 cursor 标它)。
+    —— 前端据此:赋 backend.history、同步 working memory、重建界面消息、prefill 输入框、刷新。
+
+    conv/code 落一个**桥接节点**承载「对话/代码交叉态」(见 `commit_bridge`),使该状态成为
+    一等节点;both 直接还原到 target,无桥接。"""
     if store is None or not node_id or node_id not in store.nodes:
         return None
     nd = store.nodes[node_id]
@@ -1096,24 +1121,83 @@ def restore_plan(store, node_id, mode: str = "both", to: str = "before",
             um = store.first_user_message(node_id)
             prefill = (user_msg_text(um) if um else "") or nd.get("title", "")
 
-    history = None
-    hist_info = None
-    key_info = None
-    if mode in ("both", "conv"):
+    old_head = store.head  # 回退前的 HEAD(代码/对话的「另一侧」来源)
+
+    def _wm_at(node_id):
+        """(hist_info, key_info) @ node;树无 WM 记录 → (None, None),调用方跳过不动现场。"""
+        if store.path_has_wm(node_id):
+            return store.rebuild_hist_info(node_id), store.key_info_at(node_id)
+        return None, None
+
+    def _prompt_of(node_id):
+        um = store.first_user_message(node_id)
+        return (user_msg_text(um) if um else "") or store.nodes.get(node_id, {}).get("title", "")
+
+    # ---- both:直接还原到 target(对话+代码),无桥接
+    if mode == "both":
         history = store.rebuild_history(target)
-        # 工作记忆随对话一起回退;仅当树确实记过 WM 才返回(老树 → None,调用方跳过不动现场)。
-        if store.path_has_wm(target):
-            hist_info = store.rebuild_hist_info(target)
-            key_info = store.key_info_at(target)
-    changed = []
-    if mode in ("both", "code"):
+        hist_info, key_info = _wm_at(target)
         try:
             changed = store.apply_code(target)
         except Exception:
             changed = []
-    store.rewind_head(target)
-    if mode in ("both", "conv") and log_path:
-        rewrite_projection(store, target, log_path)
+        store.rewind_head(target)
+        if log_path:
+            rewrite_projection(store, target, log_path)
+        return _res(history, hist_info, key_info, changed, prefill,
+                    at_origin, target, nd.get("title", ""), to)
+
+    # ---- conv:对话退到 target、代码留 old_head。桥接挂 fork(=parent(target),或 target 若 origin)
+    if mode == "conv":
+        tp = store.nodes[target].get("parent")
+        fork = tp if tp in store.nodes else target          # target=origin → fork=origin(空会话)
+        at_start = (fork == target)                          # 空会话:对话退空,无 delta 可带
+        conv_delta = None if at_start else store._node_conv(target)
+        hinfo_delta = None if at_start else store._node_hinfo(target)
+        bridge_files = dict(store.nodes[old_head]["files"]) if old_head in store.nodes else {}
+        if at_start:
+            b_title, rw_tag = prefill or "会话起点", "仅会话回退到聊天起点"
+        else:
+            b_title, rw_tag = _prompt_of(target), "仅会话回退"
+        bridge_id = store.commit_bridge(
+            parent=fork, conv_delta=conv_delta, hinfo_delta=hinfo_delta,
+            kinfo=store.key_info_at(target), files_override=bridge_files,
+            title=b_title, rw_tag=rw_tag)
+        history = store.rebuild_history(target)
+        hist_info, key_info = _wm_at(target)
+        store.rewind_head(bridge_id)
+        if log_path:
+            rewrite_projection(store, target, log_path)
+        return _res(history, hist_info, key_info, [], prefill,
+                    at_origin, bridge_id, nd.get("title", ""), to)
+
+    # ---- code:代码退到 target、对话留 old_head。桥接按会话拓扑挂在 old_head 的父节点,
+    #      自带 old_head 这一轮对话/WM,文件显式覆盖为 target 的代码状态。
+    if mode == "code":
+        try:
+            changed = store.apply_code(target)
+        except Exception:
+            changed = []
+        conv_parent = store.nodes.get(old_head, {}).get("parent")
+        conv_parent = conv_parent if conv_parent in store.nodes else old_head
+        conv_delta = list(store._node_conv(old_head) or [])
+        hinfo_delta = list(store._node_hinfo(old_head) or []) or None
+        bridge_files = dict(store.nodes[target]["files"])
+        bridge_id = store.commit_bridge(
+            parent=conv_parent, conv_delta=conv_delta, hinfo_delta=hinfo_delta,
+            kinfo=store.key_info_at(old_head), files_override=bridge_files,
+            title=_prompt_of(old_head), rw_tag="仅代码回退")
+        store.rewind_head(bridge_id)
+        # 对话没动 → history=None(前端不重赋 backend.history)、不重写投影日志
+        return _res(None, None, None, changed, prefill,
+                    at_origin, bridge_id, nd.get("title", ""), to)
+
+    return None  # 未知 mode
+
+
+def _res(history, hist_info, key_info, changed, prefill,
+         at_origin, target, title, to) -> dict:
+    """restore_plan 的返回 dict 构造器。"""
     return {
         "history": history,
         "hist_info": hist_info,
@@ -1122,6 +1206,6 @@ def restore_plan(store, node_id, mode: str = "both", to: str = "before",
         "prefill": prefill,
         "at_origin": at_origin,
         "target": target,
-        "title": nd.get("title", ""),
+        "title": title,
         "to": to,
     }

@@ -118,6 +118,31 @@ def _parse_native_history(pairs):
     return history
 
 
+def parse_native_log(path, allow_empty=False):
+    """Parse a native `model_responses_*.txt` log into backend.history.
+
+    Public wrapper around the mature `/continue` parser. It intentionally only
+    restores complete Prompt→Response pairs; dangling Prompt / partial turns keep
+    the current continue semantics and are ignored. Returns:
+    - list (possibly [] when allow_empty=True) on native success;
+    - None when the file is unreadable / non-native / empty without allow_empty.
+    """
+    try:
+        with open(path, encoding='utf-8', errors='replace') as fh:
+            content = fh.read()
+    except Exception:
+        return [] if allow_empty else None
+    pairs = _pairs(content)
+    if not pairs:
+        # Native-looking but incomplete logs (e.g. dangling Prompt without Response)
+        # have block headers but no complete pairs. For worldline's allow_empty mode
+        # this means "0 completed rounds", not "parse failed → trust live history".
+        if allow_empty and (_is_empty_log(path) or _BLOCK_RE.findall(content or '')):
+            return []
+        return None
+    return _parse_native_history(pairs)
+
+
 def _derive_hist_info(history):
     """从 native history 重建 history_info(轮级纪要):真实用户提问 → `[USER]: …`;每条
     assistant(=一轮) → `[Agent] <summary>`(无 summary 取首行)。与 ga.turn_end_callback /

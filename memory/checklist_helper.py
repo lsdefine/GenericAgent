@@ -4,7 +4,7 @@ from pathlib import Path
 _R = Path(__file__).resolve().parent.parent
 _BBS, _MAIN = _R/"assets/agent_bbs.py", _R/"agentmain.py"
 _W_RE, _M_RE = _R/"reflect/agent_team_worker.py", _R/"reflect/checklist_master.py"
-_PK = {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
+_PK = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
 if sys.platform == "win32": _PK["creationflags"] = 0x200
 
 class CL:

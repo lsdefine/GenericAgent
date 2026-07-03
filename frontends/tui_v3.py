@@ -4478,8 +4478,8 @@ class SB:
             try:
                 from frontends import cost_tracker as _ct
                 cap = _ct.context_window_chars(be) if be is not None else 0
-                used = _ct.context_chars_used(be) if be is not None else 0
-                ctx_use = _t('status.ctx.fmt', used=used, cap=cap * 3) if cap else _t('status.ctx.unknown')
+                used = _ct.current_input_chars(be) if be is not None else 0
+                ctx_use = _t('status.ctx.fmt', used=used, cap=cap) if cap else _t('status.ctx.unknown')
             except Exception:
                 ctx_use = _t('status.ctx.unknown')
             cwd = os.getcwd().replace(os.path.expanduser('~'), '~')

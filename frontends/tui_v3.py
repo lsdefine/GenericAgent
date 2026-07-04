@@ -5970,8 +5970,10 @@ class SB:
             _w('\x1b[>4;1m')    # ask supporting terminals to distinguish Shift+Enter
             self.commit(Block('banner', ''))
 
-        # Disable CPR probing: layout never uses cursor-position data,
-        # and the stdout redirect causes a 2 s timeout on startup.
+        # Some terminals (IDE consoles, certain SSH configs, etc.) do not
+        # respond to CPR (cursor position report) requests, causing a loud
+        # warning.  Disable CPR probing upfront — GA's scrollback-first
+        # rendering does not depend on absolute cursor position queries.
         _ptk_output = create_output(stdout=so)
         _ptk_output.enable_cpr = False
         app = Application(

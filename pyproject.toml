@@ -14,6 +14,8 @@ dependencies = [
     "bottle>=0.12",
     "simple-websocket-server>=0.4",
     "aiohttp>=3.9",
+    "rich>=13.0",
+    "prompt-toolkit>=3.0,<4",
 ]
 
 [project.optional-dependencies]

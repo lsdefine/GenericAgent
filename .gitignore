@@ -150,3 +150,6 @@ frontends/conductor_im_plugins/*
 
 # 本地 bug / 局限报告草稿（交给维护者参考，不进仓库）
 /BUG_*.md
+
+# Local tracker runtime state
+etf_trackers/*.json

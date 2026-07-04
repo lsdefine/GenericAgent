@@ -5970,6 +5970,10 @@ class SB:
             _w('\x1b[>4;1m')    # ask supporting terminals to distinguish Shift+Enter
             self.commit(Block('banner', ''))
 
+        # Disable CPR probing: layout never uses cursor-position data,
+        # and the stdout redirect causes a 2 s timeout on startup.
+        _ptk_output = create_output(stdout=so)
+        _ptk_output.enable_cpr = False
         app = Application(
             layout=layout,
             key_bindings=kb,
@@ -5982,7 +5986,7 @@ class SB:
             terminal_size_polling_interval=0.2,
             mouse_support=False,
             before_render=_before_render,
-            output=create_output(stdout=so),
+            output=_ptk_output,
         )
         self._ptk_app = app
 

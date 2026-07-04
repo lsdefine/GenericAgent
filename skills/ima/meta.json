@@ -1,0 +1,10 @@
+{
+  "version": "1.1.7",
+  "required_binaries": [
+    {
+      "name": "node",
+      "min_version": "18.0.0",
+      "reason": "Runs .cjs scripts (preflight-check.cjs, cos-upload.cjs) and inline node -e calls for JSON parsing"
+    }
+  ]
+}

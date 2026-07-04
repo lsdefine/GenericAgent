@@ -2333,7 +2333,7 @@ def _indent_rows(rows: list[str], width: int) -> list[str]:
 
 
 def _cost_str(agent) -> str:
-    """Context-window usage view (cc/v2 style): used / cap of context_win*3."""
+    """Context-window usage view (cc/v2 style): used / cap of context_win."""
     try:
         from frontends import cost_tracker
         be = agent.llmclient.backend

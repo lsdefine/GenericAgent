@@ -39,15 +39,15 @@ class TokenStats:
         return max(0.0, time.time() - self.started_at)
 
 
-# GA's real context budget lives on `BaseSession.context_win` (chars). The
-# trim trigger is `context_win * 3` (see llmcore.trim_messages_history), so
-# `/cost` compares actual-history chars against that cap for consistent units.
+# GA's real context budget lives on `BaseSession.context_win` (chars).
+# `/cost` displays this value directly so users see the actual context window.
 def context_window_chars(backend) -> int:
-    """`context_win * 3` — the char cap before `trim_messages_history` kicks
-    in. Reads dynamically so a `mykey.py` override propagates. Returns 0 on
-    bad/missing backend so the caller can hide the row."""
+    """Returns the actual context_win (no multiplier). The internal trim
+    trigger is `context_win * 3` (see llmcore.trim_messages_history), but the
+    display should show the real model capacity. Returns 0 on bad/missing
+    backend so the caller can hide the row."""
     try:
-        return int(getattr(backend, 'context_win', 0)) * 3
+        return int(getattr(backend, 'context_win', 0))
     except (TypeError, ValueError):
         return 0
 

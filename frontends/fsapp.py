@@ -844,13 +844,22 @@ def handle_message(data):
     ).start()
 
 
+def handle_message_read(_data):
+    return None
+
+
 def main():
     global client, APP_ID, APP_SECRET, ALLOWED_USERS, PUBLIC_ACCESS, CONFIG_PATH
     APP_ID, APP_SECRET, ALLOWED_USERS, PUBLIC_ACCESS, CONFIG_PATH = _feishu_config()
     if not APP_ID or not APP_SECRET:
         print(f"错误: 请在 mykey 配置中填写 fs_app_id 和 fs_app_secret\n配置文件: {CONFIG_PATH}", flush=True)
         sys.exit(1)
-    handler = lark.EventDispatcherHandler.builder("", "").register_p2_im_message_receive_v1(handle_message).build()
+    handler = (
+        lark.EventDispatcherHandler.builder("", "")
+        .register_p2_im_message_receive_v1(handle_message)
+        .register_p2_im_message_message_read_v1(handle_message_read)
+        .build()
+    )
     retry_delay = 5
     while True:
         try:

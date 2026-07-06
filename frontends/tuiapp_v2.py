@@ -1941,6 +1941,16 @@ class ChatMessage:
     # mounts (multi_choice only). Used by /scheduler so already-running
     # services show up checked, making "untick = stop" discoverable (bug#4).
     preselected_indices: list[int] = field(default_factory=list)
+    # Non-searchable choice cards only: highlight (and scroll to) this option
+    # index on first mount instead of the default row 0. `/rewind` uses it to
+    # open focused on the newest entry at the bottom. None → default (top).
+    initial_highlight: Optional[int] = None
+    # When True, selecting an option fires on_select but does NOT auto-collapse
+    # the card into a "✓ …" breadcrumb — on_select owns the card's lifecycle.
+    # `/rewind` uses it so picking an entry opens the mode picker with the list
+    # still mounted: confirm → on_select clears the card + rewinds; Esc → the
+    # list stays put (no misleading "✓ selected" when nothing was rewound).
+    defer_collapse: bool = False
     # Optional lazy-render hints for choice pickers with huge option counts
     # (e.g. /continue across thousands of sessions). Default is empty / 0,
     # so every existing call site keeps the eager-mount behavior bit-for-bit.
@@ -4607,6 +4617,17 @@ class GenericAgentTUI(App[None]):
         ids = list(self.sessions)
         i = ids.index(sid)
         next_id = ids[i + 1] if i + 1 < len(ids) else ids[i - 1]
+        # 释放被移除会话的日志锁：否则它仍留在心跳的 _held_locks 里被持续续活，
+        # 占用检测永远判其"活着"，之后无法对该日志原地 /continue。先 abort 停掉
+        # 可能仍在写日志的 agent，避免"锁已释放但仍在写"的冲突窗口（对齐 begin_fresh_session）。
+        dropped = self.sessions.get(sid)
+        if dropped is not None:
+            try: dropped.agent.abort()
+            except Exception: pass
+            try:
+                from continue_cmd import release_current
+                release_current(dropped.agent)
+            except Exception: pass
         del self.sessions[sid]
         self.current_id = next_id
         self._last_title = ""  # force title refresh on next call
@@ -5165,6 +5186,12 @@ class GenericAgentTUI(App[None]):
                 result_text = msg.on_select(value)
             except Exception as e:
                 result_text = f"❌ 失败: {type(e).__name__}: {e}"
+        # 延迟折叠卡片(如 /rewind):on_select 已接管卡片生命周期(弹模式窗;确认才清卡片+
+        # 回退,Esc 则原样保留列表)。不在此折叠成「✓」,避免"选了却没回退"的误导。
+        if getattr(msg, "defer_collapse", False):
+            if result_text:                      # on_select 异常时仍反馈,不静默吞掉
+                self._system(result_text)
+            return
         # PR #466 (upstream 8ae3645): if on_select rebuilt the message
         # container (e.g. /rewind picker → _do_rewind → _remount_current_session
         # detaches every widget under #messages), the captured anchors are
@@ -5175,7 +5202,10 @@ class GenericAgentTUI(App[None]):
                 and hasattr(anchor_guard, 'is_mounted')
                 and not anchor_guard.is_mounted):
             return
-        display = (result_text or label).strip() or label
+        # label 可能是 rich Text(如 /rewind 的带色三列)——取其纯文本再 strip,
+        # 折叠后的「✓ …」行用纯文本即可(颜色只需在实时列表里)。
+        lbl = label if isinstance(label, str) else getattr(label, "plain", str(label))
+        display = (result_text or lbl).strip() or lbl
         msg.selected_label = display
         msg.content = display
         container = self.query_one("#messages", VerticalScroll)
@@ -5333,64 +5363,110 @@ class GenericAgentTUI(App[None]):
         # 是压缩/删头后的 live,拿它对账会被误判「分歧」而弃树(见 worldline.reconcile)。
         # 对账统一只在 /continue(全量日志刚载入、未压缩)时做。直接按树的线性路径建卡片,
         # 每个选项 = 一个真实节点 → 选中即可持久回退。
-        nodes = []   # [(node_id, title)] 最近→最旧,不含 origin
-        if store is not None:
-            if store.nodes and store.head in store.nodes:
-                for nid in store.linear_path():
-                    if store.nodes[nid].get("kind") == "origin":
-                        continue
-                    nodes.append((nid, store.nodes[nid].get("title") or "（空）"))
-                nodes.reverse()
-        if nodes:                                   # 持久路径
-            payloads = [nid for nid, _ in nodes]
-            previews = [t for _, t in nodes]
-            durable = True
-        else:                                       # 兜底:无 store/无真实提问 → 内存级
+        durable = False
+        now = time.time()
+        items = []   # 最近→最旧,每项 {payload, prompt, ago, ins, dele}
+        if store is not None and store.nodes and store.head in store.nodes:
+            path = []
+            for nid in store.linear_path():                 # 旧→新
+                nd = store.nodes[nid]
+                if nd.get("kind") == "origin":
+                    continue
+                title = nd.get("title") or "（空）"
+                try:
+                    title = store._strip_project_mode(title).replace("\n", " ").strip() or "（空）"
+                except Exception:
+                    pass
+                try:
+                    ins, dele = store.node_line_delta(nid)
+                except Exception:
+                    ins = dele = 0
+                path.append({"payload": nid, "prompt": title,
+                             "ago": int(max(0, now - nd.get("created", now))),
+                             "ins": ins, "dele": dele})
+            items = list(reversed(path))                    # → 最近→最旧
+            durable = bool(items)
+        if not items:                                       # 兜底:无 store/无真实提问 → 内存级
             turns = self._rewindable_turns()
             if not turns:
                 self._system("No rewindable turns."); return
-            rec = list(reversed(turns))
-            payloads = [i + 1 for i in range(len(rec))]   # 回退轮数 n
-            previews = [p for _, p in rec]
+            items = [{"payload": i + 1, "prompt": p, "ago": None, "ins": 0, "dele": 0}
+                     for i, (_, p) in enumerate(reversed(turns))]   # 最近→最旧;payload=回退轮数 n
             durable = False
-        total = len(payloads)
-        if args:                                    # /rewind n 直接回退,不弹卡片
+        total = len(items)
+        if args:                                            # /rewind n 直接回退,不弹卡片
             try: n = int(args[0])
             except ValueError: self._system("Usage: /rewind [n]"); return
             if n < 1 or n > total:
                 self._system(f"Invalid: 1-{total}"); return
             if durable:
-                self._rewind_pick_mode(sess, payloads[n - 1])   # 弹模式窗后回退
+                self._rewind_pick_mode(sess, items[n - 1]["payload"])   # 弹模式窗后回退
             else:
-                self._system(self._do_rewind(payloads[n - 1]))
+                self._system(self._do_rewind(items[n - 1]["payload"]))
             return
         LIMIT = 20
-        choices = []
-        for offset in range(1, min(total, LIMIT) + 1):
-            preview = (previews[offset - 1] or "（空）").replace("\n", " ").strip()[:60]
-            choices.append((f"回退 {offset} 轮 · {preview}", payloads[offset - 1]))
-        head = "选择回退到的轮次 (↑/↓ 移动，→/Enter 确认，Esc 取消)"
+        # 卡片:取最近 LIMIT 条,倒序展示(越往下越新),打开即聚焦到底部(最新)。
+        card = list(reversed(items[:LIMIT]))                # → 最旧→最新
+        choices = [(self._rewind_label(it, durable), it["payload"]) for it in card]
+        head = "选择回退到的提问（越往下越新；↑/↓ 移动，→/Enter 确认，Esc 取消）"
         if total > LIMIT:
             head += f"  [仅显示最近 {LIMIT}/{total}]"
-        if durable:
-            on_sel = lambda v: self._rewind_pick_mode(sess, v)
-        else:
-            on_sel = lambda v: self._do_rewind(v)
         msg = ChatMessage(role="system", content=head, kind="choice",
-                          choices=choices, on_select=on_sel)
+                          choices=choices, on_select=None,
+                          initial_highlight=len(choices) - 1)
+        if durable:
+            # 延迟折叠:选中只弹模式窗、列表卡片留着。确认 → _rewind_pick_mode 清卡片+回退;
+            # Esc → 卡片原样留在列表(不折叠成误导性的「✓ 已选中」)。
+            msg.defer_collapse = True
+            msg.on_select = lambda v, _m=msg: self._rewind_pick_mode(sess, v, _m)
+        else:
+            msg.on_select = lambda v: self._do_rewind(v)
         sess.messages.append(msg)
         self._refresh_messages()
 
-    def _rewind_pick_mode(self, sess, node_id) -> None:
+    def _rewind_label(self, it, durable) -> "Text":
+        """一行:用户 prompt(定宽) · 上次会话时间 · 代码变动行数(+新增 -删除)。
+        定宽让时间/行数两列对齐(CJK 按显示格计);非持久(无 store)只显示 prompt。
+        返回 rich Text:+新增 绿、-删除 红、无改动显示暗色「（无改动）」。"""
+        from rich.cells import set_cell_size
+        # 先 ellipsize(超长截断并加「…」)再补齐到定宽——直接 set_cell_size 会硬切、无省略号。
+        p = set_cell_size(ellipsize(it.get("prompt") or "（空）", 40), 40)
+        t = Text(no_wrap=True, overflow="ellipsis")
+        if not durable or it.get("ago") is None:
+            t.append(p.rstrip())
+            return t
+        t.append(p)
+        t.append("  ")
+        t.append(set_cell_size(rel_time(it["ago"]), 8), style=C_DIM)
+        t.append("  ")
+        ins, dele = it["ins"], it["dele"]
+        if not (ins or dele):
+            t.append("（无改动）", style=C_DIM)
+        else:
+            t.append(f"+{ins}", style=C_GREEN)
+            t.append(" ")
+            t.append(f"-{dele}", style=C_RED)
+        return t
+
+    def _rewind_pick_mode(self, sess, node_id, card=None) -> None:
         """选中要回退到的提问后,弹 RestoreModeScreen(复用 /worldline 的模式选择窗)选
-        对话/代码/两者,再走持久回退 _rw_restore_node(to='before')。取消(返回 None)则不回退。"""
+        对话/代码/两者,再走持久回退 _rw_restore_node(to='before')。
+        card:发起本次选择的 /rewind 列表卡片(defer_collapse)。确认回退 → 先清掉它(不留
+        「✓」)再回退;Esc 取消(mode=None) → 什么都不做,列表卡片仍在 → 焦点自动回到列表。"""
         store = getattr(sess, "store", None)
         title = ""
         if store is not None and node_id in getattr(store, "nodes", {}):
             title = store.nodes[node_id].get("title") or ""
+            try:
+                title = store._strip_project_mode(title).replace("\n", " ").strip()
+            except Exception:
+                pass
         def _after(mode):
             if mode:
+                if card is not None:
+                    self._cancel_choice(card)   # 清掉列表卡片(不留误导性「✓」),再回退
                 self._system(self._rw_restore_node(sess, node_id, mode=mode, to="before"))
+            # mode is None(Esc 取消):不输出任何提示,列表卡片保留,焦点回到 /rewind 列表
         self.push_screen(RestoreModeScreen(title, "before"), _after)
 
     def _cmd_rewind_tree(self, args, raw):
@@ -7850,7 +7926,14 @@ class GenericAgentTUI(App[None]):
                         pass
                 self.call_after_refresh(_focus_input)
             else:
-                self.call_after_refresh(widget.focus)
+                def _focus_plain(w=widget, hi=m.initial_highlight):
+                    try:
+                        if hi is not None and getattr(w, "option_count", 0):
+                            w.highlighted = max(0, min(hi, w.option_count - 1))
+                        w.focus()
+                    except Exception:
+                        pass
+                self.call_after_refresh(_focus_plain)
             return
 
         if m.kind in ("choice", "multi_choice"):  # selected_label is not None
@@ -8154,30 +8237,6 @@ class ClickableTree(Static):
             self.post_message(self.NodeClicked(self.rows[off.y].key))
 
 
-class ClickableList(Static):
-    class SegClicked(Message):
-        def __init__(self, index: int) -> None:
-            self.index = index
-            super().__init__()
-
-    def __init__(self, **kw) -> None:
-        super().__init__("", **kw)
-        self.idxs: List[Optional[int]] = []
-
-    def set_content(self, text: Text, idxs: List[Optional[int]]) -> None:
-        self.idxs = idxs
-        self.update(text)
-
-    def on_click(self, event) -> None:
-        off = event.get_content_offset(self)
-        if off is None:
-            return
-        y = off.y
-        if 0 <= y < len(self.idxs) and self.idxs[y] is not None:
-            event.stop()
-            self.post_message(self.SegClicked(self.idxs[y]))
-
-
 class RestoreModeScreen(ModalScreen):
     """CC 式回退模式选择弹窗:在世界线里 Enter 选中节点后弹出,选恢复模式。
 
@@ -8270,14 +8329,26 @@ class RewindTreeScreen(ModalScreen):
     RewindTreeScreen {{ height: 100%; overflow: hidden; }}
     RewindTreeScreen > Horizontal {{ height: 1fr; width: 100%; }}
     #rw3_left {{
-        width: 44%; height: 1fr; border: round {C_BORDER}; border-title-color: {C_GREEN};
+        width: 60%; height: 1fr; border: round {C_BORDER}; border-title-color: {C_GREEN};
         padding: 0 1; overflow-x: auto; overflow-y: auto;
     }}
     #rw3_lefttree {{ width: auto; height: auto; }}
-    #rw3_right {{ width: 1fr; height: 1fr; }}
+    #rw3_right {{ width: 40%; height: 1fr; }}
     #rw3_rtop {{
         height: 50%; border: round {C_BORDER}; border-title-color: {C_BLUE};
-        padding: 0 1; overflow-y: auto;
+        padding: 0 1;
+    }}
+    #rw3_rtop_hint {{ height: auto; color: {C_DIM}; }}
+    #rw3_rtop_body {{
+        height: 1fr; background: transparent; border: none; padding: 0;
+        scrollbar-size-vertical: 1; scrollbar-gutter: stable;
+    }}
+    #rw3_rtop_body > .option-list--option {{ padding: 0; background: transparent; color: {C_FG}; }}
+    #rw3_rtop_body > .option-list--option-highlighted {{
+        background: {C_SEL_BG}; color: {C_DIM}; text-style: none;
+    }}
+    #rw3_rtop_body.rt-active > .option-list--option-highlighted {{
+        background: {C_ALT_BG}; color: {C_FG}; text-style: bold;
     }}
     #rw3_rbot {{
         height: 1fr; border: round {C_BORDER}; border-title-color: {C_PURPLE};
@@ -8377,8 +8448,9 @@ class RewindTreeScreen(ModalScreen):
             with ScrollableContainer(id="rw3_left"):
                 yield ClickableTree(id="rw3_lefttree")
             with Vertical(id="rw3_right"):
-                with VerticalScroll(id="rw3_rtop"):
-                    yield ClickableList(id="rw3_rtop_body")
+                with Vertical(id="rw3_rtop"):
+                    yield Static("", id="rw3_rtop_hint")
+                    yield OptionList(id="rw3_rtop_body")
                 with Vertical(id="rw3_rbot"):
                     yield Static("", id="rw3_rbot_body")
                     with VerticalScroll(id="rw3_diff"):
@@ -8390,6 +8462,9 @@ class RewindTreeScreen(ModalScreen):
         self.query_one("#rw3_rtop").border_title = "被折叠的节点"
         self.query_one("#rw3_rbot").border_title = "详情 / 操作"
         self.query_one("#rw3_rtop").can_focus = False
+        self.query_one("#rw3_rtop_body").can_focus = False   # 键盘焦点恒在左树；此列仅受控渲染+鼠标
+        self.query_one("#rw3_rtop_hint", Static).update(
+            Text("选中提问回退到其之前，末项从当前继续", style=C_DIM))
         # 左栏设为可聚焦并**抓住焦点**:让本 modal 真正持有键盘。否则全部子组件
         # can_focus=False → 焦点留在下层输入框,Tab 会被输入框的命令补全吃掉、屏的
         # on_key 收不到(↑↓ 靠 priority binding 才照常生效)。聚焦框仍由
@@ -8397,6 +8472,10 @@ class RewindTreeScreen(ModalScreen):
         left = self.query_one("#rw3_left")
         left.can_focus = True
         left.focus()
+        self.refresh_all()
+
+    def on_resize(self, event) -> None:
+        # 栏宽变化 → 重裁 rtop 行宽、重算左树横向跟踪，避免按旧宽度裁剪
         self.refresh_all()
 
     # ---- 联动 ----
@@ -8486,46 +8565,41 @@ class RewindTreeScreen(ModalScreen):
         return len(seg) if self._seg_has_tip(seg) else max(0, len(seg) - 1)
 
     def _refresh_rtop(self) -> None:
-        d = self.ct.disp[self.sel_key]
+        # 受控 OptionList：option 序号 == seg 序号（tip = len(seg)）。选中态由
+        # OptionList 的 highlighted 整项高亮 + 自动滚动到高亮负责——折行时整块选中、
+        # 滑窗跟踪与点击映射都由控件保证，不再靠「1 行 = 1 项」的脆弱手写逻辑。
         seg = self._current_seg()
-        lines: List[Text] = []
-        idxs: List[Optional[int]] = []   # 行 → seg 索引(tip = len(seg)),None=不可选
-        lines.append(Text("选中某条提问可回退到其之前；末尾一项则从当前位置继续", style=C_DIM)); idxs.append(None)
-        lines.append(Text("")); idxs.append(None)
-        for i, nid in enumerate(seg):
-            n = self.ct.tree.nodes[nid]
-            active = i == self.seg_idx
-            g, gs, _ = kind_style(n.kind)
-            rs = (f"bold {C_FG} on {C_ALT_BG}" if active and self.focus_right
-                  else (C_FG if active else C_MUTED))
-            line = Text()
-            line.append("▶ " if active else "  ",
-                        style=(C_CYAN if self.focus_right else C_DIM) if active else C_DIM)
-            line.append(f"{g} ", style=C_GREEN if active else gs)
-            line.append(ellipsize(n.title, 54), style=rs)
-            if n.rw_tag:
-                line.append(f"（{n.rw_tag}）", style=C_AMBER if active else C_DIM)
-            line.append(f"   {rel_time(n.ago)}", style=C_DIM)
-            lines.append(line); idxs.append(i)
-        # 末尾占位项(尚未创建,用括号标注);圆点字形,颜色同普通记录(new)/绿(current)。
-        # 会话起点(origin)不显示此占位项(_seg_has_tip):选中 origin 项本身即回到空起点。
+        ol = self.query_one("#rw3_rtop_body", OptionList)
+        ol.set_class(self.focus_right, "rt-active")   # 聚焦右栏 → 高亮更亮
+        opts = [Option(self._rtop_line(nid)) for nid in seg]
         if self._seg_has_tip(seg):
-            tip_i = len(seg)
-            tk = self._tip_kind()
-            tip_active = tip_i == self.seg_idx
-            tlabel = "（当前位置 · 自此继续）" if tk == "current" else "（自此继续会话）"
-            glyph = "◉" if tk == "current" else "●"     # 当前位置用 ◉(同节点当前标记)
-            base = C_GREEN if tk == "current" else C_FG
-            trs = (f"bold {C_FG} on {C_ALT_BG}" if tip_active and self.focus_right
-                   else (base if tip_active else C_DIM))
-            tline = Text()
-            tline.append("▶ " if tip_active else "  ",
-                         style=(C_CYAN if self.focus_right else C_DIM) if tip_active else C_DIM)
-            tline.append(f"{glyph} ", style=C_GREEN if (tip_active or tk == "current") else C_DIM)
-            tline.append(tlabel, style=trs)
-            lines.append(tline); idxs.append(tip_i)
-        self.query_one("#rw3_rtop_body", ClickableList).set_content(
-            Text("\n").join(lines), idxs)
+            opts.append(Option(self._rtop_tip_line()))
+        ol.clear_options()
+        if opts:
+            ol.add_options(opts)
+            ol.highlighted = max(0, min(self.seg_idx, len(opts) - 1))
+
+    def _rtop_line(self, nid) -> Text:
+        """段内节点的一行（不含选中态；高亮由 OptionList 绘制）。"""
+        n = self.ct.tree.nodes[nid]
+        g, gs, _ = kind_style(n.kind)
+        line = Text()
+        line.append(f"{g} ", style=gs)
+        line.append(ellipsize(n.title, 40))
+        if n.rw_tag:
+            line.append(f"（{n.rw_tag}）", style=C_AMBER)
+        line.append(f"   {rel_time(n.ago)}", style=C_DIM)
+        return line
+
+    def _rtop_tip_line(self) -> Text:
+        """末尾占位项（当前位置 / 自此继续）。"""
+        tk = self._tip_kind()
+        label = "（当前位置 · 自此继续）" if tk == "current" else "（自此继续会话）"
+        glyph = "◉" if tk == "current" else "●"
+        t = Text()
+        t.append(f"{glyph} ", style=C_GREEN if tk == "current" else C_DIM)
+        t.append(label, style=C_GREEN if tk == "current" else C_FG)
+        return t
 
     def _target_node(self) -> Optional[str]:
         """diff/delete 的目标节点:右上选中段内节点 > 当前显示节点的叶(tip 也归叶)。"""
@@ -8559,8 +8633,7 @@ class RewindTreeScreen(ModalScreen):
                 body.append("（自此继续会话）\n", style=f"bold {C_FG}")
                 body.append("  从这条记录之后继续对话。\n", style=C_MUTED)
             if tail is not None:
-                body.append(f"  续接于      {ellipsize(tail.title, 40)}\n", style=C_MUTED)
-                body.append(f"  时间        {rel_time(tail.ago)}\n", style=C_MUTED)
+                body.append(f"  续接于      {ellipsize(tail.title, 30)}\n", style=C_MUTED)
         else:
             nid = seg[self.seg_idx]
             n = self.ct.tree.nodes[nid]
@@ -8568,15 +8641,9 @@ class RewindTreeScreen(ModalScreen):
             body.append(f"{n.title}\n", style=f"bold {color}")
             if kind_label:
                 body.append(f"  类型        {kind_label}\n", style=C_MUTED)
-            body.append(f"  时间        {rel_time(n.ago)}\n", style=C_MUTED)
             body.append(f"  改动文件    {files_summary(n.files)}\n", style=C_MUTED)
-            body.append("  回退至此    清除本次提问及其后内容\n", style=C_DIM)
 
-        body.append("\n操作  ", style=C_DIM)
-        body.append(" Enter " + ("选择回退方式" if self.focus_right else "进入右栏选择"),
-                    style=f"{C_FG} on {C_SEL_BG}")
-        body.append("   x 删除节点\n", style=C_DIM)
-        body.append("(回退前自动保存还原点)", style=C_DIM)
+        body.append("\n(回退前自动保存还原点)", style=C_DIM)
         self.query_one("#rw3_rbot_body", Static).update(body)
         # 下方可滚动 diff 视窗:选中节点 vs 父节点(上一个状态)的逐行改动。
         self._refresh_diff(None if on_tip else seg[self.seg_idx])
@@ -8642,11 +8709,12 @@ class RewindTreeScreen(ModalScreen):
             pass
 
     def _refresh_status(self) -> None:
-        where = "右栏" if self.focus_right else "左树"
-        self.query_one("#rw3_status", Static).update(Text(
-            f" 聚焦:{where} | 共 {len(self.ct.flatten())}/{len(self.ct.tree.nodes)} | "
-            f"↑↓ 当前栏   Ctrl↑↓(/PgUp·Dn/[ ]) 另一栏   ←→ 切层级   Tab 切聚焦   "
-            f"Enter 进入/回退   x 删   Esc", style=C_DIM))
+        enter = "Enter 回退到此" if self.focus_right else "Enter 进入右栏"
+        t = Text(style=C_DIM)
+        t.append(" ↑↓ 移动 · Ctrl+↑↓ 移动另一栏 · ←→ 切换层级 · Tab 切换焦点 · ")
+        t.append(enter, style=C_FG)
+        t.append(" · x 删除节点 · Esc 关闭")
+        self.query_one("#rw3_status", Static).update(t)
 
     # ---- 导航:上下=聚焦窗 / Ctrl上下=非聚焦窗 / Tab·←→=切聚焦 ----
     def action_up(self) -> None:
@@ -8679,7 +8747,6 @@ class RewindTreeScreen(ModalScreen):
         self.seg_idx = max(0, min(self.seg_idx + delta, n))
         self._diff_for = None
         self._refresh_rtop(); self._refresh_rbot(); self._refresh_status()
-        self._ensure_line_visible("#rw3_rtop", self.seg_idx + 3)
 
     def _set_focus(self, right: bool) -> None:
         self.focus_right = right
@@ -8777,13 +8844,15 @@ class RewindTreeScreen(ModalScreen):
     def on_clickable_tree_node_clicked(self, msg) -> None:
         self._set_left_selection(msg.key)
 
-    def on_clickable_list_seg_clicked(self, msg) -> None:
+    def on_option_list_option_selected(self, ev) -> None:
+        # 鼠标点击右栏某项 → 选中该 seg（不触发回退；回退走 Enter/action_enter）。
+        if ev.option_list.id != "rw3_rtop_body":
+            return
         self.focus_right = True
-        self.seg_idx = max(0, min(msg.index, self._seg_max_idx()))
+        self.seg_idx = max(0, min(ev.option_index, self._seg_max_idx()))
         self._diff_for = None
         self._refresh_rtop(); self._refresh_rbot(); self._refresh_status()
         self._refresh_focus_frame()
-        self._ensure_line_visible("#rw3_rtop", self.seg_idx + 3)
 
 
 def main(argv: Optional[list[str]] = None) -> int:

@@ -1154,7 +1154,10 @@ def restore_plan(store, node_id, mode: str = "both", to: str = "before",
         at_origin = parent is None
         if not at_origin:
             um = store.first_user_message(node_id)
-            prefill = (user_msg_text(um) if um else "") or store._strip_project_mode(nd.get("title", ""))
+            # 剥离 project_mode 注入块:回填输入框的是用户原话,不能夹带注入内容。
+            # 树里的 user 消息取自 native 日志(含注入),user_msg_text 逐字取文本不清洗,
+            # 故在此统一 _strip_project_mode(幂等,无注入块则原样返回)。
+            prefill = store._strip_project_mode((user_msg_text(um) if um else "") or nd.get("title", ""))
 
     old_head = store.head  # 回退前的 HEAD(代码/对话的「另一侧」来源)
 
@@ -1166,7 +1169,9 @@ def restore_plan(store, node_id, mode: str = "both", to: str = "before",
 
     def _prompt_of(node_id):
         um = store.first_user_message(node_id)
-        return (user_msg_text(um) if um else "") or store._strip_project_mode(store.nodes.get(node_id, {}).get("title", ""))
+        # 同 prefill:桥接节点标题也要剥离 project_mode 注入,取用户原话。
+        return store._strip_project_mode(
+            (user_msg_text(um) if um else "") or store.nodes.get(node_id, {}).get("title", ""))
 
     # ---- both:直接还原到 target(对话+代码),无桥接
     if mode == "both":

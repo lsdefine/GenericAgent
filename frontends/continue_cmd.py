@@ -113,7 +113,7 @@ def _parse_native_history(pairs):
         except Exception: return None
         if not (isinstance(user_msg, dict) and user_msg.get('role') == 'user'): return None
         if not isinstance(blocks, list): return None
-        history.append(user_msg)
+        history.append(user_msg)  # runtime history 尊重日志真实 prompt(含 project-mode 当轮注入)
         history.append({'role': 'assistant', 'content': blocks})
     return history
 
@@ -164,8 +164,9 @@ def _derive_hist_info(history):
         role = m.get('role')
         if role == 'user':
             if _is_tool_result(m): continue            # tool_result 轮不是提问
-            t = _all_text(m).strip()
-            if t: out.append(f'[USER]: {t}')
+            t = strip_project_mode(_all_text(m)).strip()
+            if t and not t.startswith(_INJECT_MARKERS):
+                out.append(f'[USER]: {t}')
         elif role == 'assistant':
             txt = re.sub(r'```.*?```|<thinking>.*?</thinking>', '', _all_text(m), flags=re.DOTALL)
             mt = re.search(r'<summary>(.*?)</summary>', txt, re.DOTALL)
@@ -540,17 +541,19 @@ def handle(agent, query, display_queue):
 
 
 _INJECT_MARKERS = ('### [WORKING MEMORY]', '[SYSTEM TIPS]', '[SYSTEM]', '[System]',
-                   '[DANGER]', '### [总结提炼经验]')
+                   '[DANGER]', '### [总结提炼经验]',
+                   'Continue from where you left off')
 
-# project_mode 插件把 `\n\n---\n[PROJECT MODE: <name>]\n…\n---` 追加在用户消息末尾
-# (见 plugins/project_mode._build_injection)。它会进日志,所以 /continue 重建 UI 时
-# 必须从显示文本里剔除,只留用户原话。不能加进 _INJECT_MARKERS——那会把整块(连用户
-# 原话)一起丢弃;这里只剜掉注入这一段后缀。
-_PM_BLOCK_RE = re.compile(r"\n*-{3,}\n\[PROJECT MODE:.*?\n-{3,}\s*$", re.DOTALL)
+# project_mode 插件把 `\n\n---\n[PROJECT MODE: <name>]\n…\n---` 追加到当轮 user
+# message(见 plugins/project_mode._build_injection)。runtime history 尊重日志真实 prompt,
+# 但 UI 预览/显示与派生 history_info 需要只取用户原话。老日志的 WORKING MEMORY 里还
+# 可能嵌着已污染的 `[USER]: ... [PROJECT MODE] ... [Agent] ...`,所以剥离支持 text
+# 内任意位置与被截断的单行 title 形态。不能加进 _INJECT_MARKERS——那会把整条用户原话一起丢弃。
+_PM_BLOCK_RE = re.compile(r"\s*-{3,}\s*\[PROJECT MODE:.*?(?:\n-{3,}\s*|$)", re.DOTALL)
 
 
 def strip_project_mode(text: str) -> str:
-    """剔除用户文本尾部的 project-mode 注入块。"""
+    """剔除文本中由 project_mode 插件追加的 L1 注入块。"""
     return _PM_BLOCK_RE.sub("", text or "")
 
 

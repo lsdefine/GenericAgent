@@ -51,7 +51,7 @@ class RewindStore:
 
     def __init__(self, root: str, cwd: str) -> None:
         self.root = os.path.abspath(root)
-        self.cwd = os.path.abspath(cwd)
+        self.cwd = os.path.realpath(cwd)   # realpath：与 key() 同基准，解析 junction/symlink
         self.objects_dir = os.path.join(self.root, "objects")
         self.tree_path = os.path.join(self.root, "tree.json")
 
@@ -98,8 +98,11 @@ class RewindStore:
 
     # ------------------------------------------------------------------ paths
     def key(self, abs_path: str) -> str:
-        """绝对路径在 cwd 下 → 存相对（参考 CC maybeShortenFilePath）；否则原样。"""
-        ap = os.path.abspath(abs_path)
+        """路径 → 规范 key：realpath 解析 junction/symlink，使同一物理文件只有一个身份
+        （workspace 的 junction 相对路径与真实绝对路径不再分裂成两个 key，避免 apply_code
+        对同一文件重复回写而损坏内容）；落在 cwd 下则存相对（参考 CC maybeShortenFilePath），
+        否则存绝对。"""
+        ap = os.path.realpath(abs_path)
         try:
             if os.path.commonpath([ap, self.cwd]) == self.cwd:
                 return os.path.relpath(ap, self.cwd).replace(os.sep, "/")
@@ -388,6 +391,18 @@ class RewindStore:
             out.append({"rel": rel, "old": self._text(ph), "new": self._text(nh)})
         return out
 
+    def node_line_delta(self, node_id) -> tuple[int, int]:
+        """本节点相对父节点的 (新增行, 删除行) 合计，仅计 file_write/file_patch 追踪的
+        文件。供 rewind/worldline 显示「代码变动行数」。"""
+        ins = dele = 0
+        for f in self.node_diff(node_id):
+            for line in difflib.ndiff(f["old"].splitlines(), f["new"].splitlines()):
+                if line.startswith("+ "):
+                    ins += 1
+                elif line.startswith("- "):
+                    dele += 1
+        return ins, dele
+
     def _text(self, h: str | None) -> str:
         if h is _ABSENT:
             return ""
@@ -581,8 +596,18 @@ class RewindStore:
         return chain
 
     # ----------------------------------------------------------- conversation
+    _PM_BLOCK_RE = re.compile(r"\s*-{3,}\s*\[PROJECT MODE:.*?(?:\n-{3,}\s*|$)", re.DOTALL)
+
+    @classmethod
+    def _strip_project_mode(cls, text: str) -> str:
+        """剔除 project_mode 插件注入块(可出现在旧 WORKING MEMORY 文本中间)。"""
+        return cls._PM_BLOCK_RE.sub("", text or "")
+
     def _node_conv(self, node_id) -> list:
-        """单节点的对话增量（list）。无 conv / 读失败 → []（容错降级）。"""
+        """单节点的对话增量（list）。无 conv / 读失败 → []（容错降级）。
+
+        runtime history 尊重当时真实 prompt,包括 project_mode 的当轮注入;用户可见
+        投影(标题/prefill/turn_sig/history_info)在各自入口清洗。"""
         h = self.nodes.get(node_id, {}).get("conv")
         if not h:
             return []
@@ -610,7 +635,9 @@ class RewindStore:
             return []
         try:
             data = json.loads(self._get_blob(h).decode("utf-8"))
-            return data if isinstance(data, list) else []
+            if not isinstance(data, list):
+                return []
+            return [self._strip_project_mode(str(x)) for x in data]
         except Exception:
             return []
 
@@ -642,20 +669,28 @@ class RewindStore:
         return False
 
     # ----------------------------------------------------- 对账(防外部改写灾难)
-    @staticmethod
-    def _msg_user_text(msg) -> str:
-        """真实用户提问文本;非 user / 纯 tool_result 回填 → ""(不算提问边界)。"""
+    @classmethod
+    def _msg_user_text(cls, msg) -> str:
+        """真实用户提问文本;非 user / 自动注入轮 → ""(不算提问边界)。"""
         if not isinstance(msg, dict) or msg.get("role") != "user":
             return ""
         c = msg.get("content")
         if isinstance(c, str):
-            return c
-        if isinstance(c, list):
+            text = cls._strip_project_mode(c)
+        elif isinstance(c, list):
             if any(isinstance(b, dict) and b.get("type") == "tool_result" for b in c):
                 return ""
-            return " ".join(b.get("text", "") for b in c
-                            if isinstance(b, dict) and b.get("type") == "text")
-        return ""
+            text = cls._strip_project_mode(" ".join(
+                b.get("text", "") for b in c
+                if isinstance(b, dict) and b.get("type") == "text"))
+        else:
+            return ""
+        text = (text or "").strip()
+        inject_markers = ("### [WORKING MEMORY]", "[SYSTEM TIPS]", "[DANGER]",
+                          "### [总结提炼经验]", "Continue from where you left off")
+        if not text or text.startswith(inject_markers):
+            return ""
+        return text
 
     @classmethod
     def _turn_sig(cls, msgs) -> list:
@@ -833,7 +868,7 @@ def files_summary(files: List[str]) -> str:
     return "、".join(files[:3]) + f" (+{len(files) - 3})"
 
 
-_TITLE_MAX_CELLS = 40
+_TITLE_MAX_CELLS = 54   # 左树标题截断宽度，对应 worldline 左栏 60%（3:2 布局）
 
 
 def ellipsize(s: str, max_cells: int = _TITLE_MAX_CELLS) -> str:
@@ -885,7 +920,7 @@ def tree_from_store(store, now: float) -> CheckpointTree:
     for nid, nd in store.nodes.items():
         t.nodes[nid] = CheckpointNode(
             id=nid,
-            title=nd.get("title") or "（空）",
+            title=store._strip_project_mode(nd.get("title") or "（空）").replace("\n", " ").strip() or "（空）",
             parent_id=nd.get("parent"),
             children=[c for c in nd.get("children", []) if c in store.nodes],
             kind="current" if nid == store.head else nd.get("kind", "edit"),
@@ -1119,7 +1154,7 @@ def restore_plan(store, node_id, mode: str = "both", to: str = "before",
         at_origin = parent is None
         if not at_origin:
             um = store.first_user_message(node_id)
-            prefill = (user_msg_text(um) if um else "") or nd.get("title", "")
+            prefill = (user_msg_text(um) if um else "") or store._strip_project_mode(nd.get("title", ""))
 
     old_head = store.head  # 回退前的 HEAD(代码/对话的「另一侧」来源)
 
@@ -1131,7 +1166,7 @@ def restore_plan(store, node_id, mode: str = "both", to: str = "before",
 
     def _prompt_of(node_id):
         um = store.first_user_message(node_id)
-        return (user_msg_text(um) if um else "") or store.nodes.get(node_id, {}).get("title", "")
+        return (user_msg_text(um) if um else "") or store._strip_project_mode(store.nodes.get(node_id, {}).get("title", ""))
 
     # ---- both:直接还原到 target(对话+代码),无桥接
     if mode == "both":
@@ -1145,7 +1180,7 @@ def restore_plan(store, node_id, mode: str = "both", to: str = "before",
         if log_path:
             rewrite_projection(store, target, log_path)
         return _res(history, hist_info, key_info, changed, prefill,
-                    at_origin, target, nd.get("title", ""), to)
+                    at_origin, target, store._strip_project_mode(nd.get("title", "")), to)
 
     # ---- conv:对话退到 target、代码留 old_head。桥接挂 fork(=parent(target),或 target 若 origin)
     if mode == "conv":
@@ -1169,7 +1204,7 @@ def restore_plan(store, node_id, mode: str = "both", to: str = "before",
         if log_path:
             rewrite_projection(store, target, log_path)
         return _res(history, hist_info, key_info, [], prefill,
-                    at_origin, bridge_id, nd.get("title", ""), to)
+                    at_origin, bridge_id, store._strip_project_mode(nd.get("title", "")), to)
 
     # ---- code:代码退到 target、对话留 old_head。桥接按会话拓扑挂在 old_head 的父节点,
     #      自带 old_head 这一轮对话/WM,文件显式覆盖为 target 的代码状态。
@@ -1188,9 +1223,10 @@ def restore_plan(store, node_id, mode: str = "both", to: str = "before",
             kinfo=store.key_info_at(old_head), files_override=bridge_files,
             title=_prompt_of(old_head), rw_tag="仅代码回退")
         store.rewind_head(bridge_id)
-        # 对话没动 → history=None(前端不重赋 backend.history)、不重写投影日志
-        return _res(None, None, None, changed, prefill,
-                    at_origin, bridge_id, nd.get("title", ""), to)
+        # 对话没动 → history=None(前端不重赋 backend.history)、不重写投影日志、
+        # 不 prefill(对话未回退,输入框不该被塞入选中节点的旧提问)。
+        return _res(None, None, None, changed, "",
+                    at_origin, bridge_id, store._strip_project_mode(nd.get("title", "")), to)
 
     return None  # 未知 mode
 

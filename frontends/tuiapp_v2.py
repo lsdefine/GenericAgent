@@ -5281,8 +5281,11 @@ class GenericAgentTUI(App[None]):
             where = "空起点" if at_origin else f"「{title}」之后（在此继续）"
         else:
             where = "空起点" if at_origin else f"「{title}」之前"
-        return (f"↩ 已回退到{where}（{label}）：清除 {removed} 条上下文，"
-                f"代码恢复 {len(res['changed'])} 个文件")
+        msg = (f"↩ 已回退到{where}（{label}）：清除 {removed} 条上下文，"
+               f"代码恢复 {len(res['changed'])} 个文件")
+        if res.get("code_error"):     # apply_code 中途失败 → 工作区可能半回退,不静默
+            msg += f"\n⚠️ 代码回退未完成（{res['code_error']}）：工作区可能处于部分回退状态，请检查后重试。"
+        return msg
 
     def _rw_sync_working_memory(self, sess, res) -> None:
         """rewind 时把 working memory(history_info 纪要 + key_info 便签)硬同步到回退点,

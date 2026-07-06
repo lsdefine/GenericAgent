@@ -1177,15 +1177,13 @@ def restore_plan(store, node_id, mode: str = "both", to: str = "before",
     if mode == "both":
         history = store.rebuild_history(target)
         hist_info, key_info = _wm_at(target)
-        try:
-            changed = store.apply_code(target)
-        except Exception:
-            changed = []
+        changed, code_error = _apply_code_safe(store, target)
         store.rewind_head(target)
         if log_path:
             rewrite_projection(store, target, log_path)
         return _res(history, hist_info, key_info, changed, prefill,
-                    at_origin, target, store._strip_project_mode(nd.get("title", "")), to)
+                    at_origin, target, store._strip_project_mode(nd.get("title", "")), to,
+                    code_error=code_error)
 
     # ---- conv:对话退到 target、代码留 old_head。桥接挂 fork(=parent(target),或 target 若 origin)
     if mode == "conv":
@@ -1214,10 +1212,7 @@ def restore_plan(store, node_id, mode: str = "both", to: str = "before",
     # ---- code:代码退到 target、对话留 old_head。桥接按会话拓扑挂在 old_head 的父节点,
     #      自带 old_head 这一轮对话/WM,文件显式覆盖为 target 的代码状态。
     if mode == "code":
-        try:
-            changed = store.apply_code(target)
-        except Exception:
-            changed = []
+        changed, code_error = _apply_code_safe(store, target)
         conv_parent = store.nodes.get(old_head, {}).get("parent")
         conv_parent = conv_parent if conv_parent in store.nodes else old_head
         conv_delta = list(store._node_conv(old_head) or [])
@@ -1231,14 +1226,25 @@ def restore_plan(store, node_id, mode: str = "both", to: str = "before",
         # 对话没动 → history=None(前端不重赋 backend.history)、不重写投影日志、
         # 不 prefill(对话未回退,输入框不该被塞入选中节点的旧提问)。
         return _res(None, None, None, changed, "",
-                    at_origin, bridge_id, store._strip_project_mode(nd.get("title", "")), to)
+                    at_origin, bridge_id, store._strip_project_mode(nd.get("title", "")), to,
+                    code_error=code_error)
 
     return None  # 未知 mode
 
 
+def _apply_code_safe(store, target) -> "tuple[list, Optional[str]]":
+    """还原工作区代码,失败不静默:返回 (changed, code_error)。code_error 非 None 时
+    表示写盘中途出错(权限/磁盘…),工作区可能处于部分回退状态——交由前端提示用户,
+    而非当作「无变更」悄悄放过(apply_code 直接写用户文件,失败半径不为零)。"""
+    try:
+        return store.apply_code(target), None
+    except Exception as e:
+        return [], f"{type(e).__name__}: {e}"
+
+
 def _res(history, hist_info, key_info, changed, prefill,
-         at_origin, target, title, to) -> dict:
-    """restore_plan 的返回 dict 构造器。"""
+         at_origin, target, title, to, *, code_error=None) -> dict:
+    """restore_plan 的返回 dict 构造器。code_error:代码回退失败信息(None=成功)。"""
     return {
         "history": history,
         "hist_info": hist_info,
@@ -1249,4 +1255,5 @@ def _res(history, hist_info, key_info, changed, prefill,
         "target": target,
         "title": title,
         "to": to,
+        "code_error": code_error,
     }

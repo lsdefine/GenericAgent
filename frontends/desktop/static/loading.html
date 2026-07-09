@@ -16,6 +16,16 @@ html,body{height:100%;margin:0;display:flex;align-items:center;justify-content:c
 #ga-bar{height:100%;width:0;background:currentColor;border-radius:99px;transition:width .3s ease}
 #ga-bar.indet{width:35%;animation:indet 1.1s ease-in-out infinite}
 @keyframes indet{0%{margin-left:-35%}100%{margin-left:100%}}
+/* First-run desktop-shortcut prompt (only injected by portable bundles via Tauri cmd) */
+.sc-prompt{position:fixed;right:18px;bottom:18px;max-width:280px;padding:12px 14px;border:1px solid currentColor;border-radius:10px;background:Color-mix(in srgb,CanvasBackground 92%,transparent);box-shadow:0 6px 24px #00000026;font-size:12.5px;line-height:1.45;opacity:0;transform:translateY(8px);transition:opacity .35s ease,transform .35s ease;pointer-events:none;backdrop-filter:blur(6px);z-index:9999}
+.sc-prompt.show{opacity:1;transform:translateY(0);pointer-events:auto}
+.sc-prompt .ttl{font-weight:600;margin-bottom:4px;font-size:13px}
+.sc-prompt .sub{opacity:.75;margin-bottom:10px}
+.sc-prompt .row{display:flex;gap:8px;justify-content:flex-end}
+.sc-prompt button{font:inherit;font-size:12px;padding:5px 11px;border:1px solid currentColor;border-radius:7px;background:transparent;color:inherit;cursor:pointer}
+.sc-prompt button:hover{background:color-mix(in srgb,currentColor 12%,transparent)}
+.sc-prompt button.primary{background:currentColor;color:CanvasBackground}
+.sc-prompt button.primary:hover{opacity:.88}
 </style>
 <script>
 // Loading window shows before the main UI, on a different origin than the app, so it can't
@@ -44,6 +54,45 @@ document.addEventListener('DOMContentLoaded', function(){
   var s = document.getElementById('ga-status');
   if (s) s.textContent = GA_MSG.starting_app;
 });
+/* First-run desktop-shortcut prompt. Backend (lib.rs::shortcut_should_ask) is the source
+   of truth: it returns true ONLY for portable bundles whose pref has never been set. We
+   never block startup here — prompt is a small bottom-right card and auto-skips in 25s. */
+(function(){
+  var t = window.__TAURI__;
+  if (!t || !t.core || !t.core.invoke) return; // dev mode (no Tauri runtime) — no prompt
+  var ROOT  = document.getElementById('sc-prompt');
+  var BTNY  = document.getElementById('sc-yes');
+  var BTNN  = document.getElementById('sc-no');
+  if (!ROOT || !BTNY || !BTNN) return;
+  var decided = false, timer = null;
+  // light i18n: zh-* uses Chinese, everything else uses English
+  var isZh = (navigator.language || 'en').toLowerCase().indexOf('zh') === 0;
+  var I = isZh
+    ? { ttl: '桌面快捷方式', sub: '首次便携启动 — 是否创建桌面快捷方式？', yes: '创建', no: '跳过' }
+    : { ttl: 'Desktop Shortcut', sub: 'First portable launch — create a desktop shortcut?', yes: 'Create', no: 'Skip' };
+  document.getElementById('sc-ttl').textContent = I.ttl;
+  document.getElementById('sc-sub').textContent = I.sub;
+  BTNY.textContent = I.yes;
+  BTNN.textContent = I.no;
+  function dismiss(create){
+    if (decided) return; decided = true;
+    if (timer) { clearTimeout(timer); timer = null; }
+    try { t.core.invoke('shortcut_decide', { create: !!create }); } catch(_){}
+    ROOT.classList.remove('show');
+    setTimeout(function(){ if (ROOT.parentNode) ROOT.parentNode.removeChild(ROOT); }, 500);
+  }
+  BTNY.addEventListener('click', function(){ dismiss(true); });
+  BTNN.addEventListener('click', function(){ dismiss(false); });
+  // Show after a brief delay so the spinner is established first.
+  setTimeout(function(){
+    t.core.invoke('shortcut_should_ask').then(function(should){
+      if (should) {
+        ROOT.classList.add('show');
+        timer = setTimeout(function(){ dismiss(false); }, 25000);
+      }
+    }).catch(function(){});
+  }, 800);
+})();
 </script>
 </head>
 <body>
@@ -51,6 +100,14 @@ document.addEventListener('DOMContentLoaded', function(){
     <div class="spinner"></div>
     <div id="ga-status">正在启动 GenericAgent…</div>
     <div class="bar"><div id="ga-bar"></div></div>
+  </div>
+  <div class="sc-prompt" id="sc-prompt" role="alertdialog" aria-live="polite">
+    <div class="ttl" id="sc-ttl">桌面快捷方式</div>
+    <div class="sub" id="sc-sub">首次便携启动 — 是否创建桌面图标？</div>
+    <div class="row">
+      <button type="button" id="sc-no">跳过</button>
+      <button type="button" class="primary" id="sc-yes">创建</button>
+    </div>
   </div>
 </body>
 </html>

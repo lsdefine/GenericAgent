@@ -1469,7 +1469,8 @@ _HAS_WAYLAND = bool(os.environ.get("WAYLAND_DISPLAY"))
 
 def _clipboard_run(cmd: list[str], input: bytes | None = None, timeout: float = 3.0) -> bytes | None:
     try:
-        r = subprocess.run(cmd, input=input, capture_output=True, timeout=timeout)
+        stdin = subprocess.DEVNULL if input is None else None
+        r = subprocess.run(cmd, input=input, stdin=stdin, capture_output=True, timeout=timeout)
         return r.stdout if r.returncode == 0 else None
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         return None
@@ -6365,7 +6366,7 @@ class GenericAgentTUI(App[None]):
         out = ''; rc = 0
         try:
             r = subprocess.run(
-                shell_argv + [cmd], capture_output=True,
+                shell_argv + [cmd], stdin=subprocess.DEVNULL, capture_output=True,
                 timeout=30, encoding='utf-8', errors='replace',
             )
             out = (r.stdout or '') + (r.stderr or '')

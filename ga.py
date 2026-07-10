@@ -56,7 +56,8 @@ def code_run(code, code_type="python", timeout=60, cwd=None, code_cwd=None, stop
 
     try:
         process = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            cmd, stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             bufsize=0, cwd=cwd, startupinfo=startupinfo,
             creationflags=0x08000000 if os.name == 'nt' else 0
         )

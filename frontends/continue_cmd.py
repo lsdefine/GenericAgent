@@ -383,7 +383,7 @@ def list_sessions(exclude_pid=None, exclude_log=None, rewind_root=None):
         valid_keys.append(key)
         out.append((f, mtime, preview, rounds))
     _save_rounds_cache(valid_keys)
-    # 【门控·worldline】树感知发现:日志空/缺失但有非空世界线树的会话(回退到起点后日志被
+    # 【门控·worldline】树感知发现:日志存在但为空且有非空世界线树的会话(回退到起点后日志被
     # 清空 → 上面 sz<32 跳过了)。仅当调用方显式传 rewind_root 时启用 → 其他 UI 不传,
     # 行为逐字节不变。只读 tree.json 的 nodes/head(不依赖 worldline 模块)。
     if rewind_root and os.path.isdir(rewind_root):
@@ -399,11 +399,11 @@ def list_sessions(exclude_pid=None, exclude_log=None, rewind_root=None):
             if log_name in have or log_name == exclude_log:
                 continue
             log_path = os.path.join(_LOG_DIR, log_name)
-            try:                                    # 仅收"日志确实空/缺失"的(非空日志已被主循环收录)
+            try:                                    # 仅收"日志确实为空"的(非空日志已被主循环收录)
                 if os.path.getsize(log_path) >= 32:
                     continue
             except OSError:
-                pass                                # 缺失也算
+                continue                            # 日志缺失(如已归档)不作为可续会话展示
             try:
                 with open(os.path.join(rewind_root, key, 'tree.json'), encoding='utf-8') as fh:
                     d = json.load(fh)

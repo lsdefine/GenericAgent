@@ -702,18 +702,14 @@ class _TaskCard:
             self._fallback_text(f"❌ {msg}", final=True)
 
 
-def _make_task_hook(card, task_id, on_final):
-    """飞书任务 hook：每轮 patch 卡片状态；结束触发 on_final(raw) 处理附件。"""
+def _make_task_hook(card, task_id):
+    """飞书任务 hook：只将每轮 summary 更新到任务卡片。"""
     def hook(ctx):
         try:
             parent = getattr(ctx.get("self"), "parent", None)
             if getattr(parent, "_fs_active_task_id", None) != task_id:
                 return
-            if ctx.get('exit_reason'):
-                resp = ctx.get('response')
-                raw = resp.content if hasattr(resp, 'content') else str(resp)
-                on_final(raw)
-            elif ctx.get('summary'):
+            if ctx.get('summary'):
                 detail = _build_step_detail(ctx.get('response'), ctx.get('tool_calls') or [])
                 card.step(ctx['summary'], detail)
         except Exception as e:
@@ -761,7 +757,7 @@ class FeishuApp(AgentChatMixin):
             await asyncio.to_thread(card.start)
             if not hasattr(self.agent, '_turn_end_hooks'):
                 self.agent._turn_end_hooks = {}
-            self.agent._turn_end_hooks[hook_key] = _make_task_hook(card, task_id, _finish)
+            self.agent._turn_end_hooks[hook_key] = _make_task_hook(card, task_id)
             self.agent._fs_active_task_id = task_id
             dq = self.agent.put_task(f"{FILE_HINT}\n\n{text}", source=self.source, images=images or None)
             start = time.time()

@@ -3,10 +3,13 @@ from datetime import datetime, timedelta
 
 # 端口锁：防止重复启动，bind失败时agentmain会直接崩溃退出
 # reload时mod.__dict__保留_lock，跳过重复绑定
+# 注意：原端口 45762 在部分 Windows 机器上落入系统保留段(Hyper-V/WSL/Docker
+# 的 WinNAT 动态排除)，此时没有任何进程占用，bind 却报 10048(带 SO_REUSEADDR
+# 甚至报 10013/EACCES)。改用 41537，避开常见保留段。
 try: _lock
 except NameError:
     _lock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
-    _lock.bind(('127.0.0.1', 45762)); _lock.listen(1)
+    _lock.bind(('127.0.0.1', 41537)); _lock.listen(1)
 
 INTERVAL = 120
 ONCE = False

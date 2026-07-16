@@ -470,7 +470,9 @@ class GenericAgentHandler(BaseHandler):
         return StepOutcome({"result": "working key_info updated"}, next_prompt=next_prompt)
 
     def _retry_or_exit(self, prompt):
-        self._empty_ct = getattr(self, '_empty_ct', 0) + 1
+        consecutive = getattr(self, '_empty_turn', -1) == self.current_turn - 1
+        self._empty_ct = getattr(self, '_empty_ct', 0) + 1 if consecutive else 1
+        self._empty_turn = self.current_turn
         if self._empty_ct >= 3: return StepOutcome({}, should_exit=True)
         return StepOutcome({}, next_prompt=prompt)
 

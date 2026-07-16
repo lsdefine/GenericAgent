@@ -477,7 +477,7 @@ class GenericAgentHandler(BaseHandler):
     def do_no_tool(self, args, response):
         '''这是一个特殊工具，由引擎自主调用，不要包含在TOOLS_SCHEMA里。
         当模型在一轮中未显式调用任何工具时，由引擎自动触发。
-        二次确认仅在回复几乎只包含<thinking>/<summary>和一段大代码块时触发。'''
+        二次确认也会在回复只有<thinking>/<summary>元数据时触发。'''
         content = getattr(response, 'content', '') or ""
         thinking = getattr(response, 'thinking', '') or ""
         if not response or (not content.strip() and not thinking.strip()):
@@ -487,6 +487,11 @@ class GenericAgentHandler(BaseHandler):
             return self._retry_or_exit("[System] Incomplete response. Regenerate and tooluse.")
         if 'max_tokens !!!]' in content[-100:]:
             return self._retry_or_exit("[System] max_tokens limit reached. Use multi small steps to do it.")
+
+        visible_content = re.sub(r"<(?:thinking|summary)>[\s\S]*?</(?:thinking|summary)>", "", content, flags=re.IGNORECASE).strip()
+        if not visible_content:
+            yield "[Warn] LLM returned only thinking/summary metadata. Retrying...\n"
+            return self._retry_or_exit("[System] Incomplete response: only thinking/summary metadata was returned. Continue the task and use tools when action is required.")
         
         if self._in_plan_mode() and any(kw in content for kw in ['任务完成', '全部完成', '已完成所有', '🏁']):
             if 'VERDICT' not in content and '[VERIFY]' not in content and '验证subagent' not in content:

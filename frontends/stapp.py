@@ -143,7 +143,7 @@ def render_sidebar():
         field-sizing: content; min-height: 1.6em !important; height: auto !important;
     }
     </style>""", unsafe_allow_html=True)
-    st.text_area("Loop prompt", value=st.session_state.get('loop_prompt_input', "继续" if LANG=='zh' else 'next'), key="loop_prompt_input", height=1)
+    st.text_area("Loop prompt", value=st.session_state.get('loop_prompt_input', "继续" if LANG=='zh' else 'next'), key="loop_prompt_input", height=68)
     if st.session_state.get('loop_enabled'):
         if st.button("⏹️ Stop Loop"):
             st.session_state.loop_enabled = False

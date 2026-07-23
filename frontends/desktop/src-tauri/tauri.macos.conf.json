@@ -1,0 +1,33 @@
+{
+  "app": {
+    "windows": [
+      {
+        "title": "GenericAgent",
+        "label": "main",
+        "width": 1280,
+        "height": 800,
+        "resizable": true,
+        "decorations": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": {
+          "x": 18,
+          "y": 26
+        },
+        "maximized": false,
+        "visible": false,
+        "url": "loading.html"
+      },
+      {
+        "title": "GenericAgent — Setup",
+        "label": "setup",
+        "width": 600,
+        "height": 580,
+        "resizable": false,
+        "visible": false,
+        "center": true,
+        "url": "fallback.html"
+      }
+    ]
+  }
+}

@@ -2,6 +2,7 @@
    仅布局与视觉占位。所有颜色均走 CSS 变量，主题可整体切换（无硬编码颜色）。 */
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
+[data-tauri-drag-region]{ -webkit-user-select:none; user-select:none; }
 
 /* —— 全局滚动条 —— */
 ::-webkit-scrollbar{ width:6px; height:6px; }
@@ -504,9 +505,17 @@ body{ background:var(--bg); color:var(--txt); font-size:13px; overflow:hidden; f
   border-right:1px solid var(--divider); border-radius:0; box-shadow:none;
   overflow:hidden; display:flex; flex-direction:column;
   padding:var(--shell-pad) 12px 12px;
+  position:relative;
   box-sizing:border-box;
   transition:width .2s, padding .2s, opacity .15s;
 }
+.sidebar-top-drag-region{
+  position:absolute; inset:0 0 auto; height:var(--shell-pad);
+}
+html[data-platform="macos"] .sidebar{
+  padding-top:52px;
+}
+html[data-platform="macos"] .sidebar-top-drag-region{ height:52px; }
 .brand{
   display:flex; align-items:center; gap:0;
   flex:0 0 var(--shell-head-h);
@@ -652,7 +661,11 @@ body{ background:var(--bg); color:var(--txt); font-size:13px; overflow:hidden; f
   border:0;
   border-radius:0; box-shadow:none; overflow:hidden;
   padding-top:var(--shell-pad);
+  position:relative;
   box-sizing:border-box;
+}
+.main-top-drag-region{
+  position:absolute; inset:0 0 auto; height:var(--shell-pad);
 }
 
 .topbar{
@@ -689,6 +702,7 @@ body{ background:var(--bg); color:var(--txt); font-size:13px; overflow:hidden; f
 .pt-icon svg{ width:16px; height:16px; transition:transform .2s; }
 .body.sb-collapsed .pt-sb-toggle svg,
 .body.rp-collapsed .pt-rp-toggle svg{ transform:rotate(180deg); }
+html[data-platform="macos"] .body.sb-collapsed .pt-sb-toggle{ margin-left:75px; }
 .pt-spacer{ flex:1 1 auto; }
 .tb-left{ display:flex; align-items:center; gap:14px; font-size:12px; }
 .pill{

@@ -946,11 +946,15 @@ pub fn run() {
     let no_autostart = args.iter().any(|a| a == "--no-autostart");
     let dev_mode = args.iter().any(|a| a == "--dev");
 
-    // Resolve the effective config once. project_dir is ALWAYS the bundle's own (方案三: we run
-    // our own bridge/frontend); the external核, if any, is injected via GA_ROOT in
-    // sanitize_bundle_env. Identity/takeover must compare against the EFFECTIVE ga_root (what the
-    // bridge will report), not the bundle script dir.
-    let (eff_py, eff_project) = get_or_discover_config();
+    // Resolve the effective config once. Development must use the checkout that produced this
+    // binary; otherwise a persisted path from an installed macOS app can make `tauri dev` serve
+    // stale frontend files from /Applications. Do not persist the temporary dev paths.
+    // Packaged builds still use their bundled runtime (or the normal saved-config discovery).
+    let (eff_py, eff_project) = if dev_mode {
+        (find_python(), find_project_dir().unwrap_or_default())
+    } else {
+        get_or_discover_config()
+    };
     let effective_ga_root = valid_ga_source_override().unwrap_or_else(|| eff_project.clone());
     let needs_prepare = needs_first_run_prepare(&eff_project);
 

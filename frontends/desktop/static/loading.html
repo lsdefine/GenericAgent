@@ -7,6 +7,7 @@
 :root{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI","Microsoft YaHei UI","Helvetica Neue",Helvetica,Arial,sans-serif;background:#fff;color:#111}
 @media(prefers-color-scheme:dark){:root{background:#1a1a1a;color:#eee}}
 html,body{height:100%;margin:0;display:flex;align-items:center;justify-content:center}
+.window-drag-region{position:fixed;inset:0 0 auto;height:42px;z-index:10;-webkit-user-select:none;user-select:none}
 .card{text-align:center;opacity:.85;width:280px}
 .spinner{width:28px;height:28px;margin:0 auto 14px;border:3px solid #9994;border-top-color:currentColor;border-radius:50%;animation:spin 1s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
@@ -41,6 +42,7 @@ document.addEventListener('DOMContentLoaded', function(){
 </script>
 </head>
 <body>
+  <div class="window-drag-region" data-tauri-drag-region="deep"></div>
   <div class="card">
     <div class="spinner"></div>
     <div id="ga-status" data-i18n="loading.starting_app"></div>

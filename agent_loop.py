@@ -46,7 +46,14 @@ def agent_runner_loop(client, system_prompt, user_input, handler, tools_schema,
         {"role": "user", "content": initial_user_content if initial_user_content is not None else user_input}
     ]
     turn = 0;  handler.max_turns = max_turns
-    _hook('agent_before', locals())
+    _ctx = _hook('agent_before', locals())
+    if isinstance(_ctx, dict):
+        if 'system_prompt' in _ctx:
+            messages[0]['content'] = _ctx['system_prompt']
+        if _ctx.get('initial_user_content') is not None:
+            messages[1]['content'] = _ctx['initial_user_content']
+        elif 'user_input' in _ctx and initial_user_content is None:
+            messages[1]['content'] = _ctx['user_input']
     while turn < handler.max_turns:
         turn += 1; turnstr = f'LLM Running (Turn {turn}) ...'
         if handler.parent.task_dir: turnstr = f'Turn {turn} ...'

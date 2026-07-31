@@ -236,7 +236,7 @@ def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
     """
     content_text = ""
     if api_mode == "responses":
-        seen_delta = False; fc_buf = {}; current_fc_idx = None
+        seen_delta = False; fc_buf = {}; current_fc_idx = None; reasoning_text = ""
         for line in resp_lines:
             if not line: continue
             line = line.decode('utf-8', errors='replace') if isinstance(line, bytes) else line
@@ -252,6 +252,12 @@ def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
             elif etype == "response.output_text.done" and not seen_delta:
                 text = evt.get("text", "")
                 if text: content_text += text; yield text
+            elif etype == "response.reasoning_text.delta":
+                delta = evt.get("delta", "")
+                if delta: reasoning_text += delta
+            elif etype == "response.reasoning_text.done":
+                text = evt.get("text", "")
+                if text: reasoning_text = text
             elif etype == "response.output_item.added":
                 item = evt.get("item", {})
                 if item.get("type") == "function_call":
@@ -273,7 +279,25 @@ def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
                 usage = evt.get("response", {}).get("usage", {})
                 _record_usage(usage, api_mode)
                 break
+            elif etype == "response.incomplete":
+                # DeepSeek/OpenAI responses stream may end here (no [DONE]); treat as valid terminal,
+                # record usage and surface a truncation marker instead of an empty-response retry storm.
+                usage = (evt.get("response") or {}).get("usage", {})
+                _record_usage(usage, api_mode)
+                reason = ((evt.get("response") or {}).get("incomplete_details") or {}).get("reason", "") or "unknown"
+                if not content_text and not fc_buf:
+                    marker = f"[!!! output truncated: {reason}]"
+                    content_text += marker; yield marker
+                break
+            elif etype == "response.failed":
+                usage = (evt.get("response") or {}).get("usage", {})
+                _record_usage(usage, api_mode)
+                err = ((evt.get("response") or {}).get("error") or {})
+                emsg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
+                if emsg: content_text += f"!!!Error: {emsg}"; yield f"!!!Error: {emsg}"
+                break
         blocks = []
+        if reasoning_text: blocks.append({"type": "thinking", "thinking": reasoning_text})
         if content_text: blocks.append({"type": "text", "text": content_text})
         for idx in sorted(fc_buf):
             fc = fc_buf[idx]
@@ -351,11 +375,24 @@ def _parse_openai_json(data, api_mode="chat_completions"):
                 for p in (item.get("content") or []):
                     if p.get("type") in ("output_text", "text") and p.get("text"):
                         blocks.append({"type": "text", "text": p["text"]}); yield p["text"]
+            elif item.get("type") == "reasoning":
+                for p in (item.get("content") or []):
+                    if p.get("type") in ("reasoning_text", "summary_text") and p.get("text"):
+                        blocks.append({"type": "thinking", "thinking": p["text"]})
             elif item.get("type") == "function_call":
                 try: args = json.loads(item.get("arguments", "")) if item.get("arguments") else {}
                 except: args = {"_raw": item.get("arguments", "")}
                 blocks.append({"type": "tool_use", "id": item.get("call_id", item.get("id", "")),
                                "name": item.get("name", ""), "input": args})
+        status = (data.get("status") or "").lower()
+        if status == "failed":
+            err = data.get("error") or {}
+            emsg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
+            if emsg: blocks.append({"type": "text", "text": f"!!!Error: {emsg}"}); yield f"!!!Error: {emsg}"
+        elif status == "incomplete" and not any(b.get("type") == "text" for b in blocks):
+            reason = ((data.get("incomplete_details") or {}).get("reason", "")) or "unknown"
+            marker = f"[!!! output truncated: {reason}]"
+            blocks.append({"type": "text", "text": marker}); yield marker
     else:
         _record_usage(data.get("usage") or {}, api_mode)
         msg = (data.get("choices") or [{}])[0].get("message", {})

@@ -301,7 +301,7 @@ class GenericAgentHandler(BaseHandler):
         return matches[-1].strip() if matches else None
 
     def do_ocr(self, args, response):
-        """用兼容 OpenAI chat/completions 的视觉模型从本地图片提取文字。"""
+        """用云端 Responses API 的 Luna 视觉模型从本地图片提取文字。"""
         path = args.get("image_path") or args.get("path")
         if not path:
             return StepOutcome("[Error] image_path is required", next_prompt="\n")

@@ -39,20 +39,22 @@ def _load_labeled_key(label):
     return None
 
 
-def _config_key():
-    name = os.environ.get("GA_OCR_CONFIG", "native_oai_config_aihub1")
+def _ocr_config():
+    """Use the explicitly selected cloud Luna config; never inherit another config."""
     try:
-        cfg = getattr(importlib.import_module("mykey"), name)
-    except (ImportError, AttributeError):
-        return None
-    return cfg if isinstance(cfg, dict) else None
+        cfg = getattr(importlib.import_module("mykey"), "native_oai_config_aihub3")
+    except (ImportError, AttributeError) as e:
+        raise RuntimeError("explicit OCR config native_oai_config_aihub3 is unavailable") from e
+    if not isinstance(cfg, dict) or not cfg.get("apikey"):
+        raise RuntimeError("explicit OCR Luna credential is not configured")
+    return cfg
 
 
 def _credential(kind):
     if kind == "image":
         return _load_labeled_key(os.environ.get("GA_IMAGE_KEY_LABEL", "image2")), None
-    cfg = _config_key() or {}
-    return cfg.get("apikey"), cfg
+    cfg = _ocr_config()
+    return cfg["apikey"], cfg
 
 
 def _read_image(path):
@@ -63,21 +65,31 @@ def _read_image(path):
     return mime, base64.b64encode(p.read_bytes()).decode("ascii")
 
 
+def _response_text(payload):
+    if isinstance(payload.get("output_text"), str):
+        return payload["output_text"]
+    for item in payload.get("output", []) or []:
+        for content in item.get("content", []) or []:
+            text = content.get("text")
+            if isinstance(text, str):
+                return text
+    raise RuntimeError("OCR response contained no output text")
+
+
 def ocr(image_path, prompt="Extract all readable text exactly; preserve layout where possible.", timeout=120):
     import requests
-    key, _ = _credential("ocr")
-    if not key:
-        raise RuntimeError("OCR credential is not configured")
+    key, cfg = _credential("ocr")
     mime, data = _read_image(image_path)
-    cfg = _config_key() or {}
-    base = os.environ.get("GA_OCR_API_BASE", cfg.get("apibase", "https://api.openai.com/v1")).rstrip("/")
-    model = os.environ.get("GA_OCR_MODEL", cfg.get("model", "gpt-5.6-sol"))
-    r = requests.post(base + "/chat/completions", headers={"Authorization": "Bearer " + key,
-        "Content-Type": "application/json"}, json={"model": model, "messages": [{"role": "user", "content": [
-        {"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{data}"}}
-    ]}], "max_tokens": 4096}, timeout=timeout)
+    base = cfg["apibase"].rstrip("/")
+    model = cfg["model"]
+    payload = {"model": model, "input": [{"role": "user", "content": [
+        {"type": "input_text", "text": prompt},
+        {"type": "input_image", "image_url": f"data:{mime};base64,{data}"}
+    ]}]}
+    r = requests.post(base + "/responses", headers={"Authorization": "Bearer " + key,
+        "Content-Type": "application/json"}, json=payload, timeout=timeout)
     r.raise_for_status()
-    return r.json()["choices"][0]["message"]["content"]
+    return _response_text(r.json())
 
 
 def generate_image(prompt, size="1024x1024", quality="auto", timeout=180):

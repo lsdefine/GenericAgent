@@ -1588,10 +1588,69 @@ def _save_settings(patch: dict) -> None:
     cur.update(patch)
     try:
         os.makedirs(os.path.dirname(_SETTINGS_PATH), exist_ok=True)
-        with open(_SETTINGS_PATH, "w", encoding="utf-8") as f:
+        tmp = _SETTINGS_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(cur, f, ensure_ascii=False, indent=2)
+            f.flush(); os.fsync(f.fileno())
+        os.replace(tmp, _SETTINGS_PATH)
     except Exception:
-        pass
+        try: os.unlink(tmp)
+        except Exception: pass
+
+
+_SESSION_PREFS_KEY = "tui_session_model_preferences"
+
+
+def _session_pref_records() -> list[dict]:
+    rows = _load_settings().get(_SESSION_PREFS_KEY, [])
+    return rows if isinstance(rows, list) else []
+
+
+def _session_pref_key(sess: "AgentSession") -> tuple[str, str]:
+    name = (getattr(sess, "name", "") or "").strip()
+    # Default agent-N labels are ephemeral and must not become identities.
+    if re.fullmatch(r"agent-\d+", name, re.I):
+        name = ""
+    path = os.path.normcase(os.path.abspath(getattr(sess, "workspace_path", "") or "")) if getattr(sess, "workspace_path", "") else ""
+    return name.casefold(), path
+
+
+def _remember_session_preference(sess: "AgentSession") -> None:
+    name, workspace = _session_pref_key(sess)
+    if not name and not workspace:
+        return
+    agent = sess.agent
+    try:
+        import model_cmd
+        effort = model_cmd.current_effort(agent) or ""
+        model = model_cmd.current_model(agent, None) or ""
+    except Exception:
+        effort = ""
+        try: model = agent.get_llm_name(model=True) or ""
+        except Exception: model = ""
+    row = {"name": name, "workspace": workspace, "llm_no": int(getattr(agent, "llm_no", 0)),
+           "llm_name": str(getattr(agent, "get_llm_name", lambda: "")() or ""),
+           "model": str(model), "effort": str(effort)}
+    rows = [r for r in _session_pref_records()
+            if not (isinstance(r, dict) and r.get("name", "").casefold() == name
+                    and r.get("workspace", "") == workspace)]
+    rows.append(row)
+    _save_settings({_SESSION_PREFS_KEY: rows[-100:]})
+
+
+def _find_session_preference(sess: "AgentSession") -> Optional[dict]:
+    name, workspace = _session_pref_key(sess)
+    rows = _session_pref_records()
+    # Explicit renamed identity wins; workspace is the fallback identity.
+    if name:
+        for r in reversed(rows):
+            if isinstance(r, dict) and r.get("name", "").casefold() == name:
+                return r
+    if workspace:
+        for r in reversed(rows):
+            if isinstance(r, dict) and r.get("workspace", "") == workspace:
+                return r
+    return None
 
 _palette: dict[str, str] = dict(_DEFAULT_PALETTE)
 C_FG     = _palette["fg"]
@@ -3859,8 +3918,48 @@ class GenericAgentTUI(App[None]):
         self._install_intervene_replay_hook(sess)
         self._install_write_snapshot_hook()
         self._install_rw_time_hook(sess)
+        self._restore_session_preference(sess)
         self._refresh_all()
         return sess
+
+    def _restore_session_preference(self, sess: AgentSession) -> None:
+        """Apply the saved model/channel/effort once for the current identity."""
+        pref = _find_session_preference(sess)
+        if not pref:
+            return
+        try:
+            agent = sess.agent
+            want_name = pref.get("llm_name") or ""
+            clients = getattr(agent, "llmclients", []) or []
+            if want_name and clients:
+                names = [agent.get_llm_name(c) for c in clients]
+                if want_name in names:
+                    agent.next_llm(names.index(want_name))
+                elif isinstance(pref.get("llm_no"), int) and 0 <= pref["llm_no"] < len(clients):
+                    agent.next_llm(pref["llm_no"])
+            elif isinstance(pref.get("llm_no"), int):
+                agent.next_llm(pref["llm_no"])
+            import model_cmd
+            if pref.get("model"):
+                model_cmd.set_model(agent, str(pref["model"]))
+            if pref.get("effort"):
+                model_cmd.set_effort(agent, str(pref["effort"]))
+            sess._model_preference_restored = True
+        except Exception:
+            # A stale model/channel must never prevent a session from opening.
+            pass
+
+    def _set_model_and_remember(self, model: str) -> str:
+        import model_cmd
+        result = model_cmd.set_model(self.current.agent, model)
+        _remember_session_preference(self.current)
+        return result
+
+    def _set_effort_and_remember(self, effort: str) -> str:
+        import model_cmd
+        result = model_cmd.set_effort(self.current.agent, effort)
+        _remember_session_preference(self.current)
+        return result
 
     def _bind_workspace(self, sess: AgentSession, info: Optional[dict],
                         persist: bool = True) -> None:
@@ -5061,6 +5160,7 @@ class GenericAgentTUI(App[None]):
             except Exception as e:
                 self._system(f"⚠️ 名称未持久化: {type(e).__name__}: {e}")
         self._refresh_topbar(); self._refresh_sidebar()
+        _remember_session_preference(self.current)
         self._system(f"✅ 已重命名为 {name!r}")
 
     def _cmd_branch(self, args, raw):
@@ -5466,6 +5566,7 @@ class GenericAgentTUI(App[None]):
         if args:
             try:
                 sess.agent.next_llm(int(args[0]))
+                _remember_session_preference(sess)
                 self._system(f"Switched model to #{int(args[0])}.")
             except Exception as e:
                 self._system(f"Switch failed: {e}")
@@ -5495,6 +5596,7 @@ class GenericAgentTUI(App[None]):
     def _do_switch_llm(self, idx: int) -> str:
         try:
             self.current.agent.next_llm(int(idx))
+            _remember_session_preference(self.current)
             name = self.current.agent.get_llm_name()
             return f"已切换到 [{idx}] {name}"
         except Exception as e:
@@ -5505,7 +5607,7 @@ class GenericAgentTUI(App[None]):
         import model_cmd
         agent = self.current.agent
         if args:  # /model <name> 直设, 不拉列表
-            self._system(model_cmd.set_model(agent, " ".join(args)))
+            self._system(self._set_model_and_remember(" ".join(args)))
             return
         self._open_model_picker()
 
@@ -5520,7 +5622,7 @@ class GenericAgentTUI(App[None]):
             role="system",
             content=f"选择模型 (当前: {cur} · 输入过滤或自定义名称 · ↑/↓ 移动，Enter 确认，Esc 取消)",
             kind="choice", choices=[],
-            on_select=lambda v: model_cmd.set_model(self.current.agent, v),
+            on_select=lambda v: self._set_model_and_remember(v),
         )
         msg.searchable = True
         msg.free_input = True
@@ -5544,7 +5646,7 @@ class GenericAgentTUI(App[None]):
     def _cmd_effort(self, args, raw):
         import model_cmd
         if args:  # /effort <level> 直设
-            self._system(model_cmd.set_effort(self.current.agent, " ".join(args)))
+            self._system(self._set_effort_and_remember(" ".join(args)))
             return
         agent = self.current.agent
         cur = model_cmd.current_effort(agent)
@@ -5563,7 +5665,7 @@ class GenericAgentTUI(App[None]):
             content=(f"选择 reasoning effort (当前: {cur or '未设置'} · "
                      "↑/↓ 移动，Enter 确认，Esc 取消)"),
             kind="choice", choices=choices,
-            on_select=lambda v: model_cmd.set_effort(self.current.agent, v),
+            on_select=lambda v: self._set_effort_and_remember(v),
         )
         self.current.messages.append(msg)
         self._refresh_messages()
@@ -5845,6 +5947,9 @@ class GenericAgentTUI(App[None]):
                         self._system(f"⚠ workspace 恢复失败: {r.get('error')}")
             except Exception:
                 pass
+            # Continue may change the log/name/workspace identity; restore the
+            # preference only after all of those fields have settled.
+            self._restore_session_preference(sess)
             self._remount_current_session()
             self._refresh_all()
         self.call_after_refresh(_finish)
@@ -5903,6 +6008,7 @@ class GenericAgentTUI(App[None]):
         if not r.get("ok"):
             return f"❌ workspace 设定失败: {r.get('error')}"
         self._bind_workspace(self.current, r)
+        _remember_session_preference(self.current)
         self._refresh_topbar()
         # 显示名去 hash（与 picker 一致）：真实目录 basename，退回剥 name 尾 hash。
         disp = os.path.basename((r.get("target") or "").rstrip("/\\")) \

@@ -320,9 +320,10 @@ class GenericAgentHandler(BaseHandler):
             return StepOutcome("[Error] prompt is required", next_prompt="\n")
         try:
             from media_api import generate_image
-            result = generate_image(prompt, size=args.get("size", "1024x1024"),
+            result = generate_image(prompt, size=args.get("size", "1K"),
                                     quality=args.get("quality", "auto"),
-                                    timeout=_arg(args, "timeout", 180, int))
+                                    timeout=_arg(args, "timeout", 180, int),
+                                    output_dir=self.cwd)
             return StepOutcome(result, next_prompt="\n")
         except Exception as e:
             return StepOutcome(f"[Error] image generation failed: {type(e).__name__}: {e}", next_prompt="\n")

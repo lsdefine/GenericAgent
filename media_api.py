@@ -1,42 +1,13 @@
 """Small OpenAI-compatible vision/image adapter.
 
-Credentials are loaded at call time. Values are never logged or returned.
+Credentials are loaded from explicit dictionaries in ``mykey.py`` at call time.
+Values are never logged or returned.
 """
 import base64
 import importlib
 import mimetypes
 import os
 from pathlib import Path
-
-
-def _key_file():
-    return Path(os.environ.get("GA_KEY_FILE", str(Path.home() / "key.txt")))
-
-
-def _load_labeled_key(label):
-    """Read ``label: value`` or an indented label followed by its value."""
-    wanted = label.strip().lower()
-    p = _key_file()
-    if not p.is_file():
-        return None
-    lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
-    for i, raw in enumerate(lines):
-        if ":" not in raw:
-            continue
-        name, value = raw.split(":", 1)
-        if name.strip().lower() != wanted:
-            continue
-        if value.strip():
-            return value.strip()
-        # Support the user's grouped format: key name on one line,
-        # secret on the following indented line. Do not expose either.
-        for following in lines[i + 1:]:
-            if not following.strip():
-                continue
-            if following[:1].isspace() and ":" not in following:
-                return following.strip()
-            break
-    return None
 
 
 def _ocr_config():
@@ -50,9 +21,21 @@ def _ocr_config():
     return cfg
 
 
+def _image_config():
+    """Use the explicit image2 config from mykey.py."""
+    try:
+        cfg = getattr(importlib.import_module("mykey"), "native_oai_config_image2")
+    except (ImportError, AttributeError) as e:
+        raise RuntimeError("explicit image config native_oai_config_image2 is unavailable") from e
+    if not isinstance(cfg, dict) or not cfg.get("apikey"):
+        raise RuntimeError("explicit image2 credential is not configured")
+    return cfg
+
+
 def _credential(kind):
     if kind == "image":
-        return _load_labeled_key(os.environ.get("GA_IMAGE_KEY_LABEL", "image2")), None
+        cfg = _image_config()
+        return cfg["apikey"], cfg
     cfg = _ocr_config()
     return cfg["apikey"], cfg
 
@@ -92,23 +75,36 @@ def ocr(image_path, prompt="Extract all readable text exactly; preserve layout w
     return _response_text(r.json())
 
 
-def generate_image(prompt, size="1024x1024", quality="auto", timeout=180):
+def generate_image(prompt, size="1K", quality="auto", timeout=180, output_dir=None):
     import requests
-    key, _ = _credential("image")
+    from uuid import uuid4
+    key, cfg = _credential("image")
     if not key:
         raise RuntimeError("image2 credential is not configured")
-    base = os.environ.get("GA_IMAGE_API_BASE", "https://api.openai.com/v1").rstrip("/")
-    model = os.environ.get("GA_IMAGE_MODEL", "image2")
+    base = cfg["apibase"].rstrip("/")
+    model = cfg["model"]
+    payload = {"model": model, "prompt": prompt, "size": size,
+               "quality": quality, "n": 1}
+    # The upstream exposes no parameter schema; pass through values it accepts.
     r = requests.post(base + "/images/generations", headers={"Authorization": "Bearer " + key,
-        "Content-Type": "application/json"}, json={"model": model, "prompt": prompt, "size": size,
-        "quality": quality, "n": 1}, timeout=timeout)
+        "Content-Type": "application/json"}, json=payload, timeout=timeout)
     r.raise_for_status()
     item = (r.json().get("data") or [{}])[0]
-    if item.get("url"): return item["url"]
-    if item.get("b64_json"):
-        out = Path(os.environ.get("GA_IMAGE_OUTPUT_DIR", "./temp/generated_images")).resolve()
+    if item.get("url"):
+        image_url = item["url"]
+        download = requests.get(image_url, timeout=timeout)
+        download.raise_for_status()
+        content_type = download.headers.get("content-type", "image/png").split(";", 1)[0]
+        suffix = {"image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif"}.get(content_type, ".png")
+        out = Path(output_dir).expanduser().resolve() / "image" if output_dir else Path.cwd() / "image"
         out.mkdir(parents=True, exist_ok=True)
-        target = out / "generated.png"
+        target = out / f"generated_{uuid4().hex[:12]}{suffix}"
+        target.write_bytes(download.content)
+        return str(target)
+    if item.get("b64_json"):
+        out = Path(output_dir).expanduser().resolve() / "image" if output_dir else Path.cwd() / "image"
+        out.mkdir(parents=True, exist_ok=True)
+        target = out / f"generated_{uuid4().hex[:12]}.png"
         target.write_bytes(base64.b64decode(item["b64_json"]))
         return str(target)
     raise RuntimeError("image API returned neither url nor b64_json")

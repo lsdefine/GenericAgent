@@ -300,6 +300,33 @@ class GenericAgentHandler(BaseHandler):
         matches = re.findall(rf"```(?:{code_type})\n(.*?)\n```", response.content, re.DOTALL)
         return matches[-1].strip() if matches else None
 
+    def do_ocr(self, args, response):
+        """用兼容 OpenAI chat/completions 的视觉模型从本地图片提取文字。"""
+        path = args.get("image_path") or args.get("path")
+        if not path:
+            return StepOutcome("[Error] image_path is required", next_prompt="\n")
+        try:
+            from media_api import ocr
+            result = ocr(self._get_abs_path(path), prompt=args.get("prompt", ""),
+                         timeout=_arg(args, "timeout", 120, int))
+            return StepOutcome(result, next_prompt="\n")
+        except Exception as e:
+            return StepOutcome(f"[Error] OCR failed: {type(e).__name__}: {e}", next_prompt="\n")
+
+    def do_generate_image(self, args, response):
+        """调用 image2 的 OpenAI-compatible images/generations 接口。"""
+        prompt = (args.get("prompt") or "").strip()
+        if not prompt:
+            return StepOutcome("[Error] prompt is required", next_prompt="\n")
+        try:
+            from media_api import generate_image
+            result = generate_image(prompt, size=args.get("size", "1024x1024"),
+                                    quality=args.get("quality", "auto"),
+                                    timeout=_arg(args, "timeout", 180, int))
+            return StepOutcome(result, next_prompt="\n")
+        except Exception as e:
+            return StepOutcome(f"[Error] image generation failed: {type(e).__name__}: {e}", next_prompt="\n")
+
     def do_code_run(self, args, response):
         '''执行代码片段，有长度限制，不允许代码中放大量数据，如有需要应当通过文件读取进行。'''
         code_type = args.get("type", "python")

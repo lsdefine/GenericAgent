@@ -5027,6 +5027,16 @@ class GenericAgentTUI(App[None]):
         if len(self.sessions) <= 1:
             self._system("Cannot close the last session."); return
         closed = self.sessions.pop(self.current_id)
+        # Reclaim the worker thread: shutdown() aborts any running task and posts
+        # a sentinel so run()'s blocking task_queue.get() returns and the thread
+        # exits, then join. Without this the thread leaks (parked in get()).
+        try:
+            if closed.agent is not None and hasattr(closed.agent, "shutdown"):
+                closed.agent.shutdown()
+            if getattr(closed, "thread", None) is not None:
+                closed.thread.join(timeout=5.0)
+        except Exception:
+            pass
         _rmdir_if_empty(getattr(closed.agent, 'task_dir', None))
         self.current_id = next(iter(self.sessions))
         self._refresh_all()

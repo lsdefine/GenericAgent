@@ -119,6 +119,12 @@ class GenericAgent:
             try: sess.active_response.close()
             except Exception: pass
             
+    def shutdown(self):
+        # Stop any running task, then send a sentinel so run()'s worker thread
+        # exits its blocking task_queue.get() and terminates (prevents thread leak).
+        self.abort()
+        self.task_queue.put("__shutdown__")
+
     def put_task(self, query, source="user", images=None):
         display_queue = queue.Queue()
         self.task_queue.put({"query": query, "source": source, "images": images or [], "output": display_queue})

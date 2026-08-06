@@ -516,7 +516,17 @@ class GenericAgentTUI(App[None]):
     def _cmd_close(self, args: list[str]) -> None:
         if len(self.sessions) <= 1:
             self._system("Cannot close the last session."); return
-        del self.sessions[self.current_id]
+        closed = self.sessions.pop(self.current_id)
+        # Tear down the worker thread so it doesn't leak: shutdown() aborts any
+        # running task and posts a sentinel so run()'s blocking task_queue.get()
+        # returns and the thread exits; then join to reclaim it.
+        try:
+            if closed.agent is not None and hasattr(closed.agent, "shutdown"):
+                closed.agent.shutdown()
+            if closed.thread is not None:
+                closed.thread.join(timeout=5.0)
+        except Exception:
+            pass
         self.current_id = next(iter(self.sessions))
         self._refresh_all()
 

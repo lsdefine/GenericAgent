@@ -29,16 +29,14 @@ async function handleExtMessage(msg, sender) {
           windowId: msg.windowId,
           openerTabId: msg.openerTabId
         });
-        return { ok: true, data: { id: tab.id, url: tab.url, title: tab.title } };
-      }
-      if (msg.method === 'switch') {
+        return { ok: true, data: { id: tab.id, url: tabUrl(tab), title: tab.title } };
+      } else if (msg.method === 'switch') {
         const tab = await chrome.tabs.update(msg.tabId, { active: true });
         await chrome.windows.update(tab.windowId, { focused: true });
         return { ok: true };
       } else {
-        const tabs = (await chrome.tabs.query({})).filter(t => isScriptable(t.url));
-        const data = tabs.map(t => ({ id: t.id, url: t.url, title: t.title, active: t.active, windowId: t.windowId }));
-        return { ok: true, data };
+        const tabs = (await chrome.tabs.query({})).filter(t => isScriptable(tabUrl(t)));
+        return { ok: true, data: tabs.map(t => ({ id: t.id, url: tabUrl(t), title: t.title, active: t.active, windowId: t.windowId })) };
       }
     } catch (e) { return { ok: false, error: e.message }; }
   }
@@ -88,7 +86,7 @@ async function handleCookies(msg, sender) {
     let url = msg.url || sender.tab?.url;
     if (!url && msg.tabId) {
       const tab = await chrome.tabs.get(msg.tabId);
-      url = tab.url;
+      url = tabUrl(tab);
     }
     const origin = url.match(/^https?:\/\/[^\/]+/)[0];
     const all = await chrome.cookies.getAll({ url });
@@ -114,8 +112,23 @@ async function handleBatch(msg, sender) {
       if (c.cmd === 'cookies') {
         R.push(await handleCookies(c, sender));
       } else if (c.cmd === 'tabs') {
-        const tabs = (await chrome.tabs.query({})).filter(t => isScriptable(t.url));
-        R.push({ ok: true, data: tabs.map(t => ({ id: t.id, url: t.url, title: t.title, active: t.active, windowId: t.windowId })) });
+        if (c.method === 'create') {
+          const tab = await chrome.tabs.create({
+            url: c.url,
+            active: c.active !== undefined ? c.active : false,
+            index: c.index,
+            windowId: c.windowId,
+            openerTabId: c.openerTabId
+          });
+          R.push({ ok: true, data: { id: tab.id, url: tabUrl(tab), title: tab.title } });
+        } else if (c.method === 'switch') {
+          const tab = await chrome.tabs.update(c.tabId, { active: true });
+          await chrome.windows.update(tab.windowId, { focused: true });
+          R.push({ ok: true });
+        } else {
+          const tabs = (await chrome.tabs.query({})).filter(t => isScriptable(tabUrl(t)));
+          R.push({ ok: true, data: tabs.map(t => ({ id: t.id, url: tabUrl(t), title: t.title, active: t.active, windowId: t.windowId })) });
+        }
       } else if (c.cmd === 'cdp') {
         const tabId = c.tabId || msg.tabId || sender.tab?.id;
         if (attached !== tabId) {
@@ -151,6 +164,8 @@ async function handleCDP(msg, sender) {
 }
 // Filter out chrome:// and other internal tabs that can't be scripted
 const isScriptable = url => url && /^https?:/.test(url);
+// Newly created background tabs have url="" until navigation commits; the target is in pendingUrl
+const tabUrl = t => t.url || t.pendingUrl || '';
 
 // --- Shared page/CDP script builder core ---
 function buildExecScript(code, errorHandler) {
@@ -318,7 +333,7 @@ async function handleWsExec(data) {
     // Get full info for captured new tabs
     const newTabs = [];
     for (const id of newTabIds) {
-      try { const t = await chrome.tabs.get(id); newTabs.push({id: t.id, url: t.url, title: t.title}); } catch (_) {}
+      try { const t = await chrome.tabs.get(id); newTabs.push({id: t.id, url: tabUrl(t), title: t.title}); } catch (_) {}
     }
     if (res?.ok) {
       ws.send(JSON.stringify({ type: 'result', id: data.id, result: res.data, newTabs }));
@@ -348,10 +363,10 @@ function connectWS() {
   ws.onopen = async () => {
     console.log('[TMWD-WS] Connected!');
     scheduleKeepalive(); // Keep SW alive while connected
-    const tabs = (await chrome.tabs.query({})).filter(t => isScriptable(t.url));
+    const tabs = (await chrome.tabs.query({})).filter(t => isScriptable(tabUrl(t)));
     ws.send(JSON.stringify({
       type: 'ext_ready',
-      tabs: tabs.map(t => ({ id: t.id, url: t.url, title: t.title }))
+      tabs: tabs.map(t => ({ id: t.id, url: tabUrl(t), title: t.title }))
     }));
     console.log('[TMWD-WS] Sent ext_ready with', tabs.length, 'tabs');
   };
@@ -402,14 +417,15 @@ chrome.runtime.onInstalled.addListener(() => connectWS());
 // Sync tab list on changes
 async function sendTabsUpdate() {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  const tabs = (await chrome.tabs.query({})).filter(t => isScriptable(t.url) && !/streamlit/i.test(t.title));
+  const tabs = (await chrome.tabs.query({})).filter(t => isScriptable(tabUrl(t)) && !/streamlit/i.test(t.title));
   ws.send(JSON.stringify({
     type: 'tabs_update',
-    tabs: tabs.map(t => ({ id: t.id, url: t.url, title: t.title }))
+    tabs: tabs.map(t => ({ id: t.id, url: tabUrl(t), title: t.title }))
   }));
 }
 chrome.tabs.onUpdated.addListener((_, changeInfo) => {
-  if (changeInfo.status === 'complete') sendTabsUpdate();
+  // changeInfo.url fires when navigation commits (still loading); complete fires at full load
+  if (changeInfo.status === 'complete' || changeInfo.url) sendTabsUpdate();
 });
 chrome.tabs.onRemoved.addListener(() => sendTabsUpdate());
 chrome.tabs.onCreated.addListener(() => sendTabsUpdate());

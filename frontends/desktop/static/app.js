@@ -289,6 +289,7 @@ let bridgeUiOffline = false;
     getGaSource: () => tauriInvoke('get_ga_source'),
     setGaSource: (dir) => tauriInvoke('set_ga_source', { dir }),
     clearGaSource: () => tauriInvoke('clear_ga_source'),
+    moveGaRuntime: (dir) => tauriInvoke('move_ga_runtime', { dir }),
     getConductorModel: () => rpc('services/conductor/model/get', {}),
     saveConductorModel: (llmNo) => rpc('services/conductor/model/save', { llmNo }),
     tauriInvoke,
@@ -714,6 +715,29 @@ bindClick('import-memory-btn', async (e) => {
     await importMemoryFromDir();
   } catch (err) {
     showChanToast(t('err.memoryImport'), err.message || String(err), 'err');
+  }
+});
+bindClick('move-ga-runtime-btn', async (e) => {
+  e.stopPropagation();
+  if (!window.__TAURI__?.core?.invoke) {
+    showChanToast(t('err.gaRuntimeDesktopOnly'), '', 'err');
+    return;
+  }
+  try {
+    const dir = await window.ga.tauriInvoke('pick_directory', { title: t('sys.gaRuntimeMoveTitle') });
+    if (!dir) return;
+    const confirmed = await showConfirmDialog({
+      title: t('confirm.gaRuntimeMoveTitle'),
+      message: t('confirm.gaRuntimeMove'),
+      okText: t('set.moveGaRuntime'),
+    });
+    if (!confirmed) return;
+    showChanToast(t('sys.gaRuntimeMoving'), dir, 'ok');
+    const project = await window.ga.moveGaRuntime(dir);
+    await refreshGaSource();
+    showChanToast(t('sys.gaRuntimeMoved'), project || dir, 'ok');
+  } catch (err) {
+    showChanToast(t('err.gaRuntimeMove'), err.message || String(err), 'err');
   }
 });
 const gaSourceCurrentEl = document.getElementById('ga-source-current');
@@ -2711,6 +2735,7 @@ function setActiveSession(id) {
   r.draftEl = null;
   resetTypewriterState(r);
   renderAllMessages(sess);
+  scrollBottom(true);
   setBusy(sess, rt(sess).busy);
   renderSessionList();
   refreshPlanBar(null);

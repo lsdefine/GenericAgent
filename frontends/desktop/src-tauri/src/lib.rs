@@ -4,7 +4,7 @@ use std::sync::Mutex;
 use std::net::TcpStream;
 use std::time::{Duration, Instant};
 use std::thread;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::Manager;
 
 #[cfg(windows)]
@@ -372,6 +372,60 @@ fn remove_setting(key: &str) {
     }
 }
 
+fn restore_setting(key: &str, value: Option<String>) {
+    match value {
+        Some(v) => merge_settings(serde_json::json!({ key: v })),
+        None => remove_setting(key),
+    }
+}
+
+fn copy_dir_replace(src: &Path, dst: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(dst).map_err(|e| format!("create {:?}: {}", dst, e))?;
+    for entry in std::fs::read_dir(src).map_err(|e| format!("read {:?}: {}", src, e))? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let sp = entry.path();
+        let dp = dst.join(entry.file_name());
+        let ft = entry.file_type().map_err(|e| e.to_string())?;
+        if ft.is_dir() {
+            if dp.exists() && !dp.is_dir() {
+                std::fs::remove_file(&dp).map_err(|e| format!("remove {:?}: {}", dp, e))?;
+            }
+            copy_dir_replace(&sp, &dp)?;
+        } else if ft.is_file() {
+            if let Some(parent) = dp.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            std::fs::copy(&sp, &dp).map_err(|e| format!("copy {:?} -> {:?}: {}", sp, dp, e))?;
+        }
+    }
+    Ok(())
+}
+
+fn bundled_project_dir() -> Option<PathBuf> {
+    let app = bundle_root()?.join("app");
+    if app.join("agentmain.py").exists() { Some(app) } else { None }
+}
+
+fn same_path(a: &Path, b: &Path) -> bool {
+    let aa = a.canonicalize().unwrap_or_else(|_| a.to_path_buf());
+    let bb = b.canonicalize().unwrap_or_else(|_| b.to_path_buf());
+    #[cfg(windows)]
+    { display_path(&aa).eq_ignore_ascii_case(&display_path(&bb)) }
+    #[cfg(not(windows))]
+    { aa == bb }
+}
+
+fn display_path(path: &Path) -> String {
+    let s = path.to_string_lossy().to_string();
+    #[cfg(windows)]
+    {
+        if let Some(rest) = s.strip_prefix("\\\\?\\") {
+            return rest.to_string();
+        }
+    }
+    s
+}
+
 /// Read config from settings file, or auto-discover and save.
 /// Self-contained bundles always prefer their own runtime/app over stale user settings,
 /// otherwise an old ~/.ga_desktop_settings.json can silently point the UI at a different checkout.
@@ -631,7 +685,7 @@ fn bridge_reported_identity() -> Option<serde_json::Value> {
 
 fn norm_path(p: &str) -> String {
     std::fs::canonicalize(p)
-        .map(|c| c.to_string_lossy().to_string())
+        .map(|c| display_path(&c))
         .unwrap_or_else(|_| p.to_string())
 }
 
@@ -646,11 +700,7 @@ fn bridge_identity_matches(project_dir: &str) -> bool {
     if reported_build != env!("GA_BUILD_ID") {
         return false;
     }
-    let (a, b) = (norm_path(reported_root), norm_path(project_dir));
-    #[cfg(windows)]
-    { a.eq_ignore_ascii_case(&b) }
-    #[cfg(not(windows))]
-    { a == b }
+    path_matches(reported_root, project_dir)
 }
 
 /// Last resort when a stale bridge ignores POST /services/bridge/exit (e.g. an old build with
@@ -736,6 +786,29 @@ fn wait_for_port(port: u16, timeout: Duration) -> bool {
             return true;
         }
         thread::sleep(Duration::from_millis(100));
+    }
+    false
+}
+
+fn path_matches(a: &str, b: &str) -> bool {
+    let (a, b) = (norm_path(a), norm_path(b));
+    #[cfg(windows)]
+    { a.eq_ignore_ascii_case(&b) }
+    #[cfg(not(windows))]
+    { a == b }
+}
+
+fn wait_for_bridge_identity(expected_ga_root: &str, timeout: Duration) -> bool {
+    let start = Instant::now();
+    while start.elapsed() < timeout {
+        if let Some(id) = bridge_reported_identity() {
+            let reported_root = id.get("ga_root").and_then(|v| v.as_str()).unwrap_or("");
+            let reported_build = id.get("build_id").and_then(|v| v.as_str()).unwrap_or("");
+            if reported_build == env!("GA_BUILD_ID") && path_matches(reported_root, expected_ga_root) {
+                return true;
+            }
+        }
+        thread::sleep(Duration::from_millis(150));
     }
     false
 }
@@ -859,12 +932,16 @@ fn switch_bridge(app_handle: &tauri::AppHandle) -> Result<String, String> {
     if project.is_empty() {
         return Err("no GenericAgent source resolved".into());
     }
+    let expected_ga_root = valid_ga_source_override().unwrap_or_else(|| project.clone());
     spawn_bridge_process(&py, &project)?;
     if !wait_for_port(14168, Duration::from_secs(20)) {
         return Err("bridge did not become ready within 20s".into());
     }
+    if !wait_for_bridge_identity(&expected_ga_root, Duration::from_secs(10)) {
+        return Err(format!("bridge did not switch to GA workspace: {}", expected_ga_root));
+    }
     show_bridge_window(app_handle);
-    Ok(project)
+    Ok(expected_ga_root)
 }
 
 #[tauri::command]
@@ -874,6 +951,62 @@ fn get_ga_source() -> String {
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string()
+}
+
+#[tauri::command]
+fn move_ga_runtime(app_handle: tauri::AppHandle, dir: String) -> Result<String, String> {
+    let previous_override = read_settings()
+        .get("ga_source_override")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let src_s = valid_ga_source_override().or_else(|| find_project_dir()).unwrap_or_default();
+    let src = PathBuf::from(src_s.trim());
+    let parent = PathBuf::from(dir.trim());
+    if src_s.trim().is_empty() {
+        return Err("current GA workspace is empty; wait for the bridge to become ready and try again".into());
+    }
+    if dir.trim().is_empty() {
+        return Err("target parent directory is empty".into());
+    }
+    if !src.is_dir() || !src.join("agentmain.py").exists() {
+        return Err(format!("current GA workspace is invalid: {}", src.to_string_lossy()));
+    }
+    std::fs::create_dir_all(&parent).map_err(|e| format!("cannot create target parent dir: {}", e))?;
+    let src_c = src.canonicalize().unwrap_or(src.clone());
+    let parent_c = parent.canonicalize().unwrap_or(parent.clone());
+    let name = src_c.file_name().and_then(|s| s.to_str()).unwrap_or("GenericAgent");
+    let folder_name = if name == "app" { "GenericAgent" } else { name };
+    let dst = parent_c.join(folder_name);
+    let dst_c = if dst.exists() { dst.canonicalize().unwrap_or(dst.clone()) } else { dst.clone() };
+    if same_path(&src_c, &dst_c) {
+        merge_settings(serde_json::json!({ "ga_source_override": display_path(&dst_c) }));
+        return switch_bridge(&app_handle).map_err(|err| {
+            restore_setting("ga_source_override", previous_override.clone());
+            err
+        });
+    }
+    if dst_c.starts_with(&src_c) {
+        return Err("target directory cannot be inside the current GA workspace".into());
+    }
+    if dst_c.exists() {
+        return Err(format!("target GA workspace already exists: {}", display_path(&dst_c)));
+    }
+    copy_dir_replace(&src_c, &dst_c)?;
+    merge_settings(serde_json::json!({ "ga_source_override": display_path(&dst_c) }));
+    if let Err(err) = switch_bridge(&app_handle) {
+        restore_setting("ga_source_override", previous_override);
+        return Err(err);
+    }
+
+    // The packaged bundle's own runtime/app is still needed by the desktop shell and
+    // bridge. Only remove the old source when it is already a user-selected external copy.
+    let bundled = bundled_project_dir();
+    if !bundled.as_ref().map(|p| same_path(&src_c, p)).unwrap_or(false) {
+        if let Err(e) = std::fs::remove_dir_all(&src_c) {
+            eprintln!("remove old runtime {:?}: {}", src_c, e);
+        }
+    }
+    Ok(display_path(&dst_c))
 }
 
 /// Run the contract probe (frontends/ga_contract_probe.py, shipped with the bundle) against a
@@ -984,7 +1117,7 @@ pub fn run() {
                 let _ = w.set_focus();
             }
         }))
-        .invoke_handler(tauri::generate_handler![start_bridge_with_config, start_bridge, get_config, export_mykey, pick_directory, get_ga_source, set_ga_source, clear_ga_source, shortcut_should_ask, shortcut_decide, get_prepare_error])
+        .invoke_handler(tauri::generate_handler![start_bridge_with_config, start_bridge, get_config, export_mykey, pick_directory, get_ga_source, set_ga_source, clear_ga_source, move_ga_runtime, shortcut_should_ask, shortcut_decide, get_prepare_error])
         .setup(move |app| {
             // Show the loading window immediately so the first-run prepare isn't a blank screen.
             // The window starts on loading.html (a local page), so no "connection refused" flash.

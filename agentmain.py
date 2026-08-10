@@ -47,9 +47,12 @@ class GenericAgent:
         os.makedirs(os.path.join(script_dir, 'temp'), exist_ok=True)
         self.lock = threading.Lock()
         self.task_dir = None
-        self.history = []; self.handler = None; 
+        self.history = []; self.handler = None; self.all_outputs = []
         self.task_queue = queue.Queue() 
-        self.is_running = False; self.stop_sig = False; self.llm_no = 0;  
+        self.is_running = False; self.stop_sig = False; self.llm_no = 0;
+        # Output queue of the task currently executing (None when idle). Lets a UI that
+        # lost its own handle (page refresh, second client) re-attach to the live task.
+        self._current_queue = None  
         self.inc_out = False; self.verbose = True
         self.peer_hint = True
         self.force_non_stream = False
@@ -111,6 +114,10 @@ class GenericAgent:
         print('Abort current task...')
         self.stop_sig = True
         if self.handler is not None: self.handler.code_stop_signal.append(1)
+        for sess in getattr(self.llmclient.backend, '_sessions', [self.llmclient.backend]):
+            sess.should_stop = lambda: self.stop_sig  # live read; cleared by run()'s finally
+            try: sess.active_response.close()
+            except Exception: pass
             
     def put_task(self, query, source="user", images=None):
         display_queue = queue.Queue()
@@ -141,11 +148,13 @@ class GenericAgent:
             raw_query = self._handle_slash_cmd(raw_query, display_queue)
             if raw_query is None:
                 self.task_queue.task_done(); continue
-            self.is_running = True
+            self.is_running = True; self._current_queue = display_queue
             if len(raw_query) > 2000:
                 task_file = os.path.join(script_dir, 'temp', f'user_prompt_{os.getpid()}_{time.time_ns()}.md')
                 with open(task_file, 'w', encoding='utf-8') as f: f.write(raw_query)
                 raw_query = f'Long user prompt saved to {task_file}. Read and execute.'
+            self.all_outputs.append({"input": raw_query, "outputs": []})
+            if len(self.all_outputs) > 10000: self.all_outputs = self.all_outputs[-5000:]
             rquery = smart_format(raw_query.replace('\n', ' '), max_str_len=200)
             self.history.append(f"[USER]: {rquery}")
             sys_prompt = get_system_prompt() + '\n'.join(self.extra_sys_prompts) + getattr(self.llmclient.backend, 'extra_sys_prompt', '')
@@ -165,7 +174,7 @@ class GenericAgent:
             gen = agent_runner_loop(self.llmclient, sys_prompt, raw_query, handler, TOOLS_SCHEMA, 
                                     max_turns=180, verbose=self.verbose, yield_info=True)
             try:
-                full_resp = ""; last_pos = 0; curr_turn = 0; turn_resps = []
+                full_resp = ""; last_pos = 0; curr_turn = 0; turn_resps = self.all_outputs[-1]["outputs"]
                 for chunk in gen:
                     if consume_file(self.task_dir, '_stop'): self.abort() 
                     if self.stop_sig: break
@@ -186,7 +195,7 @@ class GenericAgent:
                 display_queue.put({'done': full_resp + f'\n```\n{format_error(e)}\n```', 'source': source, 'turn': curr_turn, 'outputs': turn_resps.copy()})
             finally:
                 if self.stop_sig: print('User aborted the task.')
-                self.is_running = self.stop_sig = False
+                self.is_running = self.stop_sig = False  # keep _current_queue: its final 'done' may still be unclaimed (refreshed UI salvages it); next task overwrites it
                 self.task_queue.task_done()
                 if self.handler is not None: self.handler.code_stop_signal.append(1)
 

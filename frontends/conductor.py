@@ -1,9 +1,9 @@
-import os, sys, re, time, json, uuid, queue, asyncio, threading
+import os, sys, re, time, json, uuid, queue, asyncio, threading, argparse, base64, secrets
 from dataclasses import dataclass, field
 from typing import Dict, Any, Optional, List
 from contextlib import asynccontextmanager, suppress
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException
 from fastapi.responses import FileResponse, PlainTextResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -26,6 +26,15 @@ from agentmain import GenericAgent
 HOST = "127.0.0.1"
 PORT = 8900
 HTML_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "conductor.html")
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--host", default=HOST)
+parser.add_argument("--port", type=int, default=PORT)
+parser.add_argument("--key")
+parser.add_argument("--no-browser", action="store_true")
+args = parser.parse_args()
+if args.host not in ("127.0.0.1", "localhost", "::1") and not args.key:
+    parser.error("--key is required for non-loopback listening")
 
 
 def _settings_doc() -> dict:
@@ -111,6 +120,19 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Conductor", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+class RemoteAuth:
+    def __init__(self, app): self.app = app
+    async def __call__(self, scope, receive, send):
+        remote = (scope.get("client") or ("",))[0]
+        got = dict(scope.get("headers", [])).get(b"authorization", b"")
+        want = b"Basic " + base64.b64encode(f"conductor:{args.key}".encode())
+        if args.key and remote not in ("127.0.0.1", "::1") and not secrets.compare_digest(got, want):
+            if scope["type"] == "websocket": return await send({"type": "websocket.close", "code": 1008})
+            return await PlainTextResponse("Unauthorized", 401, {"WWW-Authenticate": 'Basic realm="Conductor"'})(scope, receive, send)
+        await self.app(scope, receive, send)
+
+app.add_middleware(RemoteAuth)
 
 class ChatIn(BaseModel):
     msg: str
@@ -199,8 +221,26 @@ async def broadcast(payload: dict):
 
 def push_cards(): schedule_broadcast({"type": "subagents", "items": pool.snapshot()})
 
+FILE_ROOT = os.path.dirname(ROOT)
+FILE_HOME = os.path.join(ROOT, "temp")
+UPLOAD_DIR = os.path.join(FILE_HOME, "uploads")
+
+def file_path(path: str):
+    path = os.path.abspath(os.path.expanduser(path))
+    if os.path.commonpath((FILE_ROOT, path)) != FILE_ROOT: raise ValueError("path is above file browser root")
+    return path
+
 def add_chat(msg: str, role: str = "conductor", files: list = None, images: list = None):
-    item = {"id": short_id(), "role": role, "msg": msg, "ts": now_ms(), "read": role != "user", "files": files or [], "images": images or []}
+    files = list(files or [])
+    known = {x.get("path") for x in files}
+    for ref in re.findall(r"`([^`\n]+)`", msg):
+        for candidate in ([ref] if os.path.isabs(ref) else [os.path.join(FILE_HOME, ref), ref]):
+            try: path = file_path(candidate)
+            except ValueError: continue
+            if os.path.isfile(path):
+                if path not in known: files.append({"ref": ref, "path": path, "name": os.path.basename(path)})
+                break
+    item = {"id": short_id(), "role": role, "msg": msg, "ts": now_ms(), "read": role != "user", "files": files, "images": images or []}
     chat_messages.append(item)
     if len(chat_messages) > 200: del chat_messages[:-200]
     schedule_broadcast({"type": "chat", "item": item})
@@ -318,6 +358,9 @@ Conductor API\tBase: http://{HOST}:{PORT}
 POST /chat\tbody: {{"msg": "..."}}\t给用户发消息
 POST /subagent\tbody: {{"prompt": "..."}}\t启动新subagent，返回 {{"id": "xxx"}}；指定模型加参数llm(数字/名称)
 POST /approval\tbody: {{"prompt": "...", "source": "..."}}\t推一条待批任务到前端(后端不存)，用户同意则直接派发为subagent
+GET /files?path=...\t列举目录（默认temp，最高到GA上一级）
+GET /file?path=...\t下载文件
+POST /file?name=...\t上传到temp/uploads
 POST /subagent/{{id}}\tbody: {{"action": "keyinfo", "msg": "..."}}\t注入key_info（agent下轮可见）
 POST /subagent/{{id}}\tbody: {{"action": "input", "msg": "..."}}\t对subagent输入下一条指令；指定模型加参数llm(数字/名称)
 POST /subagent/{{id}}\tbody: {{"action": "stop"}}\t中断执行但保留（可继续input）
@@ -381,7 +424,8 @@ API: {base}；requests，GET /readme查用法，GET /chat读未读对话，GET /
 - 改写prompt时严禁添加用户未提及的假设、工具、前提条件。只能精炼/结构化用户原意，不能脑补，只能做很小的改写
 
 原则：
-- 信任subagent足够聪明，不要写具体步骤和容易探测的信息；能自己判断的自己判断，只在真正需要用户决策时打扰。\n
+- 信任subagent足够聪明，不要写具体步骤和容易探测的信息；能自己判断的自己判断，只在真正需要用户决策时打扰。
+- 向用户交付文件时，路径用反引号包裹。\n
 需要处理：
 {summary}"""
 
@@ -492,6 +536,28 @@ def conductor_token_stats():
 @app.get("/")
 def index(): return FileResponse(HTML_PATH)
 
+@app.get("/files")
+def files(path: str = FILE_HOME):
+    try: path = file_path(path)
+    except ValueError as e: raise HTTPException(403, str(e))
+    if not os.path.isdir(path): raise HTTPException(404, "directory not found")
+    items = [{"name": x.name, "path": x.path, "dir": x.is_dir(), "size": x.stat().st_size if x.is_file() else None}
+             for x in sorted(os.scandir(path), key=lambda x: (not x.is_dir(), x.name.lower()))]
+    return {"path": path, "parent": path if path == FILE_ROOT else os.path.dirname(path), "items": items}
+
+@app.get("/file")
+def get_file(path: str):
+    try: path = file_path(path)
+    except ValueError as e: raise HTTPException(403, str(e))
+    return FileResponse(path, filename=os.path.basename(path))
+
+@app.post("/file")
+async def put_file(name: str, request: Request):
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    path = os.path.join(UPLOAD_DIR, os.path.basename(name))
+    with open(path, "wb") as f: f.write(await request.body())
+    return {"name": os.path.basename(path), "path": path}
+
 @app.get("/readme")
 def readme(): return PlainTextResponse(READMES["api"])
 
@@ -591,7 +657,7 @@ if __name__ == "__main__":
     import uvicorn
     # bridge 自启 conductor 时传 --no-browser:不在用户浏览器里弹一个独立 conductor UI,
     # 用户从桌面版「指挥家」页直接连过来即可。手动跑 conductor.py(没带 flag)保持原行为。
-    if "--no-browser" not in sys.argv:
+    if not args.no_browser:
         import webbrowser, threading
-        threading.Timer(1.0, lambda: webbrowser.open(f"http://{HOST}:{PORT}")).start()
-    uvicorn.run("conductor:app", host=HOST, port=PORT, reload=False)
+        threading.Timer(1.0, lambda: webbrowser.open(f"http://127.0.0.1:{args.port}")).start()
+    uvicorn.run(app, host=args.host, port=args.port)

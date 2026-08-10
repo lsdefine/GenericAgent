@@ -174,7 +174,9 @@ def _parse_claude_sse(resp_lines):
                 if current_block and current_block.get("type") == "text": current_block["text"] += text
                 if text: yield text
             elif delta.get("type") == "thinking_delta":
-                if current_block and current_block.get("type") == "thinking": current_block["thinking"] += delta.get("thinking", "")
+                thinking = delta.get("thinking", "")
+                if current_block and current_block.get("type") == "thinking": current_block["thinking"] += thinking
+                if thinking: yield thinking
             elif delta.get("type") == "signature_delta":
                 if current_block and current_block.get("type") == "thinking":
                     current_block["signature"] = current_block.get("signature", "") + delta.get("signature", "")
@@ -234,7 +236,7 @@ def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
     """
     content_text = ""
     if api_mode == "responses":
-        seen_delta = False; fc_buf = {}; current_fc_idx = None
+        seen_delta = False; fc_buf = {}; current_fc_idx = None; reasoning_text = ""
         for line in resp_lines:
             if not line: continue
             line = line.decode('utf-8', errors='replace') if isinstance(line, bytes) else line
@@ -250,6 +252,12 @@ def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
             elif etype == "response.output_text.done" and not seen_delta:
                 text = evt.get("text", "")
                 if text: content_text += text; yield text
+            elif etype == "response.reasoning_text.delta":
+                delta = evt.get("delta", "")
+                if delta: reasoning_text += delta
+            elif etype == "response.reasoning_text.done":
+                text = evt.get("text", "")
+                if text: reasoning_text = text
             elif etype == "response.output_item.added":
                 item = evt.get("item", {})
                 if item.get("type") == "function_call":
@@ -271,7 +279,25 @@ def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
                 usage = evt.get("response", {}).get("usage", {})
                 _record_usage(usage, api_mode)
                 break
+            elif etype == "response.incomplete":
+                # DeepSeek/OpenAI responses stream may end here (no [DONE]); treat as valid terminal,
+                # record usage and surface a truncation marker instead of an empty-response retry storm.
+                usage = (evt.get("response") or {}).get("usage", {})
+                _record_usage(usage, api_mode)
+                reason = ((evt.get("response") or {}).get("incomplete_details") or {}).get("reason", "") or "unknown"
+                if not content_text and not fc_buf:
+                    marker = f"[!!! output truncated: {reason}]"
+                    content_text += marker; yield marker
+                break
+            elif etype == "response.failed":
+                usage = (evt.get("response") or {}).get("usage", {})
+                _record_usage(usage, api_mode)
+                err = ((evt.get("response") or {}).get("error") or {})
+                emsg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
+                if emsg: content_text += f"!!!Error: {emsg}"; yield f"!!!Error: {emsg}"
+                break
         blocks = []
+        if reasoning_text: blocks.append({"type": "thinking", "thinking": reasoning_text})
         if content_text: blocks.append({"type": "text", "text": content_text})
         for idx in sorted(fc_buf):
             fc = fc_buf[idx]
@@ -323,18 +349,24 @@ def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
 
 def _record_usage(usage, api_mode):
     if not usage: return
+    # 上游常显式给 null；dict.get(k, 0) 遇 null 仍返回 None，后续加法会 TypeError
+    def _i(v, default=0):
+        try:
+            return default if v is None else int(v)
+        except (TypeError, ValueError):
+            return default
     if api_mode == 'responses':
-        cached = (usage.get("input_tokens_details") or {}).get("cached_tokens", 0)
-        inp = usage.get("input_tokens", 0); out = usage.get("output_tokens", 0)
+        cached = _i((usage.get("input_tokens_details") or {}).get("cached_tokens"))
+        inp = _i(usage.get("input_tokens")); out = _i(usage.get("output_tokens"))
         print(f"[Cache] input={inp} cached={cached}")
         if out: print(f"[Output] tokens={out}")
     elif api_mode == 'chat_completions':
-        cached = (usage.get("prompt_tokens_details") or {}).get("cached_tokens", 0)
-        inp = usage.get("prompt_tokens", 0); out = usage.get("completion_tokens", 0)
+        cached = _i((usage.get("prompt_tokens_details") or {}).get("cached_tokens"))
+        inp = _i(usage.get("prompt_tokens")); out = _i(usage.get("completion_tokens"))
         print(f"[Cache] input={inp} cached={cached}")
         if out: print(f"[Output] tokens={out}")
     elif api_mode == 'messages':
-        ci, cr, raw_inp = usage.get("cache_creation_input_tokens", 0), usage.get("cache_read_input_tokens", 0), usage.get("input_tokens", 0)
+        ci, cr, raw_inp = _i(usage.get("cache_creation_input_tokens")), _i(usage.get("cache_read_input_tokens")), _i(usage.get("input_tokens"))
         inp, cached, out = raw_inp + ci + cr, cr, 0
         print(f"[Cache] input={raw_inp} creation={ci} read={cr}")
     else: return
@@ -349,11 +381,24 @@ def _parse_openai_json(data, api_mode="chat_completions"):
                 for p in (item.get("content") or []):
                     if p.get("type") in ("output_text", "text") and p.get("text"):
                         blocks.append({"type": "text", "text": p["text"]}); yield p["text"]
+            elif item.get("type") == "reasoning":
+                for p in (item.get("content") or []):
+                    if p.get("type") in ("reasoning_text", "summary_text") and p.get("text"):
+                        blocks.append({"type": "thinking", "thinking": p["text"]})
             elif item.get("type") == "function_call":
                 try: args = json.loads(item.get("arguments", "")) if item.get("arguments") else {}
                 except: args = {"_raw": item.get("arguments", "")}
                 blocks.append({"type": "tool_use", "id": item.get("call_id", item.get("id", "")),
                                "name": item.get("name", ""), "input": args})
+        status = (data.get("status") or "").lower()
+        if status == "failed":
+            err = data.get("error") or {}
+            emsg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
+            if emsg: blocks.append({"type": "text", "text": f"!!!Error: {emsg}"}); yield f"!!!Error: {emsg}"
+        elif status == "incomplete" and not any(b.get("type") == "text" for b in blocks):
+            reason = ((data.get("incomplete_details") or {}).get("reason", "")) or "unknown"
+            marker = f"[!!! output truncated: {reason}]"
+            blocks.append({"type": "text", "text": marker}); yield marker
     else:
         _record_usage(data.get("usage") or {}, api_mode)
         msg = (data.get("choices") or [{}])[0].get("message", {})
@@ -396,6 +441,7 @@ def _stream_with_retry(sess, url, headers, payload, parse_fn):
         try:
             with requests.post(url, headers=headers, json=payload, stream=sess.stream, 
                                timeout=(sess.connect_timeout, sess.read_timeout), proxies=sess.proxies, verify=sess.verify) as r:
+                sess.active_response = r
                 if r.status_code >= 400:
                     #pathlib.Path(__file__).parent.joinpath('temp','bad_requests.json').write_text(json.dumps({"url":url,"headers":headers,"payload":payload,"t":time.time()},ensure_ascii=False),encoding='utf-8')
                     d = _delay(r, attempt) if r.status_code in _RETRYABLE and attempt < sess.max_retries else None
@@ -414,6 +460,7 @@ def _stream_with_retry(sess, url, headers, payload, parse_fn):
                     return e.value or []
         except (requests.Timeout, requests.ConnectionError, requests.exceptions.ChunkedEncodingError) as e:
             err = f"!!!Error: {type(e).__name__}: {e}" if str(e) else f"!!!Error: {type(e).__name__}"
+            if getattr(sess, 'should_stop', None) and sess.should_stop(): return []
             if attempt < sess.max_retries:
                 d = _delay(None, attempt)
                 print(f"[LLM Retry] {type(e).__name__}, retry in {d:.1f}s ({attempt+1}/{sess.max_retries+1})")
@@ -552,9 +599,9 @@ class BaseSession:
         self.api_key = cfg['apikey']
         self.api_base = cfg['apibase'].rstrip('/')
         self.model = cfg.get('model', '')
-        default_context_win = 30000; default_cut_msg_interval = 5
+        default_context_win = 35000; default_cut_msg_interval = 5
         if 'deepseek' in self.model.lower():
-            default_context_win = 70000; default_cut_msg_interval = 25; self.trim_keep_rate = 0.3
+            default_context_win = 80000; default_cut_msg_interval = 25; self.trim_keep_rate = 0.3
         self.context_win = cfg.get('context_win', default_context_win)
         self.maxlen_multiplier = min(max(self.context_win / default_context_win * 0.75, 1.0), 3.0)
         self.cut_msg_interval = int(default_cut_msg_interval * self.maxlen_multiplier)

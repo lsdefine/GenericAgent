@@ -47,3 +47,8 @@ commands.allow = ["shortcut_should_ask"]
 identifier = "allow-shortcut-decide"
 description = "Persist the user's desktop-shortcut choice and create it if enabled."
 commands.allow = ["shortcut_decide"]
+
+[[permission]]
+identifier = "allow-move-ga-runtime"
+description = "Copy the current GA workspace to a user-selected folder and switch to it."
+commands.allow = ["move_ga_runtime"]

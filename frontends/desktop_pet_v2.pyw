@@ -1,13 +1,13 @@
 """Desktop Pet with Skin System — Cross-platform with True Transparency"""
 import os, re, sys, json, threading, io
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import urlparse, parse_qs
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
-PORT = 41983
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_DIR = os.path.dirname(SCRIPT_DIR)
 SKINS_DIR = os.path.join(SCRIPT_DIR, 'skins')
+
+PET_LOCK_PORT = 19533               # same convention as the other frontends (QQ 19528, DingTalk 19530, Discord 19532)
+_LOCK_SOCK = None                   # kept alive for the whole process: the kernel frees the port on exit
 
 class SkinLoader:
     """Load and parse skin configuration"""
@@ -239,57 +239,17 @@ class PetBase:
         """Thread-safe wrapper for show_toast."""
         self._schedule_main(lambda m=message: self.show_toast(m))
 
-    def _start_server(self):
-        """Start HTTP control server."""
-        pet = self
+    def _connect_hub(self):
+        """Join the local hub under the fixed name 'pet': no server, no port, one bus peer."""
+        sys.path.insert(0, SCRIPT_DIR); import hub
+        hub.serve()                                  # best effort: bring the hub up if nobody listens yet
+        hub.HubClient('pet', fixed=True, sub=['turn'], on_ev=self._on_ev).start()
 
-        class Handler(BaseHTTPRequestHandler):
-            def do_GET(self):
-                parsed = urlparse(self.path)
-                params = parse_qs(parsed.query)
-
-                if 'state' in params:
-                    state = params['state'][0]
-                    pet.set_state_safe(state)
-                    self.send_response(200)
-                    self.end_headers()
-                    self.wfile.write(b'ok')
-                elif 'msg' in params:
-                    msg = params['msg'][0]
-                    pet.show_toast_safe(msg)
-                    self.send_response(200)
-                    self.end_headers()
-                    self.wfile.write(b'ok')
-                else:
-                    self.send_response(400)
-                    self.end_headers()
-                    self.wfile.write(b'?state=idle/walk/run/sprint or ?msg=hello')
-
-            def do_POST(self):
-                body = self.rfile.read(int(self.headers.get('Content-Length', 0))).decode()
-                if body:
-                    pet.show_toast_safe(body)
-                    self.send_response(200)
-                    self.end_headers()
-                    self.wfile.write(b'ok')
-                else:
-                    self.send_response(400)
-                    self.end_headers()
-                    self.wfile.write(b'empty body')
-
-            def log_message(self, *a):
-                pass
-
-        try:
-            HTTPServer.allow_reuse_address = True
-            srv = HTTPServer(('127.0.0.1', PORT), Handler)
-            threading.Thread(target=srv.serve_forever, daemon=True).start()
-            print(f'✓ Server: http://127.0.0.1:{PORT}/?state=walk')
-        except OSError as e:
-            if e.errno == 48:
-                print(f'⚠ Port {PORT} already in use')
-            else:
-                raise
+    def _on_ev(self, c):
+        """Bus push: {'state':..} drives the animation, {'msg':..} pops a toast."""
+        d = c.get('data') or {}
+        if d.get('state'): self.set_state_safe(d['state'])
+        if d.get('msg'): self.show_toast_safe(d['msg'])
 
 
 # ============================================================================
@@ -456,7 +416,7 @@ if sys.platform == 'darwin':
             self.window.makeKeyAndOrderFront_(None)
 
             # Start HTTP server
-            self._start_server()
+            self._connect_hub()
 
             print(f"✓ macOS Pet started at ({x_pos}, {y_pos})")
             print(f"  Animations: {', '.join(self.animations.keys())}")
@@ -672,7 +632,7 @@ else:
 
                 # Start animation
                 self._animate()
-                self._start_server()
+                self._connect_hub()
 
                 print(f"✓ {self.platform_name} Pet started at ({x_pos}, {y_pos})")
                 print(f"  Animations: {', '.join(self.animations.keys())}")
@@ -905,7 +865,7 @@ else:
                 self._restart_animation_timer()
 
                 self.window.show()
-                self._start_server()
+                self._connect_hub()
 
                 print(f"✓ Linux PySide6 Pet started at ({x_pos}, {y_pos})")
                 print(f"  Animations: {', '.join(self.animations.keys())}")
@@ -1068,17 +1028,12 @@ else:
                 self.app.exec()
 
 if __name__ == '__main__':
-    # Singleton: if port already in use, another instance is running
     import socket
-    _s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    _LOCK_SOCK = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        _s.connect(('127.0.0.1', PORT))
-        _s.close()
-        print(f'⚠ Pet already running on port {PORT}, exiting.')
+        _LOCK_SOCK.bind(("127.0.0.1", PET_LOCK_PORT))   # first one wins; a later launch just exits
+    except OSError:
         sys.exit(0)
-    except ConnectionRefusedError:
-        pass
-
     if sys.platform == 'darwin':
         pet = MacPet('vita')
         pet.run()

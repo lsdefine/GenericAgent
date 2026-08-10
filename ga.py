@@ -312,7 +312,7 @@ class GenericAgentHandler(BaseHandler):
         cwd = os.path.normpath(os.path.abspath(raw_path))
         code_cwd = os.path.normpath(self.cwd)
         maxlen = self._get_tool_maxlen(10000, args)
-        if timeout > 600: result = '[ERROR] Timeout must be <= 600 seconds, run time-consuming code in background subprocess and monitor it!'
+        if timeout > 600: result = '[ERROR] Timeout must be <= 600 seconds; code not executed. Run time-consuming code in the background instead of waiting for it to finish in the foreground, verify it started successfully, and monitor it until completion or failure.'
         elif code_type == 'python' and _arg(args, "inline_eval", False, bool):
             ns = {'handler':self, 'parent':self.parent, 'history':json.dumps(self.parent.llmclient.backend.history)}
             old_cwd = os.getcwd()
@@ -482,11 +482,11 @@ class GenericAgentHandler(BaseHandler):
         thinking = getattr(response, 'thinking', '') or ""
         if not response or (not content.strip() and not thinking.strip()):
             yield "[Warn] LLM returned an empty response. Retrying...\n"
-            return self._retry_or_exit("[System] Blank response, regenerate and tooluse")
+            return self._retry_or_exit("[ERROR] Blank response, regenerate and tooluse")
         if '[!!! 流异常中断' in content[-100:] or '!!!Error:' in content[-100:] or content.endswith('</summary>'):
-            return self._retry_or_exit("[System] Incomplete response. Regenerate and tooluse.")
+            return self._retry_or_exit("[ERROR] Incomplete response. Regenerate and tooluse.")
         if 'max_tokens !!!]' in content[-100:]:
-            return self._retry_or_exit("[System] max_tokens limit reached. Use multi small steps to do it.")
+            return self._retry_or_exit("[ERROR] max_tokens limit reached. Use multi small steps to do it.")
         
         if self._in_plan_mode() and any(kw in content for kw in ['任务完成', '全部完成', '已完成所有', '🏁']):
             if 'VERDICT' not in content and '[VERIFY]' not in content and '验证subagent' not in content:
@@ -575,7 +575,7 @@ class GenericAgentHandler(BaseHandler):
         else:
             tc = tool_calls[0]; clean_args = {k: v for k, v in tc['args'].items() if not k.startswith('_')}   # at least one because no_tool
             summary = _c.strip() or smart_format("直接回答了用户问题" if tc['tool_name'] == 'no_tool' else f"{tc['tool_name']}, args: {clean_args}", max_str_len=40)
-            next_prompt += "\n\n\n[SYSTEM] 必须在回复文本中包含<summary>！\n\n"
+            next_prompt += "\n\n\n[TIPS] 必须在回复文本中包含<summary>！\n\n"
         summary = smart_format(summary.replace('\n', ''), max_str_len=80)
         self.history_info.append(f'[Agent] {summary}')
         _plan = self._in_plan_mode()
@@ -583,9 +583,9 @@ class GenericAgentHandler(BaseHandler):
         if turn % 175 == 0 and (not _plan):
             next_prompt += f"\n\n[DANGER] Turn {turn}. Must call ask_user to summarize progress and get direction. No more blind retries."
         elif turn % 13 == 0:
-            next_prompt += f"\n\n[SYSTEM] Turn {turn}. Call update_working_checkpoint to save key context. Stop ineffective retries; if no progress, switch strategy: 1) Probe physical boundaries 2) **Re-read relevant SOPs**"
+            next_prompt += f"\n\n[DANGER] Turn {turn}. Call update_working_checkpoint to save key context. Stop ineffective retries; if no progress, switch strategy: 1) Probe physical boundaries 2) **Re-read relevant SOPs**"
         elif turn % 31 == 0:
-            next_prompt += f"\n\n[SYSTEM] Turn {turn}. Write checkpoints/key findings/tried approaches to a **file** for future reference (not only working_checkpoint!). Avoid losing critical info."
+            next_prompt += f"\n\n[DANGER] Turn {turn}. Write checkpoints/key findings/tried approaches to a **file** for future reference (not only working_checkpoint!). Avoid losing critical info."
         elif turn % 10 == 0: next_prompt += get_global_memory()
 
         if _plan and turn >= 10 and turn % 5 == 0:

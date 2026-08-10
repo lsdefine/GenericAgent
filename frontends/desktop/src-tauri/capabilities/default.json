@@ -22,6 +22,7 @@
     "allow-get-ga-source",
     "allow-set-ga-source",
     "allow-clear-ga-source",
+    "allow-move-ga-runtime",
     "allow-shortcut-should-ask",
     "allow-shortcut-decide"
   ]

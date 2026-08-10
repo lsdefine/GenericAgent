@@ -71,10 +71,10 @@ def set_model(agent, model: str, sub: Optional[int] = None) -> str:
 
 
 # GA 配置层允许的全部档位(llmcore BaseSession._enum)。各协议的真实支持面不同:
-# Claude(output_config.effort) 只认 low/medium/high + xhigh→max, none/minimal
-# 会被 _apply_claude_thinking 打 WARN 忽略; OpenAI 系(reasoning_effort /
-# reasoning.effort) 原样透传, 由渠道端校验。
-EFFORT_LEVELS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']
+# Claude(output_config.effort) 只认 low/medium/high + xhigh/max→max,
+# none/minimal 会被 _apply_claude_thinking 打 WARN 忽略; OpenAI 系
+# (reasoning_effort / reasoning.effort) 原样透传, 由渠道端校验。
+EFFORT_LEVELS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 
 
 def _protocols(agent) -> set:

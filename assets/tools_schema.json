@@ -3,7 +3,7 @@
     "name": "code_run",
     "description": "Code executor. Prefer python. Multi-call OK, use script param. Reply code block is executed if no script arg; prefer for single call to avoid escaping. No hardcoding bulk data",
     "parameters": {"type": "object", "properties": {
-      "script": {"type": "string", "description": "[Mutually exclusive] NEVER use this param when use reply code block."},
+      "script": {"type": "string", "description": "script"},
       "type": {"type": "string", "enum": ["python", "powershell"], "description": "Code type", "default": "python"},
       "timeout": {"type": "integer", "description": "in seconds", "default": 60},
       "cwd": {"type": "string", "description": "Working directory, defaults to cwd"},

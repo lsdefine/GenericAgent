@@ -61,9 +61,9 @@
       overflow: hidden;
     }
 
-    .left-col { min-height: 0; display: flex; flex-direction: column; gap: 18px; }
+    .left-col { min-height: 0; min-width: 0; display: flex; flex-direction: column; gap: 18px; }
     .left-col > .pane.left { flex: 1; min-height: 0; }
-    .left, .right { display: flex; flex-direction: column; min-height: 0; }
+    .left, .right { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
     .right { background: transparent; border: 0; box-shadow: none; backdrop-filter: none; gap: 18px; }
 
     .head {
@@ -200,10 +200,15 @@
     .btn-no { background: linear-gradient(135deg, #f87171, #ef4444); box-shadow: 0 8px 20px rgba(239,68,68,.22); }
 
     /* ---------- 聊天框 ---------- */
-    .chat { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-    .messages { flex: 1; overflow: auto; padding: 20px; display: flex; flex-direction: column; gap: 13px; }
+    .chat { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
+    .messages { flex: 1; min-width: 0; overflow: auto; padding: 20px; display: flex; flex-direction: column; gap: 13px; }
     .msg { max-width: 80%; padding: 13px 15px; border-radius: 18px; line-height: 1.45; font-size: 14px;
-           word-wrap: break-word; box-shadow: 0 8px 22px rgba(30,45,80,.055); }
+           overflow-wrap: anywhere; box-shadow: 0 8px 22px rgba(30,45,80,.055); }
+    .msg :is(p, ul, ol, pre, table, img) { max-width: 100%; }
+    .msg pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+    .msg code { overflow-wrap: anywhere; }
+    .msg table { display: block; overflow-x: auto; }
+    .msg img { height: auto; }
     .msg p { margin: 0 0 .3em 0; } .msg p:last-child { margin-bottom: 0; }
     .msg.me { align-self: flex-end; color: white;
               background: linear-gradient(135deg, #3b82f6, #7c3aed); border: 1px solid rgba(59,130,246,.20);
@@ -218,6 +223,7 @@
 
     .composer { padding: 14px; border-top: 1px solid rgba(31,42,68,.075); display: flex; gap: 12px;
                 align-items: end; background: rgba(255,255,255,.40); }
+    .composer.dragging { background: rgba(59,130,246,.13); outline: 2px dashed #3b82f6; outline-offset: -6px; }
     textarea#input { flex: 1; height: 52px; max-height: 140px; resize: none; outline: none; color: var(--text);
                background: rgba(255,255,255,.92); border: 1px solid rgba(31,42,68,.12); border-radius: 18px;
                padding: 14px 15px; font: inherit; line-height: 1.35; }
@@ -225,6 +231,19 @@
     button { height: 52px; min-width: 92px; border: 0; border-radius: 18px; color: white; font-weight: 750;
              cursor: pointer; background: linear-gradient(135deg, #3b82f6, #10b981);
              box-shadow: 0 10px 26px rgba(59,130,246,.22); }
+    .file-open, .attach { min-width: 0; padding: 0 10px; box-shadow: none; }
+    .file-open { height: 28px; border-radius: 9px; }
+    .attach { width: 44px; height: 52px; font-size: 18px; border-radius: 18px; }
+    .file-link { color: inherit; text-decoration: underline; cursor: pointer; }
+    #fileDialog { width: min(1100px, 96vw); height: min(800px, 92vh); padding: 0; border: 0; border-radius: 18px; box-shadow: 0 24px 80px #0004; }
+    #fileDialog::backdrop { background: #0f172a66; backdrop-filter: blur(3px); }
+    .file-bar { display: flex; align-items: center; gap: 8px; padding: 12px; border-bottom: 1px solid var(--border); }
+    .file-bar code { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .file-bar button { min-width: 0; height: 34px; padding: 0 12px; border-radius: 10px; box-shadow: none; }
+    #fileBody { height: calc(100% - 59px); overflow: auto; padding: 12px; }
+    .file-row { display: flex; gap: 10px; padding: 9px 11px; border-radius: 9px; cursor: pointer; }
+    .file-row:hover { background: #eef2ff; } .file-row span:first-child { flex: 1; } .file-size { color: var(--muted); }
+    .file-preview { line-height: 1.55; } .file-preview pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 
     /* ---------- conductor 输出(横跨底部的独立卡片,默认收起) ---------- */
     .console {
@@ -314,17 +333,28 @@
       <section class="pane chat">
         <div class="head">
           <div class="title">Conversation <select id="llm" aria-label="Conductor model" disabled></select></div>
-          <div class="hint" id="wsStatus">connecting...</div>
+          <div class="hint"><button class="file-open" id="fileOpen">📁 文件</button> · <span id="wsStatus">connecting...</span></div>
         </div>
         <div class="messages" id="messages"></div>
-        <div class="composer">
-          <textarea id="input" placeholder="告诉 Conductor 你想做什么……"></textarea>
-          <button id="send">发送</button>
+        <div class="composer" id="composer">
+          <textarea id="input" placeholder="告诉 Conductor 你想做什么……（可拖入文件）"></textarea>
+          <button class="attach" id="fileUpload" title="上传文件">📎</button>
+          <button id="send">发送</button><input id="fileInput" type="file" multiple hidden>
         </div>
       </section>
     </section>
     </div><!-- /app-grid -->
   </main>
+
+  <dialog id="fileDialog">
+    <div class="file-bar"><button id="fileBack">↑</button><code id="filePath"></code><button id="fileClose">关闭</button></div>
+    <div id="fileBody"></div>
+  </dialog>
+  <dialog id="downloadDialog" style="width:min(520px,90vw);border:0;border-radius:16px;padding:22px;box-shadow:0 24px 80px #0004">
+    <strong>下载文件</strong>
+    <code id="downloadPath" style="display:block;margin:16px 0;overflow-wrap:anywhere;color:var(--muted)"></code>
+    <div style="display:flex;justify-content:flex-end;gap:10px"><button id="downloadCancel">取消</button><button id="downloadConfirm">下载</button></div>
+  </dialog>
 
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script>
@@ -341,10 +371,48 @@
     const consoleBar = document.getElementById('consoleBar');
     const consoleBody= document.getElementById('consoleBody');
     const logCount   = document.getElementById('logCount');
-    let ws;
+    const fileDialog = document.getElementById('fileDialog');
+    const fileBody   = document.getElementById('fileBody');
+    const filePathEl = document.getElementById('filePath');
+    const fileInput  = document.getElementById('fileInput');
+    const composer   = document.getElementById('composer');
+    const downloadDialog = document.getElementById('downloadDialog');
+    const downloadPath = document.getElementById('downloadPath');
+    let ws, fileDir='', fileParent='';
 
     function esc(s){ return String(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
     function renderMd(s){ try { return marked.parse(s||'', { breaks: true, gfm: true }); } catch(e){ return esc(s); } }
+    function fileUrl(path){ return '/file?path='+encodeURIComponent(path); }
+    function humanSize(n){ return n==null?'':n<1024?n+' B':n<1048576?(n/1024).toFixed(1)+' KB':(n/1048576).toFixed(1)+' MB'; }
+    async function browseFiles(path=''){
+      const data=await fetch(path?'/files?path='+encodeURIComponent(path):'/files').then(r=>{if(!r.ok) throw Error(r.statusText); return r.json()});
+      fileDir=data.path; fileParent=data.parent; filePathEl.textContent=fileDir;
+      fileBody.innerHTML=data.items.map(x=>`<div class="file-row" data-path="${esc(x.path)}" data-dir="${x.dir?'1':''}"><span>${x.dir?'📁':'📄'} ${esc(x.name)}</span><span class="file-size">${humanSize(x.size)}</span></div>`).join('')||'<div class="empty">空目录</div>';
+    }
+    async function openFile(path){
+      if(!/\.(md|markdown|txt|py|js|ts|json|ya?ml|css|html?|xml|csv|log|ini|cfg|sh|ps1|bat|c|cc|cpp|h|hpp|java|go|rs|sql)$/i.test(path)){
+        downloadPath.textContent=path; downloadDialog.showModal();
+        return;
+      }
+      const text=await fetch(fileUrl(path)).then(r=>{if(!r.ok) throw Error(r.statusText); return r.text()});
+      filePathEl.textContent=path;
+      fileBody.innerHTML=/\.(md|markdown)$/i.test(path)?`<div class="file-preview">${renderMd(text)}</div>`:'';
+      if(!/\.(md|markdown)$/i.test(path)){ const pre=document.createElement('pre'); pre.textContent=text; fileBody.replaceChildren(pre); }
+    }
+    document.getElementById('downloadCancel').onclick=()=>downloadDialog.close();
+    document.getElementById('downloadConfirm').onclick=()=>{
+      const a=document.createElement('a'); a.href=fileUrl(downloadPath.textContent); a.download=downloadPath.textContent.split(/[\\/]/).pop();
+      document.body.appendChild(a); a.click(); a.remove(); downloadDialog.close();
+    };
+    async function uploadFiles(files){
+      const paths=[];
+      for(const file of files){
+        const r=await fetch('/file?name='+encodeURIComponent(file.name),{method:'POST',body:file});
+        if(!r.ok) throw Error(await r.text());
+        paths.push('`'+(await r.json()).path+'`');
+      }
+      inputEl.value+=(inputEl.value?'\n':'')+paths.join('\n'); checkLimit(); inputEl.focus();
+    }
 
     /* ---------- subagent 卡片 ---------- */
     function renderCards(items){
@@ -414,10 +482,27 @@
       div.className = `msg ${cls}` + (role==='user' && !item.read ? ' unread' : '');
       if(item.id) div.dataset.id = item.id;
       div.innerHTML = renderMd(item.msg || '');
+      (item.files||[]).forEach(f=>{ const code=[...div.querySelectorAll('code')].find(x=>x.textContent===(f.ref||f.path)); if(code){ const a=document.createElement('a'); a.className='file-link'; a.href=fileUrl(f.path); a.dataset.path=f.path; code.replaceWith(a); a.append(code); } });
       messagesEl.appendChild(div);
       messagesEl.scrollTop = messagesEl.scrollHeight;
     }
     function markAllRead(){ messagesEl.querySelectorAll('.msg.me.unread').forEach(el=>el.classList.remove('unread')); }
+
+    document.getElementById('fileOpen').onclick=()=>{ fileDialog.showModal(); browseFiles().catch(e=>fileBody.textContent=e); };
+    document.getElementById('fileClose').onclick=()=>fileDialog.close();
+    document.getElementById('fileBack').onclick=()=>browseFiles(filePathEl.textContent===fileDir?fileParent:fileDir);
+    document.getElementById('fileUpload').onclick=()=>fileInput.click();
+    fileBody.addEventListener('click', e=>{ const row=e.target.closest('.file-row'); if(row) (row.dataset.dir?browseFiles:openFile)(row.dataset.path); });
+    messagesEl.addEventListener('click', async e=>{
+      const a=e.target.closest('.file-link'); if(!a) return;
+      e.preventDefault(); fileDialog.showModal();
+      const path=a.dataset.path, parent=path.replace(/[\\\/][^\\\/]*$/, '');
+      try { await browseFiles(parent); await openFile(path); } catch(err) { fileBody.textContent=err; }
+    });
+    fileInput.onchange=async()=>{ try { await uploadFiles(fileInput.files); } catch(e) { alert('上传失败：'+e); } fileInput.value=''; };
+    ['dragenter','dragover'].forEach(type=>composer.addEventListener(type,e=>{ e.preventDefault(); composer.classList.add('dragging'); }));
+    ['dragleave','drop'].forEach(type=>composer.addEventListener(type,e=>{ e.preventDefault(); composer.classList.remove('dragging'); }));
+    composer.addEventListener('drop',e=>{ if(e.dataTransfer.files.length) uploadFiles(e.dataTransfer.files).catch(err=>alert('上传失败：'+err)); });
 
     /* ---------- conductor 输出 ---------- */
     function fmtTs(ms){ try{ return new Date(ms).toLocaleTimeString('zh-CN',{hour12:false}); }catch(e){ return ''; } }

@@ -4352,6 +4352,13 @@ class GenericAgentTUI(App[None]):
             except Exception: pass
         self._rewind_timer = self.set_timer(2.0, self._disarm_rewind)
 
+    def _stop_session_runtime(self, session) -> None:
+        session.agent.abort()
+        session.agent.task_queue.put("__shutdown__")
+        thread = getattr(session, "thread", None)
+        if thread is not None:
+            thread.join(timeout=5.0)
+
     def action_drop_session(self) -> None:
         # Sidebar-only removal: drops the in-memory session so it stops appearing
         # in the sidebar/switcher. The on-disk log + session_names entry are kept,
@@ -4364,18 +4371,12 @@ class GenericAgentTUI(App[None]):
         ids = list(self.sessions)
         i = ids.index(sid)
         next_id = ids[i + 1] if i + 1 < len(ids) else ids[i - 1]
-        # 释放被移除会话的日志锁：否则它仍留在心跳的 _held_locks 里被持续续活，
-        # 占用检测永远判其"活着"，之后无法对该日志原地 /continue。先 abort 停掉
-        # 可能仍在写日志的 agent，避免"锁已释放但仍在写"的冲突窗口（对齐 begin_fresh_session）。
-        dropped = self.sessions.get(sid)
-        if dropped is not None:
-            try: dropped.agent.abort()
-            except Exception: pass
-            try:
-                from continue_cmd import release_current
-                release_current(dropped.agent)
-            except Exception: pass
+        dropped = self.sessions[sid]
+        self._stop_session_runtime(dropped)
+        from continue_cmd import release_current
+        release_current(dropped.agent)
         del self.sessions[sid]
+        _rmdir_if_empty(getattr(dropped.agent, 'task_dir', None))
         self.current_id = next_id
         self._last_title = ""  # force title refresh on next call
         self._refresh_all()
@@ -5026,8 +5027,12 @@ class GenericAgentTUI(App[None]):
     def _cmd_close(self, args, raw):
         if len(self.sessions) <= 1:
             self._system("Cannot close the last session."); return
-        closed = self.sessions.pop(self.current_id)
+        closed = self.current
+        self._stop_session_runtime(closed)
+        from continue_cmd import release_current
+        release_current(closed.agent)
         _rmdir_if_empty(getattr(closed.agent, 'task_dir', None))
+        del self.sessions[self.current_id]
         self.current_id = next(iter(self.sessions))
         self._refresh_all()
 

@@ -513,9 +513,17 @@ class GenericAgentTUI(App[None]):
     def _cmd_clear(self, args: list[str]) -> None:
         self.current.messages.clear(); self._refresh_all()
 
+    def _stop_session_runtime(self, session) -> None:
+        session.agent.abort()
+        session.agent.task_queue.put("__shutdown__")
+        if session.thread is not None:
+            session.thread.join(timeout=5.0)
+
     def _cmd_close(self, args: list[str]) -> None:
         if len(self.sessions) <= 1:
             self._system("Cannot close the last session."); return
+        closed = self.current
+        self._stop_session_runtime(closed)
         del self.sessions[self.current_id]
         self.current_id = next(iter(self.sessions))
         self._refresh_all()

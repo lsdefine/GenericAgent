@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>GA Hub</title>
+<script src="/vendor/marked.min.js"></script>
+<style>
+:root{
+  --bg:#f5f6f8; --panel:#ffffff; --panel2:#eceff4; --line:#dde1e8;
+  --fg:#1f2430; --dim:#727b8c; --acc:#2f6feb; --user:#dbe8ff; --code:#f1f3f7;
+}
+*{box-sizing:border-box}
+body{margin:0;height:100vh;display:flex;background:var(--bg);color:var(--fg);
+     font:14px/1.6 "Segoe UI","Microsoft YaHei",system-ui,sans-serif}
+
+/* ---- left: session list ---- */
+#side{width:260px;flex:none;display:flex;flex-direction:column;
+      background:var(--panel);border-right:1px solid var(--line)}
+#side h1{margin:0;padding:16px 16px 10px;font-size:15px;letter-spacing:.5px}
+#side h1 small{color:var(--dim);font-weight:400;margin-left:6px}
+#peers{flex:1;overflow:auto;padding:6px}
+.peer{padding:10px 12px;margin:2px 0;border-radius:8px;cursor:pointer;
+      border:1px solid transparent;transition:.15s}
+.peer:hover{background:var(--panel2)}
+.peer.on{background:var(--panel2);border-color:var(--acc)}
+.peer .t{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.peer .m{color:var(--dim);font-size:12px;margin-top:2px}
+#side footer{padding:10px 16px;border-top:1px solid var(--line);
+             color:var(--dim);font-size:12px;display:flex;justify-content:space-between}
+#side footer a{color:var(--acc);text-decoration:none;cursor:pointer}
+
+/* ---- right: conversation + composer ---- */
+#right{flex:1;min-width:0;display:flex;flex-direction:column}
+#main{flex:1;overflow:auto;padding:24px 32px}
+#composer{flex:none;border-top:1px solid var(--line);background:var(--panel);padding:10px 32px 12px}
+#composer .row{display:flex;gap:10px;align-items:flex-end}
+#box{flex:1;resize:none;max-height:160px;padding:9px 12px;border:1px solid var(--line);
+     border-radius:8px;background:var(--bg);color:var(--fg);font:inherit;outline:none}
+#box:focus{border-color:var(--acc)}
+#composer button{flex:none;padding:9px 16px;border:1px solid var(--line);border-radius:8px;
+                 background:var(--panel2);color:var(--fg);font:inherit;cursor:pointer;transition:.15s}
+#composer button:hover:not(:disabled){background:#e2e7f0}
+#send{background:var(--acc);border-color:var(--acc);color:#fff}
+#send:hover:not(:disabled){background:#2a62d0}
+#composer button:disabled,#box:disabled{opacity:.5;cursor:not-allowed}
+#tip{min-height:16px;margin-top:5px;font-size:12px;color:var(--dim)}
+#tip.err{color:#c0392b}
+#main>.hd{font-size:18px;margin-bottom:18px;padding-bottom:12px;
+          border-bottom:1px solid var(--line)}
+.msg{margin:0 0 14px}
+.msg.user{background:var(--user);border-radius:12px;padding:10px 14px;
+          white-space:pre-wrap;max-width:70%;margin-left:auto}
+.msg.assistant{border-left:2px solid var(--line);padding-left:14px}
+.seg{border:1px solid var(--line);border-radius:8px;margin:6px 0;background:var(--panel)}
+.seg>summary{padding:8px 12px;cursor:pointer;list-style:none;display:flex;gap:10px;
+             align-items:center;color:var(--fg)}
+.seg>summary::-webkit-details-marker{display:none}
+.seg>summary:hover{background:var(--panel2)}
+.seg>summary .ar{color:var(--dim);transition:.15s;flex:none}
+.seg[open]>summary .ar{transform:rotate(90deg)}
+.seg>summary .tt{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.seg>summary .n{color:var(--dim);font-size:12px;flex:none}
+.body{padding:2px 14px 10px;border-top:1px solid var(--line)}
+.body pre{background:var(--code);padding:10px;border-radius:6px;overflow:auto}
+.body code{font-family:Consolas,monospace;font-size:13px}
+.body :not(pre)>code{background:var(--code);padding:1px 5px;border-radius:4px}
+.body table{border-collapse:collapse}.body td,.body th{border:1px solid var(--line);padding:4px 8px}
+.body img{max-width:100%}
+.body blockquote{margin:6px 0;padding:2px 12px;border-left:3px solid var(--line);color:var(--dim)}
+.dim{color:var(--dim)}
+.empty{color:var(--dim);text-align:center;margin-top:30vh}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:#c9cfdb;border-radius:5px}
+::-webkit-scrollbar-thumb:hover{background:#b3bbcb}
+</style>
+</head>
+<body>
+<div id="side">
+  <h1>GA Hub<small id="cnt"></small></h1>
+  <div id="peers"></div>
+  <footer><span id="st">…</span><a onclick="loadPeers()">刷新</a></footer>
+</div>
+<div id="right">
+  <div id="main"><div class="empty">← 选择一个会话</div></div>
+  <div id="composer">
+    <div class="row">
+      <textarea id="box" rows="1" placeholder="先选择一个会话…　Enter 发送 / Shift+Enter 换行" disabled></textarea>
+      <button id="send" disabled onclick="send()">发送</button>
+      <button id="stop" disabled onclick="stop_()">停止</button>
+    </div>
+    <div id="tip"></div>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const api = u => fetch(u).then(r => r.json());
+const esc = s => s.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const kb = n => n > 1024 ? (n/1024).toFixed(1)+'k' : n;
+let cur = null;
+
+marked.setOptions({breaks:true, gfm:true});
+const md = t => marked.parse(String(t || '')
+  .replace(/<summary>[\s\S]*?<\/summary>/gi, '')
+  .replace(/^\s*\*\*LLM Running \(Turn \d+\)[^\n]*/i, '')
+  .trim());
+
+async function loadPeers(){
+  const el = $('#peers');
+  let ps = [];
+  try { ps = await api('/api/peers'); $('#st').textContent = ps.length + ' 个在线'; }
+  catch(e){ $('#st').textContent = '连接失败'; return; }
+  el.innerHTML = ps.length ? '' : '<div class="empty" style="margin-top:20px">无在线会话</div>';
+  for (const p of ps){
+    const d = document.createElement('div');
+    d.className = 'peer' + (p.name === cur ? ' on' : '');
+    d.dataset.name = p.name;
+    d.innerHTML = `<div class="t">${esc(p.title || p.name)}</div>
+                   <div class="m">${esc(p.name)} · ${p.n_msgs} 条</div>`;
+    d.onclick = () => open_(p.name);
+    el.appendChild(d);
+  }
+}
+
+function open_(name){
+  cur = name;
+  sig = null;                                     // new session: full skeleton once
+  enable(true); say('');
+  document.querySelectorAll('.peer').forEach(e => e.classList.toggle('on', e.dataset.name === name));
+  $('#main').innerHTML = '<div class="empty">加载中…</div>';
+  return sync(true);
+}
+
+// poll the cheap skeleton; patch the DOM in place so expanded steps stay expanded
+let sig = null;                                   // skeleton fingerprint of the shown session
+
+async function sync(first){
+  if (!cur) return;
+  if (!first && document.hidden) return;          // background tab costs nothing
+  const name = cur, m = $('#main');
+  const olds = first ? [] : [...m.querySelectorAll('.task')];
+  const since = Math.max(0, olds.length - 1);     // rows below the tail are immutable: don't resend them
+  let q = `/api/${encodeURIComponent(name)}/messages?since=${since}`;
+  if (!first && sig) q += `&sig=${encodeURIComponent(sig)}`;
+  let r;
+  try { r = await api(q); } catch(e){ return; }
+  if (name !== cur) return;                       // user switched while in flight
+  if (r.same) return;                             // nothing moved since last poll
+  sig = r.sig || null;
+  if (r.error){ if (first) m.innerHTML = `<div class="empty">${esc(r.error)}</div>`; return; }
+
+  const tasks = r.tasks || [];
+  const total = 'nt' in r ? r.nt : tasks.length;  // an old host ignores `since` and sends everything
+  const t0 = tasks.find(t => t.i === 0);
+  // /clear (or trim) rewinds indices -> nothing to reuse, refetch from scratch
+  if (!first && (olds.length > total || (olds.length && t0 && olds[0]._input !== t0.input)))
+    return open_(name);
+  const atEnd = m.scrollHeight - m.scrollTop - m.clientHeight < 80;
+  if (first || !m.querySelector('.hd')) m.innerHTML = '<div class="hd"></div>';
+  m.querySelector('.hd').textContent = r.title || name;
+
+  for (const t of tasks){
+    const el = m.querySelector(`.task[data-i="${t.i}"]`);
+    if (el) el.update(t); else m.appendChild(taskEl(name, t));
+  }
+  if (first || atEnd) m.scrollTop = m.scrollHeight;
+}
+
+// one agent task: input bubble + collapsible output steps
+function taskEl(name, t){
+  const wrap = document.createElement('div');
+  wrap.className = 'task';
+  wrap.dataset.i = t.i;
+  const u = document.createElement('div'); u.className = 'msg user';
+  const a = document.createElement('div'); a.className = 'msg assistant';
+  wrap.append(u, a);
+  wrap.update = t2 => {
+    wrap._input = t2.input;
+    u.textContent = t2.input ?? '';
+    const steps = t2.steps || [];
+    if (!steps.length){
+      if (!a.firstChild) a.innerHTML = '<div class="dim ph">…</div>';
+      return;
+    }
+    const ph = a.querySelector('.ph'); if (ph) ph.remove();
+    for (const s of steps){
+      const d = a.querySelector(`.seg[data-j="${s.j}"]`);
+      if (d) d.update(s); else a.appendChild(segEl(name, t2.i, s));
+    }
+  };
+  wrap.update(t);
+  return wrap;
+}
+
+// one collapsed step: markdown is parsed only on first expand (and on live growth)
+function segEl(name, i, s){
+  const det = document.createElement('details');
+  det.className = 'seg';
+  det.dataset.j = s.j;
+  det.innerHTML = `<summary><span class="ar">▶</span>
+      <span class="tt"></span><span class="n"></span></summary>
+      <div class="body dim">…</div>`;
+  const tt = det.querySelector('.tt'), nn = det.querySelector('.n'), body = det.querySelector('.body');
+  let n = -1, loaded = -1, busy = false, raw = ''; // raw = full text on screen, kept so growth only fetches the tail
+
+  const pull = async () => {                       // fetch only what we don't have yet
+    if (busy || loaded === n) return;
+    busy = true;
+    try {
+      const base = `/api/${encodeURIComponent(name)}/seg/${i}/${s.j}`;
+      let off = raw.length;
+      let r = await api(`${base}?off=${off}`);
+      if (!r.error && r.n < off){ off = 0; r = await api(base); }   // step rewound (trim/clear) -> full refetch
+      body.classList.remove('dim');
+      if (r.error){ body.innerHTML = '⚠ ' + esc(r.error); loaded = n; return; }
+      raw = (off ? raw : '') + (r.content || '');
+      body.innerHTML = md(raw);
+      loaded = n;
+    } catch(e){} finally { busy = false; }
+  };
+  det.update = s2 => {
+    if (s2.title !== undefined) tt.textContent = s2.title;
+    n = s2.n; nn.textContent = kb(n);
+    if (det.open) pull();                          // open + grew -> refresh once
+  };
+  det.addEventListener('toggle', () => { if (det.open) pull(); });
+  det.update(s);
+  return det;
+}
+
+// ---- composer: send a task / abort the running one (both are idempotent-safe) ----
+const box = $('#box'), tip = $('#tip');
+
+function say(t, err){ tip.textContent = t || ''; tip.classList.toggle('err', !!err); }
+function enable(on){ for (const e of [box, $('#send'), $('#stop')]) e.disabled = !on;
+                     box.placeholder = on ? 'Enter 发送 / Shift+Enter 换行' : '先选择一个会话…'; }
+
+async function post(path){                        // -> {ok} | {error, code}
+  try {
+    const r = await fetch(`/api/${encodeURIComponent(cur)}/${path}`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({text: box.value})});
+    return await r.json();
+  } catch(e){ return {error: '网络错误'}; }
+}
+
+async function send(){
+  const t = box.value.trim();
+  if (!cur || !t) return;
+  $('#send').disabled = true; say('发送中…');
+  const r = await post('put');
+  $('#send').disabled = false;
+  if (r.error){ say(r.error, true); return; }
+  box.value = ''; box.style.height = 'auto'; say('已送达');
+  sync(false);                                     // pull the new bubble right away
+}
+
+async function stop_(){
+  if (!cur) return;
+  say('已请求停止…');
+  const r = await post('abort');
+  say(r.error || '已请求停止', !!r.error);
+}
+
+box.addEventListener('input', () => {              // grow with the text
+  box.style.height = 'auto'; box.style.height = Math.min(box.scrollHeight, 160) + 'px';
+});
+box.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing){ e.preventDefault(); send(); }
+});
+
+loadPeers();
+setInterval(loadPeers, 5000);
+setInterval(() => sync(false), 2000);
+</script>
+</body>
+</html>

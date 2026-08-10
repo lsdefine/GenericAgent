@@ -130,6 +130,9 @@ def auto_make_url(base, path):
     if b.endswith(p): return b
     return f"{b}/{p}" if re.search(r'/v\d+(/|$)', b) else f"{b}/v1/{p}"
 
+def _is_transient_stream_error(message):
+    return bool(re.search(r'concurrency|retry later|overloaded|rate.?limit', message or '', re.I))
+
 def _parse_claude_json(data):
     if data.get("stop_reason") == "refusal":
         err = "[Error: Claude refusal]"
@@ -198,8 +201,8 @@ def _parse_claude_sse(resp_lines):
         elif evt_type == "error":
             err = evt.get("error", {})
             emsg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
-            if re.search(r'concurrency|retry later|overloaded|rate.?limit', emsg, re.I):
-                raise requests.ConnectionError(emsg)  # 走 _stream_with_retry 网络重试，避免落到 ga 应用层
+            if _is_transient_stream_error(emsg):
+                raise requests.ConnectionError(emsg)  # retry inside _stream_with_retry
             warn = f"\n\n!!!Error: SSE {emsg}"; break
     if not warn:
         if not got_message_stop and not stop_reason: warn = "\n\n[!!! 流异常中断，未收到完整响应 !!!]"
@@ -275,6 +278,8 @@ def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
             elif etype == "error":
                 err = evt.get("error", {})
                 emsg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
+                if _is_transient_stream_error(emsg) and not content_text and not reasoning_text and not fc_buf:
+                    raise requests.ConnectionError(emsg)
                 if emsg: content_text += f"!!!Error: {emsg}"; yield f"!!!Error: {emsg}"
                 break
             elif etype == "response.completed":
@@ -296,6 +301,8 @@ def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
                 _record_usage(usage, api_mode)
                 err = ((evt.get("response") or {}).get("error") or {})
                 emsg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
+                if _is_transient_stream_error(emsg) and not content_text and not reasoning_text and not fc_buf:
+                    raise requests.ConnectionError(emsg)
                 if emsg: content_text += f"!!!Error: {emsg}"; yield f"!!!Error: {emsg}"
                 break
         blocks = []

@@ -23,9 +23,10 @@ python work/scanner/probe.py -i work/data/raw/hosts.txt -o work/data/candidates/
 - `-c/--concurrency`：并发数，程序限制为 1..100；建议从 4 或 8 开始。
 - `-t/--timeout`：单请求超时，必须大于 0。
 - `-f/--fingerprint`：指纹库路径。
-- `-p/--proxies`：可选代理列表；代理只进入请求层，不写入结果。
-- `--probe-only /v1/models,/api/models`：仅使用指定路径。
+- `-p/--proxies`：可选的完整 `http(s)` 代理 URL 列表；按目标稳定选择代理，代理地址只进入请求层，不写入结果。
+- `--probe-only /v1/models,/api/models`：仅使用指定路径；空白项会忽略，路径必须以 `/` 开头。
 - `--resume`：跳过输出 JSONL 已记录的目标。
+- 输出 JSONL 每条记录包含 `run` 元数据（扫描器/指纹库版本、超时、代理数量及关键开关），便于复核和复现；不包含代理地址。
 - `--insecure`：仅本地测试使用；生产审计默认校验证书。
 - `--follow-redirects`：仅明确需要时开启；默认不跟随跳转。
 

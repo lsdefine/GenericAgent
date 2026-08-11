@@ -9,7 +9,7 @@
 每条 probe 的全部 expect 规则必须满足；纯状态码和认证会话路径不会形成候选。
 输出为追加式 JSONL，每个输入目标均有 candidate 或 no_match_or_unreachable 记录。
 """
-import argparse, asyncio, ipaddress, json, random, re, sys, time
+import argparse, asyncio, hashlib, ipaddress, json, re, sys, time
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -17,6 +17,7 @@ from urllib.parse import urlsplit
 WORK_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_FINGERPRINT = str(WORK_DIR / "fingerprints" / "ai_fingerprints.json")
 DEFAULT_OUTPUT = str(WORK_DIR / "data" / "candidates" / "result.jsonl")
+SCANNER_VERSION = "0.3"
 
 try:
     import aiohttp
@@ -27,6 +28,14 @@ except ImportError:
 DEFAULT_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
               "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
 EV_ID = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+
+
+def choose_proxy(target, proxies):
+    """为目标稳定选择代理，避免同一目标在重跑时随机漂移。"""
+    if not proxies:
+        return None
+    digest = hashlib.sha256(target.encode("utf-8")).digest()
+    return proxies[int.from_bytes(digest[:8], "big") % len(proxies)]
 
 
 def normalize_host(h):
@@ -211,11 +220,28 @@ async def main():
     if args.proxies:
         with open(args.proxies, encoding="utf-8") as f:
             proxy_list = [line.strip() for line in f if line.strip() and not line.lstrip().startswith("#")]
+        if any(urlsplit(proxy).scheme.lower() not in ("http", "https") or not urlsplit(proxy).hostname
+               for proxy in proxy_list):
+            ap.error("--proxies 中的每项必须是完整的 http(s) 代理 URL")
+    probe_only = ({path.strip() for path in args.probe_only.split(",") if path.strip()}
+                  if args.probe_only else None)
+    if args.probe_only and not probe_only:
+        ap.error("--probe-only 至少包含一个非空路径")
+    if probe_only and any(not path.startswith("/") for path in probe_only):
+        ap.error("--probe-only 中的路径必须以 / 开头")
+    run_meta = {
+        "run_id": EV_ID,
+        "scanner_version": SCANNER_VERSION,
+        "fingerprint_version": str(fp.get("_meta", {}).get("version", "unknown")),
+        "timeout_seconds": args.timeout,
+        "follow_redirects": args.follow_redirects,
+        "insecure": args.insecure,
+        "probe_only": sorted(probe_only) if probe_only else None,
+        "proxy_count": len(proxy_list),
+    }
     print(f"[*] 待测 {len(targets)} 个，框架 {sum(len(fp.get(k, [])) for k in fp if not k.startswith('_'))} 组，并发 {args.concurrency}，代理 {len(proxy_list)} 条", flush=True)
 
-    from pathlib import Path
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
-    probe_only = set(args.probe_only.split(",")) if args.probe_only else None
     sem, queue = asyncio.Semaphore(args.concurrency), asyncio.Queue()
     for target in targets:
         queue.put_nowait(target)
@@ -232,11 +258,12 @@ async def main():
                         target = queue.get_nowait()
                     except asyncio.QueueEmpty:
                         return
-                    proxy = random.choice(proxy_list) if proxy_list else None
+                    proxy = choose_proxy(target, proxy_list)
                     result = await scan_target(session, target, fp, args.timeout, sem, probe_only, proxy,
                                                args.insecure, args.follow_redirects)
                     record = result or {"target": target, "outcome": "no_match_or_unreachable",
                                         "ts": datetime.now(timezone.utc).isoformat()}
+                    record["run"] = run_meta
                     if result:
                         record["outcome"] = "candidate"
                         candidates += 1

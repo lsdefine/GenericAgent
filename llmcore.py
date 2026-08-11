@@ -375,8 +375,9 @@ def _record_usage(usage, api_mode):
         if out: print(f"[Output] tokens={out}")
     elif api_mode == 'messages':
         ci, cr, raw_inp = _i(usage.get("cache_creation_input_tokens")), _i(usage.get("cache_read_input_tokens")), _i(usage.get("input_tokens"))
-        inp, cached, out = raw_inp + ci + cr, cr, 0
+        inp, cached, out = raw_inp + ci + cr, cr, _i(usage.get("output_tokens"))
         print(f"[Cache] input={raw_inp} creation={ci} read={cr}")
+        if out: print(f"[Output] tokens={out}")
     else: return
     STATS.update(inp=inp, cached=cached, out=out)
     

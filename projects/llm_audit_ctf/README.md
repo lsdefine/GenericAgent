@@ -9,7 +9,8 @@
 - `work/data/raw/`：脱敏后的输入目标；禁止放身份证、Cookie、API Key、代理凭据。
 - `work/data/candidates/`：扫描输出 JSONL；结果仅保存有限、脱敏证据。
 - `work/candidate_review.md`、`work/audit_report.md`：人工复核与对外审计报告模板。
-- `work/NETWORK_HANDOVER.md`：本机网络监听的只读交接记录；本项目不启动固定监听端口。
+
+本机网络监听快照属于临时运行交接信息，不纳入版本库；本项目不启动固定监听端口。
 
 ## 最小运行
 

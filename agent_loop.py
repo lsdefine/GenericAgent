@@ -41,6 +41,10 @@ def get_pretty_json(data):
 
 def agent_runner_loop(client, system_prompt, user_input, handler, tools_schema, 
                       max_turns=40, verbose=True, initial_user_content=None, yield_info=False):
+    # messages[0] = system, messages[1] = user; agent_before hooks may
+    # override either via the returned dict. Index positions are part of the
+    # contract — if a system message is ever prepended in index 0 (e.g. by a
+    # future tool/system split), update these indices accordingly.
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": initial_user_content if initial_user_content is not None else user_input}
@@ -50,6 +54,12 @@ def agent_runner_loop(client, system_prompt, user_input, handler, tools_schema,
     if isinstance(_ctx, dict):
         if 'system_prompt' in _ctx:
             messages[0]['content'] = _ctx['system_prompt']
+        # initial_user_content takes precedence over user_input when both
+        # are returned by the hook. The caller passed `initial_user_content`
+        # explicitly as the resolved first-turn content; if a plugin
+        # override disagrees, the plugin override wins (plugin is the
+        # last word). This matches the default precedence at call site:
+        # `initial_user_content if initial_user_content is not None else user_input`.
         if _ctx.get('initial_user_content') is not None:
             messages[1]['content'] = _ctx['initial_user_content']
         elif 'user_input' in _ctx and initial_user_content is None:

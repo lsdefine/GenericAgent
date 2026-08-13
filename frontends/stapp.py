@@ -439,6 +439,12 @@ if prompt:
 # Stream hosts only when this session owns the queue.
 # Single always-on 1s tick below (stream / detached / hub / idle) — never unregistered.
 _stream_fh = _stream_ls = None
+# Streamlit >=1.60 raises "A fragment tried to write to a container
+# created outside the fragment" when a @st.fragment first writes into
+# an external container that hasn't been claimed by a full-app run.
+# Claim it once on the first fragment-side write so the position is
+# reserved before any expander is folded in. See #752.
+_stream_claimed = False
 if st.session_state.get('display_queue') is not None:
     with st.chat_message("assistant"):
         _stream_fh = st.container()
@@ -475,6 +481,10 @@ def _tick():
         frozen = st.session_state.get('_stream_frozen', 0)
         while frozen < max(0, len(steps) - 1):
             body = steps[frozen] or ''
+            global _stream_claimed
+            if not _stream_claimed:
+                with _stream_fh: st.markdown("")
+                _stream_claimed = True
             with _stream_fh:
                 with st.expander(_step_title(body, frozen), expanded=False): st.markdown(body)
             frozen += 1

@@ -29,9 +29,11 @@ def install(app, *, web_port, token, here):
 
     async def reconnect():
         while True:
+            connected = False
             try:
                 state["status"], state["error"] = "reconnecting", None
                 ws = await connect_saved(name, path=rooms, direct_timeout=15)
+                connected = True
                 try:
                     await export(ws)
                 finally:
@@ -40,7 +42,7 @@ def install(app, *, web_port, token, here):
                 raise
             except Exception as exc:
                 state["status"], state["error"] = "error", str(exc)
-            await asyncio.sleep(5)
+            await asyncio.sleep(0.2 if connected else 5)
 
     async def new_pair():
         try:

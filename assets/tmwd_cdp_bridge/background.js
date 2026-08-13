@@ -16,6 +16,7 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 
 async function handleExtMessage(msg, sender) {
+  if (msg.cmd === 'status') return { ok: true, data: status };
   if (msg.cmd === 'cookies') return await handleCookies(msg, sender);
   if (msg.cmd === 'cdp') return await handleCDP(msg, sender);
   if (msg.cmd === 'batch') return await handleBatch(msg, sender);
@@ -211,7 +212,9 @@ function buildCdpScript(code) {
 
 // --- WebSocket Client for TMWebDriver ---
 let ws = null;
+let status = 'connected';
 const WS_URL = 'ws://127.0.0.1:18765';
+function setStatus(s){if(s===status)return;status=s;chrome.tabs.query({}).then(T=>T.forEach(t=>chrome.tabs.sendMessage(t.id,{type:'tmwd_status',data:s}).catch(()=>{})));}
 
 function scheduleProbe() {
   // Use chrome.alarms to survive MV3 service worker suspension
@@ -256,6 +259,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
       console.log('[TMWD-WS] Server detected, connecting...');
       connectWS();
     } else {
+      setStatus('disconnected');
       scheduleProbe(); // Server not up, keep probing
     }
   }
@@ -339,6 +343,7 @@ function connectWS() {
   console.log('[TMWD-WS] Connecting to', WS_URL);
   try {
     ws = new WebSocket(WS_URL);
+    setStatus('connecting');
   } catch (e) {
     console.error('[TMWD-WS] Constructor error:', e);
     ws = null;
@@ -347,6 +352,7 @@ function connectWS() {
   }
   ws.onopen = async () => {
     console.log('[TMWD-WS] Connected!');
+    setStatus('connected');
     scheduleKeepalive(); // Keep SW alive while connected
     const tabs = (await chrome.tabs.query({})).filter(t => isScriptable(t.url));
     ws.send(JSON.stringify({
@@ -385,6 +391,7 @@ function connectWS() {
   };
   ws.onclose = () => {
     console.log('[TMWD-WS] Disconnected');
+    setStatus('connecting');
     ws = null;
     scheduleProbe();
   };

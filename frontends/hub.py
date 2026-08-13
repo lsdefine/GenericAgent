@@ -6,7 +6,7 @@ HTTP (errors = {'error','code'} + status: offline/gone 404, busy 409, timeout 50
     [{j,title,n}]}],sig} or {same:1,sig} | {name}/seg/{i}/{j}?off=N -> {content,off,n} (step bodies, tailable)
     POST {name}/put {"text":..} -> {ok:1} | {name}/abort -> {ok:1}
 """
-import os, re, sys, json, time, asyncio, threading, random, hmac
+import os, re, sys, json, time, asyncio, threading, random, hmac, hashlib
 PORT = int(os.environ.get('GA_HUB_PORT', 19736))
 WEB_PORT = int(os.environ.get('GA_HUB_WEB_PORT', PORT + 1))   # the only face fit to be tunnelled out (frp this one)
 TOKEN = os.environ.get('GA_HUB_TOKEN') or ''.join(random.choices('abcdefghijkmnpqrstuvwxyz23456789', k=6))
@@ -162,7 +162,7 @@ if __name__ == '__main__':
             if name and peers.get(name) is ws:      # never evict the successor that replaced us
                 peers.pop(name, None); meta.pop(name, None); print(f'[-] {name} ({len(peers)} online)')
     @app.get('/api/peers')
-    async def api_peers():      # one cheap round-trip per peer: counts only, and only if its sig moved
+    async def api_peers(psig: str = None):   # psig given -> {same:1} while the row set holds (no psig = full list)
         now = time.time()
         names = [n for n in peers if 'get' in (meta.get(n, {}).get('caps') or []) and now >= pdead.get(n, 0)]
         rs = await asyncio.gather(*[ask(n, {'op': 'get', 'detail': 0,
@@ -180,7 +180,9 @@ if __name__ == '__main__':
                          'caps': caps, 'run': r.get('run')})
             if r.get('sig'): pcache[n] = rows[-1]
         for n in [x for x in pcache if x not in peers]: pcache.pop(n, None)
-        return rows
+        if psig is None: return rows
+        sg = hashlib.md5(json.dumps(rows, sort_keys=True).encode()).hexdigest()[:12]
+        return {'same': 1} if psig == sg else {'rows': rows, 'psig': sg}
     @app.get('/api/{name}/messages')
     async def api_messages(name: str, detail: int = 1, sig: str = None, since: int = 0): return out(await ask(name, {'op': 'get', 'detail': detail, 'sig': sig, 'since': since}))
     @app.get('/api/{name}/seg/{i}/{j}')

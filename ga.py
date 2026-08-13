@@ -483,7 +483,7 @@ class GenericAgentHandler(BaseHandler):
         if not response or (not content.strip() and not thinking.strip()):
             yield "[Warn] LLM returned an empty response. Retrying...\n"
             return self._retry_or_exit("[ERROR] Blank response, regenerate and tooluse")
-        if '[!!! 流异常中断' in content[-100:] or '!!!Error:' in content[-100:] or content.endswith('</summary>'):
+        if '[!!! 流异常中断' in content[-100:] or '!!!Error:' in content[-100:] or (content.endswith('</summary>') and len(content) < 100):
             return self._retry_or_exit("[ERROR] Incomplete response. Regenerate and tooluse.")
         if 'max_tokens !!!]' in content[-100:]:
             return self._retry_or_exit("[ERROR] max_tokens limit reached. Use multi small steps to do it.")
@@ -571,13 +571,12 @@ class GenericAgentHandler(BaseHandler):
     def turn_end_callback(self, response, tool_calls, tool_results, turn, next_prompt, exit_reason):
         _c = re.sub(r'```.*?```|<thinking>.*?</thinking>', '', response.content, flags=re.DOTALL)
         rsumm = re.search(r"<summary>(.*?)</summary>", _c, re.DOTALL)
-        if rsumm: summary = rsumm.group(1).strip()
-        else:
-            tc = tool_calls[0]; clean_args = {k: v for k, v in tc['args'].items() if not k.startswith('_')}   # at least one because no_tool
-            summary = _c.strip() or smart_format("直接回答了用户问题" if tc['tool_name'] == 'no_tool' else f"{tc['tool_name']}, args: {clean_args}", max_str_len=40)
+        raw = (rsumm.group(1) if rsumm else _c).strip()
+        if raw:
+            summary = smart_format(raw.replace('\n', ''), max_str_len=80)
+            self.history_info.append('[Agent] ' + summary)
+        if not rsumm and tool_calls and tool_calls[0]['tool_name'] != 'no_tool':
             next_prompt += "\n\n\n[TIPS] 必须在回复文本中包含<summary>！\n\n"
-        summary = smart_format(summary.replace('\n', ''), max_str_len=80)
-        self.history_info.append(f'[Agent] {summary}')
         _plan = self._in_plan_mode()
 
         if turn % 175 == 0 and (not _plan):

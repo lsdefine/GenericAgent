@@ -276,6 +276,13 @@ if __name__ == '__main__':
         if hasattr(mod, 'init'): mod.init(_extra_args)
         _mt = os.path.getmtime(args.reflect)
         print(f'[Reflect] loaded {args.reflect}' + (f' args={_extra_args}' if _extra_args else ''))
+        try:
+            import frontends.hub as hub
+            def _hub_put(t):
+                if agent.is_running: return {'error': 'busy', 'code': 'busy'}
+                agent.put_task(t, source='hub')
+            hub.connect(agent, f'reflect/{os.path.splitext(os.path.basename(args.reflect))[0]}', put_task=_hub_put)
+        except Exception: pass
         while True:
             if os.path.getmtime(args.reflect) != _mt:
                 try:

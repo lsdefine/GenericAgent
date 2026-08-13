@@ -145,8 +145,9 @@ def parse_native_log(path, allow_empty=False):
 
 def _derive_hist_info(history):
     """从 native history 重建 history_info(轮级纪要):真实用户提问 → `[USER]: …`;每条
-    assistant(=一轮) → `[Agent] <summary>`(无 summary 取首行)。与 ga.turn_end_callback /
-    worldline 树同口径。纯函数、不依赖 worldline,供续接 opt-in 恢复工作记忆(见 restore_wm)。"""
+    assistant(=一轮) → 有字才写 `[Agent] …`(`<summary>` 优先,否则全文;无字跳过)。
+    与 ga.turn_end_callback / worldline 同口径;截断延用 [:80]。纯函数、不依赖 worldline,
+    供续接 opt-in 恢复工作记忆(见 restore_wm)。"""
     def _all_text(m):
         c = m.get('content') if isinstance(m, dict) else None
         if isinstance(c, str): return c
@@ -170,10 +171,9 @@ def _derive_hist_info(history):
         elif role == 'assistant':
             txt = re.sub(r'```.*?```|<thinking>.*?</thinking>', '', _all_text(m), flags=re.DOTALL)
             mt = re.search(r'<summary>(.*?)</summary>', txt, re.DOTALL)
-            s = mt.group(1).strip()[:80] if (mt and mt.group(1).strip()) else ''
-            if not s:
-                s = next((ln.strip()[:80] for ln in txt.splitlines() if ln.strip()), '（无摘要）')
-            out.append(f'[Agent] {s}')
+            raw = (mt.group(1) if mt else txt).strip()
+            if raw:
+                out.append('[Agent] ' + raw.replace('\n', '')[:80])
     return out
 
 

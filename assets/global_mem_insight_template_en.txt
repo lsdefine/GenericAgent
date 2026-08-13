@@ -13,10 +13,10 @@ Scheduling: scheduled_task_sop | Autonomous: autonomous_operation_sop | watchdog
 Mobile: adb_ui.py
 
 [RULES]
-1. Search first: must use es for filename search (no PS recursion/no dir traversal), always prefer Google for web search (no duckduckgo etc), check cwd first, no guessing paths
+1. Search first: no huge PS recursion/no dir traversal for file search, prefer Google for web search, check cwd first, no guessing paths
 2. Cross-verify: never trust summaries, verify numbers on detail pages
 3. Encoding safety: use file_read not PS cat/type; read before modify; import memory modules directly (already in PATH, no fake prefixes)
-4. Close the loop: confirm after physical simulation; request intervention after 3 failures; complete Git workflow
+4. Close the loop: confirm after physical simulation; request intervention after 3 failures
 5. Processes: never kill python unconditionally (kills self), use exact PID, no os.kill for liveness check
 6. Windows: prefer win32gui title enumeration for GUI state
 7. Web JS: use native setter + event chain for input, check disabled before click, mind quote escaping; if scan empty/incomplete wait then rescan, no conclusions from first scan

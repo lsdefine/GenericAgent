@@ -198,7 +198,11 @@ class RewindStore:
         hinfo = None
         hinfo_len = None
         if hist_info is not None:
-            parent_hlen = len(self.rebuild_hist_info(parent)) if parent is not None else 0
+            # 老树节点按旧口径存过「（无摘要）」条目,stored 长度会偏大切丢新纪要;
+            # history 在手时用同口径派生 parent 前缀定切片基点(前缀派生恒为全量前缀)。
+            parent_hlen = 0 if parent is None else (
+                len(self._derive_hist_info(history[:parent_len])) if history is not None
+                else len(self.rebuild_hist_info(parent)))
             hdelta = list(hist_info[parent_hlen:])
             hinfo_len = len(hist_info)
             hinfo = self._put_blob(
@@ -713,24 +717,22 @@ class RewindStore:
         return ""
 
     @classmethod
-    def _summary_of(cls, msg) -> str:
-        """从 assistant 消息提取 `<summary>`(GA 轮级纪要的来源);无则退化取首行。
-        与 ga.turn_end_callback 的提取口径一致,使从日志重建的 history_info 贴近原值。"""
+    def _summary_of(cls, msg) -> Optional[str]:
+        """与 ga.turn_end_callback 同口径: `<summary>` 优先,否则全文;无字 → None(不进 history_info)。
+        截断延用 [:80](重建路径不依赖 smart_format)。"""
         text = re.sub(r'```.*?```|<thinking>.*?</thinking>', '',
                       cls._all_text(msg), flags=re.DOTALL)
         m = re.search(r'<summary>(.*?)</summary>', text, re.DOTALL)
-        if m and m.group(1).strip():
-            return m.group(1).strip()[:80]
-        for line in text.splitlines():
-            if line.strip():
-                return line.strip()[:80]
-        return "（无摘要）"
+        raw = (m.group(1) if m else text).strip()
+        if not raw:
+            return None
+        return raw.replace('\n', '')[:80]
 
     @classmethod
     def _derive_hist_info(cls, history) -> list:
         """从对话历史重建 `handler.history_info`(轮级纪要):真实用户提问 → `[USER]: …`;
-        每条 assistant(=一轮) → `[Agent] <summary>`。这正是 GA 原本构建 history_info 的
-        方式,故 reconcile 从日志吸收外部/老会话轮次时可据此把工作记忆补回(否则续接后
+        每条 assistant(=一轮) → 有字才写 `[Agent] …`(与 ga.turn_end_callback 同口径)。
+        reconcile 从日志吸收外部/老会话轮次时可据此把工作记忆补回(否则续接后
         rewind 到这些轮,纪要会缺失 → 串味)。"""
         out: list = []
         for m in history:
@@ -742,7 +744,9 @@ class RewindStore:
                 if q:
                     out.append(f"[USER]: {q}")
             elif role == "assistant":
-                out.append(f"[Agent] {cls._summary_of(m)}")
+                s = cls._summary_of(m)
+                if s is not None:
+                    out.append('[Agent] ' + s)
         return out
 
     @classmethod

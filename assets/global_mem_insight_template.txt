@@ -13,11 +13,11 @@ UI操作/截图/视觉: computer_use.md | vision_sop | 窗口截图必用ljqCtrl
 手机:adb_ui.py
 
 [RULES]
-1. 搜索先行: 搜文件名严禁不用es(禁PS递归/禁dir遍历), 搜索一定优先使用web工具的google(严禁duckduckgo等), 优先看cwd，禁猜路径
+1. 搜索先行: 搜文件名禁长时间递归, 网络搜索一定优先使用web工具的google, 优先看cwd，禁猜路径
 2. 交叉验证: 禁信摘要, 数值进详情页核实
 3. 编码安全: 禁PS cat/type用file_read; 改前必读; memory模块直接import(已在PATH,禁加虚假前缀)
-4. 闭环: 物理模拟后确认; 3次失败请求干预; Git完整闭环
+4. 闭环: 物理模拟后确认; 3次失败请求干预
 5. 进程: 禁无条件杀python(杀自己), 精确PID, 禁os.kill判活
-6. 窗口: GUI状态优先win32gui枚举标题
+6. 窗口: GUI状态优先枚举标题
 7. web JS: 输入用原生setter+事件链, 点击前检disabled, 注意引号转义; scan空/不全先稍等再scan, 禁首扫定论
 8. SOP: 读SOP禁凭印象,有utils必用

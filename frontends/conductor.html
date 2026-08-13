@@ -381,7 +381,7 @@
     let ws, fileDir='', fileParent='';
 
     function esc(s){ return String(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
-    function renderMd(s){ try { return marked.parse(s||'', { breaks: true, gfm: true }); } catch(e){ return esc(s); } }
+    function renderMd(s){ try { return marked.parse(String(s||'').replace(/</g,'&lt;'), { breaks: true, gfm: true }); } catch(e){ return esc(s); } }
     function fileUrl(path){ return '/file?path='+encodeURIComponent(path); }
     function humanSize(n){ return n==null?'':n<1024?n+' B':n<1048576?(n/1024).toFixed(1)+' KB':(n/1048576).toFixed(1)+' MB'; }
     async function browseFiles(path=''){

@@ -791,7 +791,7 @@ class NativeClaudeSession(BaseSession):
             tools = [dict(t) for t in claude_tools]; tools[-1]["cache_control"] = {"type": "ephemeral"}
             payload["tools"] = tools
         else: print("[ERROR] No tools provided for this session.")
-        payload['system'] = [{"type": "text", "text": "You are Claude Code, Anthropic's official CLI for Claude.", "cache_control": {"type": "ephemeral"}}]
+        payload['system'] = [{"type": "text", "text": "You are Claude Code, Anthropic's official CLI for Claude." if self.fake_cc_system_prompt else "You are a capable AI assistant running in GenericAgent framework.", "cache_control": {"type": "ephemeral"}}]
         #payload['system'][0]['text'] += f"\nPlatform: {sys.platform}"
         if self.system:
             if self.fake_cc_system_prompt: payload["system"].append({"type": "text", "text": self.system})

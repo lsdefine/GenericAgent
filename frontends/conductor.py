@@ -2,10 +2,10 @@ import os, sys, re, time, json, uuid, queue, asyncio, threading, argparse, base6
 from dataclasses import dataclass, field
 from typing import Dict, Any, Optional, List
 from contextlib import asynccontextmanager, suppress
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException
 from fastapi.responses import FileResponse, PlainTextResponse, JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 def _resolve_ga_root() -> str:
@@ -118,8 +118,81 @@ async def lifespan(app: FastAPI):
     yield
 
 
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
+def _origin_hostname(origin: str) -> str:
+    if origin != origin.strip(): return ""
+    try:
+        parsed = urlsplit(origin)
+        parsed.port
+    except ValueError:
+        return ""
+    if (parsed.scheme.lower() not in ("http", "https") or not parsed.hostname or
+            parsed.username is not None or parsed.password is not None or
+            parsed.path not in ("", "/") or parsed.query or parsed.fragment):
+        return ""
+    return parsed.hostname.lower()
+
+
+def _request_hostname(host: str) -> str:
+    try:
+        parsed = urlsplit("//" + host)
+        parsed.port
+    except ValueError:
+        return ""
+    if parsed.username is not None or parsed.password is not None:
+        return ""
+    return (parsed.hostname or "").lower()
+
+
+def _origin_matches_host(origin: str, host: str) -> bool:
+    origin_host = _origin_hostname(origin)
+    request_host = _request_hostname(host)
+    if not origin_host or not request_host:
+        return False
+    if args.host.lower() in _LOOPBACK_HOSTS:
+        return origin_host in _LOOPBACK_HOSTS and request_host in _LOOPBACK_HOSTS
+    return origin_host == request_host
+
+
+def _cors_headers(origin: str) -> dict:
+    return {
+        "Access-Control-Allow-Origin": origin,
+        "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type,Authorization",
+        "Vary": "Origin",
+    }
+
+
+class BrowserOriginGuard:
+    def __init__(self, app): self.app = app
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") not in ("http", "websocket"):
+            return await self.app(scope, receive, send)
+        headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers", [])}
+        origin, host = headers.get("origin", ""), headers.get("host", "")
+        if origin and not _origin_matches_host(origin, host):
+            if scope["type"] == "websocket":
+                return await send({"type": "websocket.close", "code": 1008})
+            return await PlainTextResponse("Forbidden", status_code=403)(scope, receive, send)
+        if scope["type"] == "websocket":
+            return await self.app(scope, receive, send)
+        cors = _cors_headers(origin) if origin else {}
+        if scope.get("method") == "OPTIONS" and origin:
+            return await PlainTextResponse("", status_code=204, headers=cors)(scope, receive, send)
+        async def send_with_cors(message):
+            if cors and message.get("type") == "http.response.start":
+                message = dict(message)
+                message["headers"] = list(message.get("headers", [])) + [
+                    (k.encode("latin-1"), v.encode("latin-1")) for k, v in cors.items()
+                ]
+            await send(message)
+        await self.app(scope, receive, send_with_cors)
+
+
 app = FastAPI(title="Conductor", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(BrowserOriginGuard)
 
 class RemoteAuth:
     def __init__(self, app): self.app = app

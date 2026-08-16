@@ -205,18 +205,21 @@ class AgentManager:
         try:
             self._sessions_dir.mkdir(parents=True, exist_ok=True)
             with self.lock:
+                if self.sessions.get(s.id) is not s:
+                    return
                 data = self._session_dict(s)
-            tmp = self._sessions_dir / f"{s.id}.json.tmp"
-            tmp.write_text(json.dumps(data, ensure_ascii=False, default=str), encoding="utf-8")
-            os.replace(tmp, self._session_file(s.id))  # atomic swap
+                tmp = self._sessions_dir / f"{s.id}.json.tmp"
+                tmp.write_text(json.dumps(data, ensure_ascii=False, default=str), encoding="utf-8")
+                os.replace(tmp, self._session_file(s.id))  # atomic swap
         except Exception as e:
             print(f"[bridge] persist session {s.id} failed: {e}", file=sys.stderr)
 
     def _delete_session_file(self, sid: str):
         try:
-            f = self._session_file(sid)
-            if f.exists():
-                f.unlink()
+            with self.lock:
+                f = self._session_file(sid)
+                if f.exists():
+                    f.unlink()
         except Exception as e:
             print(f"[bridge] delete session file {sid} failed: {e}", file=sys.stderr)
 

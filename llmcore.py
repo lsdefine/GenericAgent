@@ -142,10 +142,84 @@ def _parse_claude_json(data):
         elif b.get("type") == "thinking": yield ""
     return content_blocks
 
-def _raise_if_retryable_overload(emsg):
-    """HTTP 200 SSE/body overload → ConnectionError so _stream_with_retry can backoff."""
-    if emsg and re.search(r'concurrency|retry later|overloaded|rate.?limit', emsg, re.I):
-        raise requests.ConnectionError(emsg)
+# Coded transient errors from OpenAI Responses / Anthropic Messages / etc.
+# These come through SSE `error`/`response.failed` events and must trigger
+# _stream_with_retry's exponential-backoff loop. Keep the list explicit so a
+# permanent failure (e.g. invalid_request_error, context_length_exceeded) does
+# not retry and burn the budget.
+_RETRYABLE_STREAM_ERR_CODES = frozenset({
+    "rate_limit_error",
+    "rate_limit_exceeded",
+    "server_error",
+    "service_unavailable",
+    "api_error",
+    "overloaded",
+    "engine_overloaded",
+    "timeout",
+    "request_timeout",
+    "tokens_exceeded_retry",  # cohere-style transient
+    "upstream_error",
+    "temporary_error",
+    "too_many_requests",
+})
+_RETRYABLE_STREAM_ERR_RE = re.compile(
+    r"concurrency|retry later|overloaded|rate.?limit|server.{0,8}(?:error|busy|unavailable)"
+    r"|service.{0,8}unavailable|engine.{0,8}(?:overloaded|busy)|temporarily.{0,12}(?:unable|unavailable)"
+    r"|try again later|capacity",
+    re.I,
+)
+
+def _is_retryable_stream_err(err=None, emsg=None):
+    """True if a stream `error`/`response.failed` event should trigger _stream_with_retry.
+
+    Accepts either:
+      * err: dict with `code` / `type` / `message` (Responses API style), or
+      * emsg: bare error message string (legacy / prose path).
+    """
+    code = ""
+    message = emsg or ""
+    if isinstance(err, dict):
+        # OpenAI Responses nests error under {error: {code, type, message, ...}};
+        # some providers put the code/type/message at the top level instead.
+        for key in ("code", "type", "error_code"):
+            v = err.get(key)
+            if isinstance(v, str) and v:
+                code = v; break
+        sub = err.get("error")
+        if isinstance(sub, dict) and not code:
+            for key in ("code", "type"):
+                v = sub.get(key)
+                if isinstance(v, str) and v:
+                    code = v; break
+        # Surface message for prose matching if present.
+        m = err.get("message") or (sub.get("message") if isinstance(sub, dict) else None)
+        if isinstance(m, str) and m:
+            message = m
+    # Numeric error codes (rare in OpenAI, common in upstream-proxies): treat any
+    # 429 / 5xx that slipped into the SSE `error` payload as retryable.
+    if code and code.isdigit() and int(code) in {408, 409, 425, 429} | {500, 502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 527, 529}:
+        return True
+    # Coded transient categories.
+    if code and code.lower() in _RETRYABLE_STREAM_ERR_CODES:
+        return True
+    # Prose fallback — widens net against future provider-side message rewording.
+    return bool(message) and bool(_RETRYABLE_STREAM_ERR_RE.search(message))
+
+def _raise_if_retryable_overload(emsg_or_err):
+    """HTTP 200 SSE/body overload → ConnectionError so _stream_with_retry can backoff.
+
+    Accepts either a string (legacy path) or a dict (SSE error payloads from
+    OpenAI Responses `error` / `response.failed` events, Anthropic `error` blocks,
+    and most third-party proxies).
+    """
+    if emsg_or_err and _is_retryable_stream_err(err=emsg_or_err if not isinstance(emsg_or_err, str) else None,
+                                                  emsg=emsg_or_err if isinstance(emsg_or_err, str) else None):
+        if isinstance(emsg_or_err, str):
+            raise requests.ConnectionError(emsg_or_err)
+        if isinstance(emsg_or_err, dict):
+            msg = emsg_or_err.get("message") or (emsg_or_err.get("error", {}) or {}).get("message") or "stream error"
+            raise requests.ConnectionError(msg)
+        raise requests.ConnectionError(str(emsg_or_err))
 
 def _parse_claude_sse(resp_lines):
     """Parse Anthropic SSE stream. Yields text chunks, returns list[content_block]."""
@@ -203,7 +277,7 @@ def _parse_claude_sse(resp_lines):
         elif evt_type == "error":
             err = evt.get("error", {})
             emsg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
-            _raise_if_retryable_overload(emsg)  # 走 _stream_with_retry，避免落到 ga 应用层
+            _raise_if_retryable_overload(err if isinstance(err, dict) else emsg)  # 走 _stream_with_retry，避免落到 ga 应用层
             warn = f"\n\n!!!Error: SSE {emsg}"; break
     if not warn:
         if not got_message_stop and not stop_reason: warn = "\n\n[!!! 流异常中断，未收到完整响应 !!!]"
@@ -279,7 +353,7 @@ def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
             elif etype == "error":
                 err = evt.get("error", {})
                 emsg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
-                _raise_if_retryable_overload(emsg)
+                _raise_if_retryable_overload(err if isinstance(err, dict) else emsg)
                 if emsg: content_text += f"!!!Error: {emsg}"; yield f"!!!Error: {emsg}"
                 break
             elif etype == "response.completed":
@@ -301,7 +375,7 @@ def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
                 _record_usage(usage, api_mode)
                 err = ((evt.get("response") or {}).get("error") or {})
                 emsg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
-                _raise_if_retryable_overload(emsg)
+                _raise_if_retryable_overload(err if isinstance(err, dict) else emsg)
                 if emsg: content_text += f"!!!Error: {emsg}"; yield f"!!!Error: {emsg}"
                 break
         blocks = []
@@ -402,7 +476,7 @@ def _parse_openai_json(data, api_mode="chat_completions"):
         if status == "failed":
             err = data.get("error") or {}
             emsg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
-            _raise_if_retryable_overload(emsg)
+            _raise_if_retryable_overload(err if isinstance(err, dict) else emsg)
             if emsg: blocks.append({"type": "text", "text": f"!!!Error: {emsg}"}); yield f"!!!Error: {emsg}"
         elif status == "incomplete" and not any(b.get("type") == "text" for b in blocks):
             reason = ((data.get("incomplete_details") or {}).get("reason", "")) or "unknown"

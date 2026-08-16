@@ -216,7 +216,14 @@ if __name__ == '__main__':
     parser.add_argument('--nolog', action='store_true')
     parser.add_argument('--no-user-tools', action='store_true')
     args, _unknown = parser.parse_known_args()
-    _extra_args = dict(zip([k.lstrip('-') for k in _unknown[::2]], _unknown[1::2])) if _unknown else {}
+    reflect_enabled = args.reflect is not None
+    if args.reflect == '':
+        parser.error("--reflect requires a non-empty script path")
+    if _unknown and not reflect_enabled:
+        parser.error(f"unrecognized arguments: {' '.join(_unknown)}")
+    if reflect_enabled and (len(_unknown) % 2 or any(len(k) <= 2 or not k.startswith('--') or k.startswith('---') for k in _unknown[::2]) or any(v.startswith('--') for v in _unknown[1::2])):
+        parser.error("reflect extra arguments must be --key value pairs")
+    _extra_args = dict(zip([k[2:] for k in _unknown[::2]], _unknown[1::2])) if _unknown else {}
 
     if (args.func or args.task) and not args.nobg:
         import subprocess, platform

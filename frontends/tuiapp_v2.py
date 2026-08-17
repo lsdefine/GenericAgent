@@ -2067,6 +2067,7 @@ COMMANDS = [
     ("/help",     "",                 "显示帮助"),
     ("/status",   "",                 "查看会话状态"),
     ("/sessions", "",                 "列出所有会话"),
+    ("/user",     "",                 "打开账号与设备管理"),
     ("/new",      "[name]",           "新建并切换到新会话"),
     ("/switch",   "<id|name>",        "切换到指定会话"),
     ("/close",    "",                 "关闭当前会话"),
@@ -3605,6 +3606,7 @@ class GenericAgentTUI(App[None]):
         self._spinner_timer = None
         self._handlers: dict = {
             "help": self._cmd_help, "status": self._cmd_status, "sessions": self._cmd_status,
+            "user": self._cmd_user,
             "new": self._cmd_new, "switch": self._cmd_switch, "close": self._cmd_close,
             "rename": self._cmd_rename,
             "branch": self._cmd_branch, "rewind": self._cmd_rewind, "clear": self._cmd_clear,
@@ -4997,6 +4999,14 @@ class GenericAgentTUI(App[None]):
     def _cmd_help(self, args, raw):
         lines = [f"{c:<11} {a:<18} {d}" for c, a, d in COMMANDS]
         self._system("命令列表:\n" + "\n".join(lines))
+
+    def _cmd_user(self, args, raw):
+        try:
+            from plugins.ganet import open_user_center
+        except ImportError:
+            self._system("设备互联尚未安装，请先发送“阅读 ../memory/ganet_pc_setup_sop.md，帮我配置设备互联。”")
+            return
+        self._system(open_user_center())
 
     def _cmd_status(self, args, raw):
         lines = []

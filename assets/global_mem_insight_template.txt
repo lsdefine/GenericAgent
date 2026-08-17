@@ -11,6 +11,7 @@ L4: L4_raw_sessions/ 历史会话
 UI操作/截图/视觉: computer_use.md | vision_sop | 窗口截图必用ljqCtrl
 定时:scheduled_task_sop | 自主:autonomous_operation_sop | watchdog/反射:agentmain --reflect
 手机:adb_ui.py
+手机直连电脑/组网/让手机 GA 连接这台电脑: ganet_pc_setup_sop
 
 [RULES]
 1. 搜索先行: 搜文件名禁长时间递归, 网络搜索一定优先使用web工具的google, 优先看cwd，禁猜路径

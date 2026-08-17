@@ -1893,6 +1893,7 @@ def _cmds() -> list[tuple[str, str, str]]:
     return [
         ('/help',     '',                       _t('cmd.help.desc')),
         ('/status',   '',                       _t('cmd.status.desc')),
+        ('/user',     '',                       _t('cmd.user.desc', default='打开账号与设备管理')),
         ('/llm',      _t('cmd.llm.arg'),        _t('cmd.llm.desc')),
         ('/btw',      _t('cmd.btw.arg'),        _t('cmd.btw.desc')),
         ('/review',   _t('cmd.review.arg'),     _t('cmd.review.desc')),
@@ -4504,6 +4505,13 @@ class SB:
                 rows.append(f'  {_DIM}⚠ {self._bridge._init_error}{_RST}')
                 rows.append('')
             self.commit(rows)
+        elif name == 'user':
+            try:
+                from plugins.ganet import open_user_center
+            except ImportError:
+                self.commit(['设备互联尚未安装，请先发送“阅读 ../memory/ganet_pc_setup_sop.md，帮我配置设备互联。”'])
+            else:
+                self.commit([open_user_center()])
         elif name == 'new':
             # New session = wipe the current conversation and start fresh.
             # Keeping prior sessions around (multi-session) is a separate

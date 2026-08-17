@@ -38,6 +38,14 @@ all-frontends = [
     "wecom-aibot-sdk>=1.0",
     "dingtalk-stream>=0.20",
 ]
+# phone <-> computer device interconnect (GAnet). Optional and Windows-leaning:
+# install only to pair a phone with this computer. Keeping the list here rather
+# than hardcoded in the repair path is what lets `/user` install what it checks.
+device = [
+    "qrcode>=7.4",       # pairing QR
+    "pillow>=9.0",       # computer screenshot capture
+    "cryptography>=42.0", # signed GAnet component releases
+]
 
 [build-system]
 requires = ["setuptools>=68.0"]

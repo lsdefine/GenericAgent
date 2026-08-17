@@ -2032,7 +2032,14 @@ class ChatPanel(QWidget):
         parts = cmd.split()
         op = parts[0].lower() if parts else ""
         if op == "/help":
-            self._add_system_notice(HELP_TEXT)
+            self._add_system_notice(HELP_TEXT + "\n/user - 打开账号与设备管理")
+        elif op == "/user":
+            try:
+                from plugins.ganet import open_user_center
+            except ImportError:
+                self._add_system_notice("设备互联尚未安装，请先发送“阅读 ../memory/ganet_pc_setup_sop.md，帮我配置设备互联。”")
+            else:
+                self._add_system_notice(open_user_center())
         elif op == "/stop":
             self._do_stop()
             self._add_system_notice("⏹️ 已停止")

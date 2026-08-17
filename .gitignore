@@ -154,3 +154,9 @@ frontends/conductor_im_plugins/*
 
 # Beta 渠道：订阅门户插件（仅 beta 分发携带，不入库）
 plugins/subscription_portal.py
+
+# GAnet 由设备互联 SOP 从官方发布服务安装，不进入主仓。
+/plugins/ganet/
+
+# Tracked device-interconnect SOP.
+!memory/ganet_pc_setup_sop.md

@@ -137,7 +137,14 @@ class GenericAgent:
             display_queue.put({'done': smart_format(f"✅ session.{k} = {repr(v)}", max_str_len=500), 'source': 'system'})
             return None
         if raw_query.strip() == '/resume':
-            return r'帮我看看最近有哪些会话可以恢复。读model_responses/目录，按修改时间取最近10个文件，从每个文件里找最后一个<history>...</history>块，用一句话总结每个会话在聊什么，列表给我选。注意读文件后要把字面的\n替换成真换行才能正确匹配。'
+            return (r'帮我看看最近有哪些会话可以恢复。'
+                    r'先列 temp/model_responses/ 目录（按修改时间取最近10个文件）。'
+                    r'如果该目录里的 .txt 少于 5 个（L4 归档已清理原始文件），'
+                    r'回退读 memory/L4_raw_sessions/all_histories.txt（汇总的会话历史），'
+                    r'或解压 memory/L4_raw_sessions/{YYYY-MM}.zip 取最近的月度归档。'
+                    r'从每个文件里找最后一个<history>...</history>块，'
+                    r'用一句话总结每个会话在聊什么，列表给我选。'
+                    r'注意读文件后要把字面的\n替换成真换行才能正确匹配。')
         return raw_query
 
     def run(self):

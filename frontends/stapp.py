@@ -368,6 +368,18 @@ if prompt:
             {"role": "assistant", "content": f"❌ `{name}` 模块未安装", "time": ts},
         ])
         _reset_and_rerun()
+    if cmd == "/user":
+        try:
+            from plugins.ganet import open_user_center
+        except ImportError:
+            result = "设备互联尚未安装，请先发送“阅读 ../memory/ganet_pc_setup_sop.md，帮我配置设备互联。”"
+        else:
+            result = open_user_center()
+        st.session_state.messages.extend([
+            {"role": "user", "content": cmd, "time": ts},
+            {"role": "assistant", "content": result, "time": ts},
+        ])
+        _reset_and_rerun()
     if cmd == "/new":
         if not _SLASH: _slash_missing('continue_cmd')
         st.session_state.messages[:] = [{"role": "assistant", "content": reset_conversation(agent), "time": ts}]

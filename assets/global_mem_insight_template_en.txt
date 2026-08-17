@@ -11,6 +11,7 @@ Keyboard/Mouse: ljqCtrl_sop(no pyautogui/activate first)
 UI/Screenshot/Vision: computer_use.md | vision_sop | window screenshot use ljqCtrl
 Scheduling: scheduled_task_sop | Autonomous: autonomous_operation_sop | watchdog/reflect: agentmain --reflect
 Mobile: adb_ui.py
+Connect a phone to this computer / configure GAnet: ganet_pc_setup_sop
 
 [RULES]
 1. Search first: no huge PS recursion/no dir traversal for file search, prefer Google for web search, check cwd first, no guessing paths

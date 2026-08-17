@@ -1043,7 +1043,17 @@ def render_streaming_area():
 for msg in st.session_state.messages: render_message(msg["role"], msg["content"], ts=msg.get("time", ""), unsafe_allow_html=True)
 if st.session_state.streaming: render_streaming_area()
 if prompt := st.chat_input("请输入指令", disabled=st.session_state.streaming):
-    st.session_state.messages.append({"role": "user", "content": prompt, "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
-    start_agent_task(prompt)
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    st.session_state.messages.append({"role": "user", "content": prompt, "time": now})
+    if prompt.strip() == "/user":
+        try:
+            from plugins.ganet import open_user_center
+        except ImportError:
+            result = "设备互联尚未安装，请先发送“阅读 ../memory/ganet_pc_setup_sop.md，帮我配置设备互联。”"
+        else:
+            result = open_user_center()
+        st.session_state.messages.append({"role": "assistant", "content": result, "time": now})
+    else:
+        start_agent_task(prompt)
     st.rerun()
 

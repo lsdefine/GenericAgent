@@ -740,6 +740,17 @@ class AgentManager:
                 raise web.HTTPNotFound(text=json.dumps({"error": f"session not found: {sid}"}, ensure_ascii=False), content_type="application/json")
             if sess.status == "running":
                 raise web.HTTPConflict(text=json.dumps({"error": "session is already running"}, ensure_ascii=False), content_type="application/json")
+            if prompt.strip() == "/user":
+                user_msg = self.add_message(sess, "user", prompt)
+                try:
+                    from plugins.ganet import open_user_center
+                except ImportError:
+                    result = "设备互联尚未安装，请先发送“阅读 ../memory/ganet_pc_setup_sop.md，帮我配置设备互联。”"
+                else:
+                    result = open_user_center()
+                self.add_message(sess, "assistant", result)
+                return {"ok": True, "sessionId": sid, "accepted": False,
+                        "userMessageId": user_msg["id"], "seq": sess.msg_seq}
             extra = {}
             if image_ids:
                 extra["image_ids"] = image_ids

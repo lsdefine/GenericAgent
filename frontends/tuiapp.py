@@ -151,7 +151,7 @@ def parse_local_command(raw: str) -> tuple[str, list[str]] | None:
     name, *rest = text.split(maxsplit=1)
     cmd = name[1:].lower()
     args = rest[0].split() if rest else []
-    if cmd in {"help", "status", "new", "switch", "sessions", "stop", "llm", "branch", "rewind", "clear", "close", "quit", "exit"}:
+    if cmd in {"help", "status", "user", "new", "switch", "sessions", "stop", "llm", "branch", "rewind", "clear", "close", "quit", "exit"}:
         return cmd, args
     return None
 
@@ -238,7 +238,7 @@ class GenericAgentTUI(App[None]):
             with Vertical(id="main"):
                 yield Static("", id="status")
                 yield RichLog(id="log", wrap=True, highlight=True, markup=True)
-        yield PromptInput(placeholder="Message, or /help  /new  /branch  /rewind  /switch  /clear  /close  /stop  /llm  /resume", id="prompt")
+        yield PromptInput(placeholder="Message, or /help  /user  /new  /branch  /rewind  /switch  /clear  /close  /stop  /llm  /resume", id="prompt")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -321,6 +321,7 @@ class GenericAgentTUI(App[None]):
         handlers = {
             "help": self._cmd_help,
             "status": self._cmd_status,
+            "user": self._cmd_user,
             "new": self._cmd_new,
             "switch": self._cmd_switch,
             "sessions": self._cmd_sessions,
@@ -407,10 +408,19 @@ class GenericAgentTUI(App[None]):
         else:
             self._refresh_sidebar()
 
+    def _cmd_user(self, args: list[str]) -> None:
+        try:
+            from plugins.ganet import open_user_center
+        except ImportError:
+            self._system("设备互联尚未安装，请先发送“阅读 ../memory/ganet_pc_setup_sop.md，帮我配置设备互联。”")
+            return
+        self._system(open_user_center())
+
     def _cmd_help(self, args: list[str]) -> None:
         self._system(
             "Commands:\n"
             "/help - show this help\n"
+            "/user - open account and device management\n"
             "/new [name] - create and switch to a new agent session\n"
             "/branch [name] - fork current session (copies LLM history + display)\n"
             "/rewind - list rewindable turns; /rewind <n> to truncate history\n"

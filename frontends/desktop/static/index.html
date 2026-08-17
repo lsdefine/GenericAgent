@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <title>GenericAgent</title>
 <link rel="stylesheet" href="assets/fonts/fonts.css?v=2">
-<link rel="stylesheet" href="styles.css?v=186">
+<link rel="stylesheet" href="styles.css?v=192">
 <!-- KaTeX: LaTeX 公式渲染 -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" crossorigin="anonymous">
 <!-- highlight.js: 代码高亮 -->
@@ -41,6 +41,11 @@
   var hljs=document.getElementById('hljs-theme');
   if(hljs&&app==='dark') hljs.href='https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github-dark.min.css';
   try{ var sraw=localStorage.getItem('ga_sessions'); if(sraw && JSON.parse(sraw).length) document.documentElement.dataset.bootHasSessions='1'; }catch(_){}
+  var nav_platform=navigator.platform;
+  document.documentElement.dataset.platform =
+    /Mac/i.test(nav_platform) ? 'macos' :
+    /Win/i.test(nav_platform) ? 'windows' :
+    'linux';
 })();
 </script>
 </head>
@@ -52,7 +57,8 @@
 
     <!-- ① 左侧边栏 -->
     <aside class="sidebar">
-      <div class="brand">
+      <div class="sidebar-top-drag-region" data-tauri-drag-region="deep"></div>
+      <div class="brand" data-tauri-drag-region="deep">
         <div class="brand-text">
           <div class="brand-name ga-wordmark">Generic Agent</div>
           <div class="brand-sub" data-i18n="brand.sub"></div>
@@ -131,6 +137,7 @@
 
     <!-- 中间主区 -->
     <main class="main">
+      <div class="main-top-drag-region" data-tauri-drag-region="deep"></div>
 
       <div id="pages">
 

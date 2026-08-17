@@ -189,6 +189,26 @@ mixin_config = {
 #     # 'fake_cc_system_prompt': False,        # bool 默认 False；真 Anthropic 端点不需开
 # }
 
+# ── 1b′. Anthropic Messages 端点 + 手动指定鉴权头（api_key_header）──────────────
+#  某些中转渠道（如 opencode.ai）提供 Anthropic /v1/messages 端点，但 apikey 非
+#  sk-ant- 前缀。NativeClaudeSession 对非 sk-ant- 的 key 默认发 Authorization: Bearer；
+#  若目标端点只接受 x-api-key（如 opencode.ai 的 /v1/messages 只认 x-api-key，
+#  Bearer 会返回 401 Missing API key），用 api_key_header 手动强制鉴权头。
+#  api_key_header 合法值: 'auto'（默认，按 sk-ant- 前缀自动判断）
+#                        / 'x-api-key'（强制 x-api-key 头）
+#                        / 'bearer'（强制 Authorization: Bearer 头）
+# native_claude_config_opencode = {
+#     'name': 'opencode-deepseek-native',
+#     'apikey': '<your-key>',                  # 非 sk-ant- 前缀
+#     'apibase': 'https://opencode.ai/zen/go/v1',
+#     'model': 'deepseek-v4-flash',
+#     'api_key_header': 'x-api-key',           # ← 强制 x-api-key（否则 auto 发 Bearer→401）
+#     'thinking_type': 'adaptive',
+#     'reasoning_effort': 'low',
+#     'max_retries': 5,
+#     'read_timeout': 180,
+# }
+
 # ── 1c. CRS 反代 Claude Max ─────────────────────────────────────────────────
 #  CRS 需要 fake_cc_system_prompt=True
 # native_claude_config_crs = {

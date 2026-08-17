@@ -762,6 +762,7 @@ class NativeClaudeSession(BaseSession):
         self._device_id = uuid.uuid4().hex + uuid.uuid4().hex[:32]
         self.tools = None
         if self.user_agent == self.default_ua: self.user_agent = self.native_ua
+        self.api_key_header = str(cfg.get('api_key_header', 'auto')).strip().lower()
     def raw_ask(self, messages):
         if self.max_tokens is None: self.max_tokens = 8192
         model = self.model
@@ -775,7 +776,9 @@ class NativeClaudeSession(BaseSession):
             "anthropic-beta": ",".join(beta_parts), "anthropic-dangerous-direct-browser-access": "true",
             "user-agent": self.user_agent, "x-app": "cli"}
         headers.update({"Accept": "application/json", "X-Claude-Code-Session-Id": self._session_id, "X-Stainless-Arch": "x64", "X-Stainless-Lang": "js", "X-Stainless-OS": "Windows", "X-Stainless-Package-Version": "0.94.0", "X-Stainless-Retry-Count": "0", "X-Stainless-Runtime": "node", "X-Stainless-Runtime-Version": "v24.3.0", "X-Stainless-Timeout": "600"})
-        if self.api_key.startswith("sk-ant-"): headers["x-api-key"] = self.api_key
+        if self.api_key_header == 'x-api-key': headers["x-api-key"] = self.api_key
+        elif self.api_key_header == 'bearer': headers["authorization"] = f"Bearer {self.api_key}"
+        elif self.api_key.startswith("sk-ant-"): headers["x-api-key"] = self.api_key
         else: headers["authorization"] = f"Bearer {self.api_key}"
         payload = {"model": model, "messages": messages, "max_tokens": self.max_tokens, "stream": self.stream}
         #if self.fake_cc_system_prompt: payload["max_tokens"] = 64000

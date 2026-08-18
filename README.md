@@ -806,11 +806,11 @@ GA Web 工具运行在**真实、持久化的 Chrome/Chromium 会话**中，而�
 
 <div align="center">
 
-<a href="https://star-history.com/#lsdefine/GenericAgent&Date">
+<a href="https://star-history.dera.page/#lsdefine/GenericAgent&Date">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=lsdefine/GenericAgent&type=Date&theme=dark" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=lsdefine/GenericAgent&type=Date" />
-    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=lsdefine/GenericAgent&type=Date" />
+    <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=lsdefine/GenericAgent&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://star-history.dera.page/svg?repos=lsdefine/GenericAgent&type=Date" />
+    <img alt="Star History Chart" src="https://star-history.dera.page/svg?repos=lsdefine/GenericAgent&type=Date" />
   </picture>
 </a>
 

@@ -320,7 +320,7 @@ class GenericAgentHandler(BaseHandler):
                 'print': print, 'len': len, 'range': range, 'int': int, 'float': float,
                 'str': str, 'bool': bool, 'list': list, 'dict': dict, 'tuple': tuple,
                 'set': set, 'type': type, 'isinstance': isinstance, 'hasattr': hasattr,
-                'getattr': getattr, 'setattr': setattr, 'dir': dir, 'vars': vars,
+                'getattr': getattr, 'dir': dir, 'vars': vars,
                 'repr': repr, 'abs': abs, 'min': min, 'max': max, 'sum': sum,
                 'enumerate': enumerate, 'zip': zip, 'map': map, 'filter': filter,
                 'sorted': sorted, 'reversed': reversed, 'any': any, 'all': all,
@@ -427,14 +427,13 @@ class GenericAgentHandler(BaseHandler):
             if mode == "prepend":
                 # BUG FIX: 原实现先open读再open写，写入异常时原文件已被清空导致数据丢失
                 # 改为先写临时文件再原子rename，保证异常时原文件不受影响
-                import tempfile
                 old = open(path, 'r', encoding="utf-8").read() if os.path.exists(path) else ""
                 tmp_fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(path) or '.', suffix='.tmp')
                 try:
                     with os.fdopen(tmp_fd, 'w', encoding='utf-8', newline=_file_newline(path)) as tmp_f:
                         tmp_f.write(new_content + old)
                     os.replace(tmp_path, path)  # 原子操作，失败时原文件不受影响
-                except:
+                except Exception:
                     try: os.unlink(tmp_path)
                     except OSError: pass
                     raise

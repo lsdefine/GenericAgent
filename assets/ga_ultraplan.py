@@ -1,4 +1,5 @@
 import secrets
+import hmac
 from contextlib import contextmanager, redirect_stdout, redirect_stderr
 from concurrent.futures import ThreadPoolExecutor
 from time import time, sleep
@@ -79,7 +80,7 @@ class _H(BaseHTTPRequestHandler):
         if self.path != "/exec": self.send_response(404); self.end_headers(); return
         # SECURITY: Require authentication token
         auth = self.headers.get("Authorization", "")
-        if not auth.startswith("Bearer ") or auth[7:] != _AUTH_TOKEN:
+        if not auth.startswith("Bearer ") or not hmac.compare_digest(auth[7:], _AUTH_TOKEN):
             self.send_response(401); self.send_header("Content-Type", "application/json")
             self.end_headers(); self.wfile.write(json.dumps({"error": "Unauthorized"}).encode()); return
         n = int(self.headers.get("Content-Length", "0")); req = json.loads(self.rfile.read(n).decode("utf-8"))

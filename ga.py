@@ -1,4 +1,5 @@
 import sys, os, re, json, time, threading, importlib, webbrowser
+import builtins
 from datetime import datetime
 from pathlib import Path
 import tempfile, traceback, subprocess, itertools, collections, difflib, shutil
@@ -23,8 +24,8 @@ def code_run(code, code_type="python", timeout=60, cwd=None, code_cwd=None, stop
     cwd = cwd or os.path.join(script_dir, 'temp'); tmp_path = None
     if code_type in ["python", "py"]:
         tmp_file = tempfile.NamedTemporaryFile(suffix=".ai.py", delete=False, mode='w', encoding='utf-8', dir=code_cwd)
-        cr_header = os.path.join(script_dir, 'assets', 'code_run_header.py')
-        if os.path.exists(cr_header): tmp_file.write(open(cr_header, encoding='utf-8').read())
+        if os.path.exists(cr_header):
+            with open(cr_header, encoding='utf-8') as hf: tmp_file.write(hf.read())
         tmp_file.write(code)
         tmp_path = tmp_file.name
         tmp_file.close()
@@ -314,7 +315,19 @@ class GenericAgentHandler(BaseHandler):
         maxlen = self._get_tool_maxlen(10000, args)
         if timeout > 600: result = '[ERROR] Timeout must be <= 600 seconds; code not executed. Run time-consuming code in the background instead of waiting for it to finish in the foreground, verify it started successfully, and monitor it until completion or failure.'
         elif code_type == 'python' and _arg(args, "inline_eval", False, bool):
-            ns = {'handler':self, 'parent':self.parent, 'history':json.dumps(self.parent.llmclient.backend.history)}
+            # SECURITY: Create sandboxed namespace - remove dangerous builtins and history exposure
+            safe_builtins = {
+                'print': print, 'len': len, 'range': range, 'int': int, 'float': float,
+                'str': str, 'bool': bool, 'list': list, 'dict': dict, 'tuple': tuple,
+                'set': set, 'type': type, 'isinstance': isinstance, 'hasattr': hasattr,
+                'getattr': getattr, 'dir': dir, 'vars': vars,
+                'repr': repr, 'abs': abs, 'min': min, 'max': max, 'sum': sum,
+                'enumerate': enumerate, 'zip': zip, 'map': map, 'filter': filter,
+                'sorted': sorted, 'reversed': reversed, 'any': any, 'all': all,
+                'True': True, 'False': False, 'None': None,
+            }
+            ns = {'handler': self, 'parent': self.parent, '__builtins__': safe_builtins}
+            # WARNING: Do NOT expose history - it contains sensitive conversation data
             old_cwd = os.getcwd()
             try:
                 os.chdir(cwd)
@@ -412,8 +425,18 @@ class GenericAgentHandler(BaseHandler):
         try:
             new_content = expand_file_refs(content, base_dir=self.cwd)
             if mode == "prepend":
+                # BUG FIX: 原实现先open读再open写，写入异常时原文件已被清空导致数据丢失
+                # 改为先写临时文件再原子rename，保证异常时原文件不受影响
                 old = open(path, 'r', encoding="utf-8").read() if os.path.exists(path) else ""
-                open(path, 'w', encoding="utf-8", newline=_file_newline(path)).write(new_content + old)
+                tmp_fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(path) or '.', suffix='.tmp')
+                try:
+                    with os.fdopen(tmp_fd, 'w', encoding='utf-8', newline=_file_newline(path)) as tmp_f:
+                        tmp_f.write(new_content + old)
+                    os.replace(tmp_path, path)  # 原子操作，失败时原文件不受影响
+                except Exception:
+                    try: os.unlink(tmp_path)
+                    except OSError: pass
+                    raise
             else:
                 with open(path, 'a' if mode == "append" else 'w', encoding="utf-8", newline=_file_newline(path)) as f: f.write(new_content)
             yield f"[Status] ✅ {mode.capitalize()} 成功 ({len(new_content)} bytes)\n"
@@ -455,7 +478,8 @@ class GenericAgentHandler(BaseHandler):
         return plan_path
     def _check_plan_completion(self):
         if not os.path.isfile(p:=self._in_plan_mode() or ''): return None
-        try: return len(re.findall(r'\[ \]', open(p, encoding='utf-8', errors='replace').read()))
+        try:
+            with open(p, encoding='utf-8', errors='replace') as f: return len(re.findall(r'\[ \]', f.read()))
         except: return None
     
     def do_update_working_checkpoint(self, args, response):

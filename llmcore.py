@@ -1030,7 +1030,8 @@ def tryparse(json_str):
     try: return json.loads(json_str[:-1])
     except: pass
     if '}' in json_str: json_str = json_str[:json_str.rfind('}') + 1]
-    return json.loads(json_str)
+    try: return json.loads(json_str)
+    except (json.JSONDecodeError, ValueError): return {'_raw': json_str}
 
 class MixinSession:
     """A Session facade backed by multiple routed transport sessions."""

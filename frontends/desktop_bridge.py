@@ -1899,6 +1899,18 @@ async def mykey_save_handler(request):
     return json_ok({"ok": True, "path": str(manager._mykey_file()), "profiles": profiles})
 
 
+def _safe_import_items(root: Path):
+    resolved_root = root.resolve()
+    for item in root.rglob("*"):
+        try:
+            item.resolve().relative_to(resolved_root)
+        except ValueError:
+            continue
+        if item.is_symlink():
+            continue
+        yield item
+
+
 def _import_memory_from(source_dir: str, ga_root: str) -> dict:
     """把 source_dir 的 memory/ 与 temp/model_responses/ 导入到 ga_root。
 
@@ -1932,7 +1944,7 @@ def _import_memory_from(source_dir: str, ga_root: str) -> dict:
             shutil.copytree(dst_mem, backup_root / "memory")
             backup_dir = str(backup_root)
         dst_mem.mkdir(parents=True, exist_ok=True)
-        for item in src_mem.rglob("*"):
+        for item in _safe_import_items(src_mem):
             rel = item.relative_to(src_mem)
             target = dst_mem / rel
             if item.is_dir():
@@ -1946,7 +1958,7 @@ def _import_memory_from(source_dir: str, ga_root: str) -> dict:
     if src_resp.is_dir():
         dst_resp = dst_root / "temp" / "model_responses"
         dst_resp.mkdir(parents=True, exist_ok=True)
-        for item in src_resp.rglob("*"):
+        for item in _safe_import_items(src_resp):
             if item.is_dir():
                 continue
             rel = item.relative_to(src_resp)

@@ -1,18 +1,25 @@
 [package]
 name = "ga-desktop"
-version = "0.1.8"
+version = "0.2.0"
 edition = "2021"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["devtools"] }
+tauri = { version = "2", features = ["devtools", "tray-icon"] }
 tauri-plugin-single-instance = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-wdio = { version = "1.2.0", optional = true }
+tauri-plugin-wdio-webdriver = { version = "1.2.0", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 dirs = "5"
 rfd = "0.15"
+
+[features]
+default = []
+e2e = ["dep:tauri-plugin-wdio", "dep:tauri-plugin-wdio-webdriver"]
 
 [lib]
 name = "ga_desktop_lib"

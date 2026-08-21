@@ -1,0 +1,144 @@
+/* ─── User Turn Rail ─── */
+
+/*
+ * Layout model:
+ * - nav (user-turn-rail): absolute positioned in thread-root, pointer-events: none
+ * - rail-hitarea: the interactive zone, pointer-events: auto
+ * - rail-marks: always visible vertical tick column
+ * - rail-panel: absolute, appears on hover to the left of marks
+ *
+ * Hover stability: the hitarea uses a ::before pseudo-element as an invisible
+ * bridge between the panel and marks so the mouse doesn't leave the interactive
+ * zone while traveling between them.
+ */
+
+[data-slot="user-turn-rail"] {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 100;
+  pointer-events: none;
+}
+
+[data-slot="rail-hitarea"] {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0.5rem;
+  pointer-events: auto;
+}
+
+/* Hover bridge: invisible area extending left to cover panel gap */
+[data-slot="user-turn-rail"][data-expanded] [data-slot="rail-hitarea"]::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  left: -260px;
+  pointer-events: auto;
+}
+
+/* Mark column */
+[data-slot="rail-marks"] {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.25rem;
+}
+
+[data-slot="user-turn-rail"][data-expanded] [data-slot="rail-marks"] {
+  visibility: hidden;
+}
+
+[data-slot="rail-mark"] {
+  width: 2.5rem;
+  height: 0.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  border: none;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+[data-slot="rail-mark-line"] {
+  width: 1rem;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--semi-color-fill-2);
+  transition: background-color 120ms ease;
+}
+
+[data-slot="rail-mark"][data-active] [data-slot="rail-mark-line"] {
+  background: var(--semi-color-text-0);
+}
+
+/* Expanded panel */
+[data-slot="rail-panel"] {
+  position: absolute;
+  right: calc(100% - 0.5rem);
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-width: 240px;
+  min-width: 140px;
+  padding: 0.25rem;
+  border-radius: 0.5rem;
+  background: var(--semi-color-bg-3, #2a2a2a);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+[data-slot="user-turn-rail"][data-expanded] [data-slot="rail-panel"] {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+[data-slot="rail-panel-item"] {
+  display: block;
+  width: 100%;
+  padding: 0.3rem 0.5rem;
+  border: none;
+  border-radius: 0.25rem;
+  background: transparent;
+  color: var(--semi-color-text-2);
+  font-size: 0.75rem;
+  line-height: 1.4;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition: background-color 100ms ease;
+}
+
+[data-slot="rail-panel-item"]:hover,
+[data-slot="rail-panel-item"][data-active] {
+  background: var(--semi-color-fill-1);
+  color: var(--semi-color-text-0);
+}
+
+/* Focus ring */
+[data-slot="rail-mark"]:focus-visible [data-slot="rail-mark-line"] {
+  box-shadow: 0 0 0 2px var(--semi-color-primary-light-default, rgba(0, 100, 250, 0.2));
+}
+
+[data-slot="rail-mark"]:focus-visible {
+  outline: none;
+}
+
+/* Hide on narrow viewports where there's no gutter */
+@media (max-width: 900px) {
+  [data-slot="user-turn-rail"] {
+    display: none;
+  }
+}

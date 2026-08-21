@@ -1,0 +1,129 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+.no-transition,
+.no-transition *,
+.no-transition *::before,
+.no-transition *::after {
+  transition: none !important;
+  animation: none !important;
+}
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--semi-color-fill-2);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--semi-color-fill-1); }
+
+/* Codicon icon font */
+@font-face {
+  font-family: 'codicon';
+  src: url('@vscode/codicons/dist/codicon.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+}
+
+.codicon {
+  font-family: 'codicon';
+  font-weight: normal;
+  font-style: normal;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+:root {
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui,
+               "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+
+  /* UI token system (ported from Hermes) */
+  --foreground: hsl(0 0% 8%);
+  --background: hsl(0 0% 100%);
+
+  --ui-text-secondary: hsl(0 0% 30%);
+  --ui-text-tertiary: hsl(0 0% 48%);
+  --ui-text-quaternary: hsl(0 0% 60%);
+  --ui-icon-nav: hsl(0 0% 24%);
+  --ui-icon-nav-active: hsl(0 0% 8%);
+  --theme-primary: hsl(220 80% 50%);
+
+  --ui-row-hover-background: hsl(0 0% 95%);
+  --ui-row-active-background: hsl(0 0% 92%);
+  --ui-control-hover-background: hsl(0 0% 95%);
+  --ui-control-active-background: hsl(0 0% 90%);
+  --ui-sidebar-surface-background: hsl(0 0% 100%);
+  --ui-stroke-tertiary: hsl(0 0% 88%);
+  --sidebar-edge-border: hsl(0 0% 86%);
+  --ui-accent: hsl(220 80% 50%);
+  --chrome-action-hover: hsl(0 0% 93%);
+
+  --dt-card: hsl(0 0% 100%);
+  --dt-background: hsl(0 0% 97%);
+  --ui-chat-surface-background: hsl(0 0% 100%);
+  --ui-chat-bubble-background: hsl(0 0% 96%);
+  --ui-stroke-secondary: hsl(0 0% 78%);
+}
+
+[data-appearance="dark"] {
+  --foreground: hsl(0 0% 95%);
+  --background: hsl(240 3% 7.5%);
+
+  --ui-text-secondary: hsl(0 0% 78%);
+  --ui-text-tertiary: hsl(0 0% 60%);
+  --ui-text-quaternary: hsl(0 0% 48%);
+  --ui-icon-nav: hsl(0 0% 72%);
+  --ui-icon-nav-active: hsl(0 0% 95%);
+  --theme-primary: hsl(220 80% 68%);
+
+  --ui-row-hover-background: hsl(220 3% 15%);
+  --ui-row-active-background: hsl(220 3% 18%);
+  --ui-control-hover-background: hsl(220 3% 16%);
+  --ui-control-active-background: hsl(220 3% 22%);
+  --ui-sidebar-surface-background: hsl(210 3% 12%);
+  --ui-stroke-tertiary: hsl(220 3% 22%);
+  --sidebar-edge-border: hsl(220 3% 20%);
+  --ui-accent: hsl(220 80% 68%);
+  --chrome-action-hover: hsl(220 3% 18%);
+
+  --dt-card: hsl(220 3% 14%);
+  --dt-background: hsl(240 3% 7.5%);
+  --ui-chat-surface-background: hsl(240 3% 7.5%);
+  --ui-chat-bubble-background: hsl(220 3% 14%);
+  --ui-stroke-secondary: hsl(220 3% 32%);
+}
+
+html, body, #app {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  font-family: var(--font-sans);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+button, input, select, textarea {
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+  color: inherit;
+}
+
+[data-appearance="dark"] body {
+  color-scheme: dark;
+}
+
+/* ── Token: model name typography ──
+   All elements that render a model/profile name use monospace. */
+[data-slot="model-chip-label"],
+[data-slot="model-menu-name"],
+.ga-model-name,
+.ga-mixin-member-name {
+  font-family: var(--font-mono);
+}

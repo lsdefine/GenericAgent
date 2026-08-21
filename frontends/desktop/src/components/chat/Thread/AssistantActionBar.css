@@ -1,0 +1,37 @@
+/* ─── Assistant Action Bar ─── */
+[data-slot="assistant-action-bar"] {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-height: 1.5rem;
+  gap: 0.25rem;
+  padding-right: var(--message-text-indent);
+  padding-left: var(--message-text-indent);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease-out;
+}
+
+[data-slot="aui_assistant-message-root"]:hover [data-slot="assistant-action-bar"],
+[data-slot="aui_assistant-message-root"]:focus-within [data-slot="assistant-action-bar"] {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+[data-slot="action-bar-btn"] {
+  display: grid;
+  width: 1.5rem;
+  height: 1.5rem;
+  place-items: center;
+  border: none;
+  border-radius: 0.25rem;
+  background: none;
+  color: var(--semi-color-text-2);
+  cursor: pointer;
+  transition: color 0.1s, background 0.1s;
+}
+
+[data-slot="action-bar-btn"]:hover {
+  background: var(--semi-color-fill-1);
+  color: var(--semi-color-text-0);
+}

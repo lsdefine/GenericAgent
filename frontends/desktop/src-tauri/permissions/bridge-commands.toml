@@ -9,6 +9,16 @@ description = "Spawn bridge from setup with explicit python/project paths."
 commands.allow = ["start_bridge_with_config"]
 
 [[permission]]
+identifier = "allow-retry-bootstrap"
+description = "Retry the unified desktop bootstrap with validated Python and project paths."
+commands.allow = ["retry_bootstrap"]
+
+[[permission]]
+identifier = "allow-get-bootstrap-snapshot"
+description = "Read the current desktop bootstrap state and filtered diagnostics."
+commands.allow = ["get_bootstrap_snapshot"]
+
+[[permission]]
 identifier = "allow-get-config"
 description = "Read saved bridge spawn configuration."
 commands.allow = ["get_config"]

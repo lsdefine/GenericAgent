@@ -1,0 +1,108 @@
+/* ═══════════════════════════════════════════════
+   Empty State — New Session Landing
+   ═══════════════════════════════════════════════ */
+
+[data-slot="empty-state-root"] {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding-bottom: 1rem;
+  gap: 1.25rem;
+}
+
+/* Wordmark */
+[data-slot="empty-state-wordmark"] {
+  display: flex;
+  align-items: center;
+  padding-left: 1px;
+}
+
+[data-slot="empty-state-wordmark"] img {
+  height: 4rem;
+  width: auto;
+}
+
+.empty-state-wordmark-dark {
+  display: none;
+}
+
+[data-appearance="dark"] .empty-state-wordmark-light {
+  display: none;
+}
+
+[data-appearance="dark"] .empty-state-wordmark-dark {
+  display: block;
+}
+
+[data-slot="empty-state-presets"] {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.5rem;
+}
+
+/* Preset buttons — identical font stack to .ga-nav-btn */
+.empty-state-preset-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0.375rem 0.625rem;
+  border: 1px solid var(--semi-color-border);
+  border-radius: 6px;
+  background: none;
+  color: var(--ui-text-secondary);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s, box-shadow 0.15s;
+}
+
+.empty-state-preset-btn:hover {
+  background: color-mix(in srgb, var(--semi-color-primary) 4%, transparent);
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--semi-color-primary) 12%, transparent);
+}
+
+.empty-state-preset-btn:active {
+  background: color-mix(in srgb, var(--semi-color-primary) 8%, transparent);
+}
+
+.empty-state-preset-icon {
+  display: flex;
+  align-items: center;
+  color: var(--foreground);
+}
+
+/* ═══ ChatView centered layout for empty state ═══ */
+
+.chat-view-root[data-empty] {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.chat-view-root[data-empty] [data-slot="empty-state-root"] {
+  width: min(var(--composer-width, 48.75rem), calc(100% - 2rem));
+}
+
+.chat-view-root[data-empty] [data-slot="composer-root"] {
+  position: relative;
+  bottom: auto;
+  left: auto;
+  transform: none;
+  width: min(var(--composer-width, 48.75rem), calc(100% - 2rem));
+}
+
+.chat-view-root[data-empty] [data-slot="composer-root"]::before {
+  display: none;
+}
+
+.chat-view-root[data-empty] [data-slot="composer-surface"] {
+  border-color: var(--semi-color-primary) !important;
+  box-shadow:
+    0 0 20px 0 color-mix(in srgb, var(--semi-color-primary) 12%, transparent),
+    0 0 50px -4px color-mix(in srgb, var(--semi-color-primary) 8%, transparent) !important;
+}

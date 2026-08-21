@@ -1,28 +1,35 @@
 {
   "productName": "GenericAgent",
-  "version": "0.1.8",
+  "version": "0.2.0",
   "identifier": "com.genericagent.app",
   "build": {
-    "frontendDist": "../static"
+    "beforeBuildCommand": "npm run build",
+    "beforeDevCommand": "npm run dev",
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5173"
   },
   "app": {
     "withGlobalTauri": true,
     "security": {
-      "csp": null
+      "csp": null,
+      "capabilities": ["default"]
     },
     "windows": [
       {
-        "title": "GenericAgent",
+        "title": "",
         "label": "main",
         "width": 1280,
         "height": 800,
         "resizable": true,
         "maximized": false,
         "visible": false,
+        "titleBarStyle": "Overlay",
+        "trafficLightPosition": { "x": 13, "y": 22 },
+        "dragDropEnabled": false,
         "url": "loading.html"
       },
       {
-        "title": "GenericAgent — Setup",
+        "title": "",
         "label": "setup",
         "width": 600,
         "height": 580,
@@ -36,6 +43,22 @@
   "bundle": {
     "active": true,
     "targets": ["nsis", "dmg"],
-    "icon": ["icons/icon.ico", "icons/icon.png", "icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png"]
+    "icon": ["icons/icon.ico", "icons/icon.png", "icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png"],
+    "macOS": {
+      "dmg": {
+        "windowSize": {
+          "width": 540,
+          "height": 380
+        },
+        "appPosition": {
+          "x": 140,
+          "y": 200
+        },
+        "applicationFolderPosition": {
+          "x": 400,
+          "y": 200
+        }
+      }
+    }
   }
 }

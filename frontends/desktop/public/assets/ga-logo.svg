@@ -1,0 +1,58 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  viewBox="0 0 878 404"
+  fill="none"
+  role="img"
+  aria-labelledby="ga-logo-title"
+>
+  <title id="ga-logo-title">GenericAgent</title>
+  <style>
+    path { fill: #000; }
+    @media (prefers-color-scheme: dark) {
+      path { fill: #fff; }
+    }
+  </style>
+  <path
+    fill-rule="evenodd"
+    d="
+      M200 0
+      H489
+      L428 86
+      H187
+      C128.46 86 81 138.83 81 204
+      C81 269.17 130.47 322 189 322
+      H359
+      L401 404
+      H186
+      C83.27 404 0 313.57 0 202
+      C0 90.43 89.54 0 200 0
+      Z
+
+      M240 176
+      H463
+      L506 251
+      H187
+      Z
+
+      M407 251
+      H506
+      L401 404
+      L359 322
+      Z
+
+      M579 0
+      H638
+      L878 404
+      H781
+      L689 251
+      H506
+      L463 176
+      Z
+
+      M606 106
+      L648 174
+      H560
+      Z
+    "
+  />
+</svg>

@@ -1,0 +1,983 @@
+.ga-app-layout {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Shell geometry contract */
+:root {
+  --ga-sidebar-top-padding: 36px;
+}
+
+:root[data-platform="macos"] {
+  --ga-titlebar-height: 38px;
+  --ga-titlebar-controls-left: 72px;
+  --ga-titlebar-controls-top: 6px;
+  --ga-sidebar-top-padding: 36px;
+}
+
+:root[data-platform="windows"] {
+  --ga-sidebar-top-padding: 8px;
+}
+
+:root[data-platform="windows"] .ga-titlebar-controls {
+  left: 8px;
+  top: 2px;
+}
+
+/* Drag strips removed — drag is now handled by event delegation on .ga-app-layout
+   via useDragWindow() which checks y < 38px and filters out interactive elements */
+
+/* Titlebar controls — positioned after macOS traffic lights */
+.ga-titlebar-controls {
+  position: absolute;
+  top: var(--ga-titlebar-controls-top, 8px);
+  left: 12px;
+  z-index: 999;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+:root[data-platform="macos"] .ga-titlebar-controls {
+  left: var(--ga-titlebar-controls-left, 72px);
+}
+
+.ga-titlebar-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--ui-text-tertiary);
+  cursor: pointer;
+  transition: color 0.1s, background 0.1s;
+  -webkit-app-region: no-drag;
+}
+
+.ga-titlebar-btn:hover {
+  background: var(--ui-control-hover-background);
+  color: var(--foreground);
+}
+
+.ga-app-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.ga-app-body .semi-resizable-group {
+  height: 100%;
+}
+
+.ga-body-collapsed {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--background);
+}
+
+/* Sidebar */
+.ga-sidebar-item {
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--semi-color-border);
+  background: var(--ui-sidebar-surface-background);
+}
+
+.ga-left-sidebar {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: var(--ga-sidebar-top-padding, 36px) 0 0;
+}
+
+.ga-sidebar-brand {
+  flex-shrink: 0;
+  padding: 8px 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ga-brand-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--semi-color-text-0);
+}
+
+.ga-brand-sub {
+  font-size: 10px;
+  color: var(--semi-color-text-2);
+}
+
+/* Nav Rail — ported from Hermes nav-rail.tsx */
+.ga-nav-rail {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 0 10px;
+}
+
+.ga-nav-btn {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 8px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: var(--ui-text-secondary);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  line-height: 1;
+  text-align: left;
+  cursor: pointer;
+  transition: color 0.1s ease-out, background 0.1s ease-out;
+  -webkit-app-region: no-drag;
+}
+
+.ga-nav-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ga-nav-icon {
+  flex-shrink: 0;
+  color: var(--ui-icon-nav);
+}
+
+.ga-nav-btn:hover {
+  background: var(--ui-control-hover-background);
+  color: var(--foreground);
+  transition: none;
+}
+
+.ga-nav-btn:hover .ga-nav-icon {
+  color: var(--ui-icon-nav-active);
+}
+
+.ga-nav-btn.active {
+  background: var(--ui-control-active-background);
+  border-color: var(--ui-stroke-tertiary);
+  color: var(--foreground);
+  box-shadow: none;
+}
+
+.ga-nav-btn.active .ga-nav-icon {
+  color: var(--ui-icon-nav-active);
+}
+
+/* Sidebar Search */
+.ga-sidebar-search {
+  flex-shrink: 0;
+  padding: 4px 10px;
+}
+
+.ga-sidebar-search .semi-input-wrapper {
+  border-radius: 6px;
+  border-color: transparent;
+  background: var(--ui-control-hover-background);
+  height: 24px;
+  font-size: 0.75rem;
+}
+
+.ga-sidebar-search .semi-input-wrapper:hover {
+  border-color: transparent;
+  background: var(--ui-row-hover-background);
+}
+
+.ga-sidebar-search .semi-input-wrapper-focus {
+  border-color: var(--ui-accent);
+  background: transparent;
+}
+
+.ga-sidebar-search .semi-input {
+  font-size: 0.75rem;
+}
+
+.ga-sidebar-search .semi-input-prefix {
+  opacity: 0.5;
+}
+
+/* Session Section */
+.ga-session-section {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.ga-session-section::-webkit-scrollbar { width: 4px; }
+.ga-session-section::-webkit-scrollbar-track { margin: 8px 0; }
+.ga-session-section::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 2px;
+}
+.ga-session-section:hover::-webkit-scrollbar-thumb {
+  background: var(--semi-color-fill-2);
+}
+.ga-session-section:hover::-webkit-scrollbar-thumb:hover {
+  background: var(--semi-color-fill-1);
+}
+
+.ga-session-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--semi-color-text-3);
+  font-size: 12px;
+}
+
+.ga-session-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.ga-session-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.1s ease-out;
+}
+
+.ga-session-item:hover {
+  background: var(--ui-row-hover-background);
+}
+
+.ga-session-item.active {
+  background: var(--ui-row-active-background);
+}
+
+.ga-session-content {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  min-width: 0;
+  flex: 1;
+  transition: padding-right 0.1s ease-out;
+}
+
+.ga-session-item:hover .ga-session-content {
+  padding-right: 48px;
+}
+
+.ga-status-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--ui-text-quaternary);
+  flex-shrink: 0;
+}
+
+.ga-status-dot.working {
+  width: 6px;
+  height: 6px;
+  background: var(--ui-accent);
+  position: relative;
+}
+
+.ga-status-dot.working::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--ui-accent);
+  animation: ga-ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+@keyframes ga-ping {
+  75%, 100% { transform: scale(2); opacity: 0; }
+}
+
+.ga-session-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.8125rem;
+  color: var(--ui-text-secondary);
+  line-height: 1.4;
+}
+
+.ga-session-item:hover .ga-session-title {
+  color: var(--foreground);
+}
+
+.ga-session-item.active .ga-session-title {
+  color: var(--foreground);
+}
+
+.ga-session-age {
+  position: absolute;
+  right: 24px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.625rem;
+  color: var(--ui-text-tertiary);
+  opacity: 0;
+  transition: opacity 0.15s;
+  pointer-events: none;
+}
+
+.ga-session-item:hover .ga-session-age {
+  opacity: 1;
+}
+
+.ga-session-actions {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.ga-session-item:hover .ga-session-actions,
+.ga-session-actions.menu-open {
+  opacity: 1;
+}
+
+.ga-session-actions-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 3px;
+  background: none;
+  color: var(--ui-text-tertiary);
+  cursor: pointer;
+  transition: color 0.1s, background 0.1s;
+}
+
+.ga-session-actions-btn:hover {
+  background: var(--ui-control-active-background);
+  color: var(--foreground);
+}
+
+/* Inline rename input */
+.ga-session-rename-input {
+  flex: 1;
+  min-width: 0;
+  height: 20px;
+  padding: 0 4px;
+  border: 1px solid var(--ui-accent);
+  border-radius: 4px;
+  background: var(--semi-color-bg-0);
+  color: var(--foreground);
+  font-size: 0.8125rem;
+  font-family: inherit;
+  outline: none;
+}
+
+/* Pin icon for pinned sessions */
+.ga-session-pin-icon {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  color: var(--ui-text-quaternary);
+  opacity: 1;
+  transition: opacity 0.1s;
+  pointer-events: none;
+}
+
+.ga-session-item:hover .ga-session-pin-icon {
+  opacity: 0;
+}
+
+/* Session Actions Dropdown Menu */
+.ga-session-menu.semi-dropdown-menu {
+  min-width: 140px;
+  padding: 4px;
+}
+
+.ga-session-menu .semi-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 4px;
+  font-size: 0.8125rem;
+  font-weight: 400;
+  color: var(--ui-text-secondary);
+}
+
+.ga-session-menu .semi-dropdown-item:hover {
+  background: var(--ui-control-hover-background);
+  color: var(--foreground);
+}
+
+.ga-session-menu .semi-dropdown-item-danger {
+  color: var(--semi-color-danger);
+}
+
+.ga-session-menu .semi-dropdown-item-danger:hover {
+  color: var(--semi-color-danger);
+  background: var(--ui-control-hover-background);
+}
+
+/* Section Header */
+.ga-section-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px 4px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  width: 100%;
+}
+
+.ga-section-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 1px;
+  background: var(--theme-primary);
+  flex-shrink: 0;
+}
+
+.ga-section-label {
+  font-size: 0.64rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--theme-primary);
+  line-height: 1;
+}
+
+.ga-section-count {
+  font-size: 0.6875rem;
+  font-weight: 500;
+  color: var(--ui-text-quaternary);
+  line-height: 1;
+}
+
+.ga-section-chevron {
+  color: var(--ui-text-tertiary);
+  opacity: 0;
+  transition: opacity 0.15s, transform 0.15s;
+  display: flex;
+  align-items: center;
+}
+
+.ga-section-header:hover .ga-section-chevron {
+  opacity: 1;
+}
+
+.ga-section-chevron.open {
+  transform: rotate(90deg);
+}
+
+.ga-section-action {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--ui-text-tertiary);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.1s;
+}
+
+.ga-section-header:hover .ga-section-action {
+  opacity: 1;
+}
+
+.ga-section-action:hover {
+  background: var(--ui-control-hover-background);
+  color: var(--foreground);
+}
+
+/* Sidebar Footer */
+.ga-sidebar-footer {
+  flex-shrink: 0;
+  padding: 2px 10px 2px;
+  border-top: 1px solid transparent;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+}
+
+.ga-settings-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: none;
+  background: none;
+  color: var(--semi-color-text-1);
+  cursor: pointer;
+  padding: 6px 4px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.ga-settings-btn:hover {
+  background: var(--semi-color-fill-0);
+}
+
+.ga-footer-ver {
+  font-size: 11px;
+  color: var(--semi-color-text-3);
+}
+
+/* Main area */
+.ga-main-item {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--background);
+}
+
+.ga-main-area {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.ga-main-area.ga-main-chat {
+  padding: 0;
+  align-items: stretch;
+}
+
+.ga-main-area.ga-main-full {
+  padding: 0;
+  align-items: stretch;
+  justify-content: stretch;
+}
+
+:root[data-platform="macos"] .ga-body-collapsed .ga-main-area.ga-main-full {
+  padding-top: var(--ga-titlebar-height, 38px);
+}
+
+.ga-main-placeholder {
+  text-align: center;
+  color: var(--semi-color-text-2);
+}
+
+.ga-main-placeholder h2 {
+  margin: 0 0 8px;
+  font-size: 20px;
+  color: var(--semi-color-text-0);
+}
+
+.ga-main-placeholder p {
+  margin: 4px 0;
+  font-size: 14px;
+}
+
+.ga-placeholder-hint {
+  margin-top: 16px !important;
+  font-size: 12px !important;
+  color: var(--semi-color-text-3) !important;
+  font-style: italic;
+}
+
+/* Resize handlers */
+.ga-app-body .semi-resizable-handler {
+  width: 2px;
+  background: transparent;
+  transition: background 0.15s;
+}
+
+.ga-app-body .semi-resizable-handler:hover {
+  background: var(--semi-color-primary);
+}
+
+.ga-app-body .semi-resizable-handler .semi-icon {
+  display: none;
+}
+
+/* Statusbar — ported from Hermes statusbar.tsx */
+.ga-statusbar {
+  height: 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: stretch;
+  gap: 8px;
+  border-top: 1px solid var(--ui-stroke-tertiary);
+  background: var(--ui-sidebar-surface-background);
+  padding: 0 4px;
+  color: var(--ui-text-tertiary);
+  flex-shrink: 0;
+  -webkit-app-region: no-drag;
+}
+
+.ga-statusbar-group {
+  display: flex;
+  min-width: 0;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.ga-statusbar-item {
+  display: inline-flex;
+  align-items: center;
+  height: 100%;
+  gap: 4px;
+  padding: 0 6px;
+  font-size: 0.6875rem;
+  color: inherit;
+  border: none;
+  border-radius: 0;
+  background: none;
+  text-decoration: none;
+  cursor: default;
+  transition: color 0.1s, background 0.1s;
+}
+
+.ga-statusbar-item.action,
+.ga-statusbar-item.menu,
+.ga-statusbar-item.link {
+  cursor: pointer;
+}
+
+.ga-statusbar-item.action:hover,
+.ga-statusbar-item.menu:hover,
+.ga-statusbar-item.link:hover {
+  color: var(--foreground);
+  background: var(--chrome-action-hover);
+}
+
+.ga-statusbar-item.disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.ga-statusbar-item.disabled:hover {
+  color: inherit;
+  background: none;
+}
+
+.ga-statusbar-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ga-statusbar-detail {
+  color: var(--ui-text-quaternary);
+}
+
+.ga-statusbar-icon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.ga-statusbar-spinner {
+  animation: ga-spin 1s linear infinite;
+}
+
+@keyframes ga-spin {
+  to { transform: rotate(360deg); }
+}
+
+.ga-statusbar-dot--pulse {
+  animation: ga-dot-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes ga-dot-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+/* ═══ Bridge Menu Panel (popover from statusbar) ═══ */
+
+.ga-statusbar-menu-anchor {
+  position: relative;
+}
+
+.ga-bridge-panel {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  min-width: 20rem;
+  background: var(--semi-color-bg-0, #fff);
+  border: 1px solid var(--ui-stroke-secondary);
+  border-radius: 0.5rem;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  backdrop-filter: blur(12px) saturate(1.08);
+  z-index: 200;
+  animation: ga-panel-slide-up 0.12s ease-out;
+  font-size: 0.875rem;
+}
+
+@keyframes ga-panel-slide-up {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Header: two status rows + action buttons */
+.ga-bridge-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.375rem 0.625rem;
+}
+
+.ga-bridge-panel-status-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+  font-size: 0.7rem;
+  line-height: 1;
+}
+
+.ga-bridge-panel-row {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.ga-bridge-panel-row--primary {
+  font-weight: 500;
+  color: var(--foreground);
+}
+
+.ga-bridge-panel-row--secondary {
+  color: var(--ui-text-tertiary);
+}
+
+/* Action buttons in header */
+.ga-bridge-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.ga-bridge-panel-action-btn {
+  width: 1.5rem;
+  height: 1.5rem;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ui-text-tertiary);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+}
+
+.ga-bridge-panel-action-btn:hover {
+  background: var(--chrome-action-hover);
+  color: var(--foreground);
+}
+
+/* Sections */
+.ga-bridge-panel-section {
+  border-top: 1px solid color-mix(in srgb, var(--semi-color-border, #e0e0e0) 50%, transparent);
+  padding: 0.375rem 0.625rem;
+}
+
+.ga-panel-section-label {
+  font-size: 0.62rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: color-mix(in srgb, var(--ui-text-tertiary) 80%, transparent);
+  margin-bottom: 0.25rem;
+  user-select: none;
+}
+
+/* Services list */
+.ga-bridge-panel-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-top: 0.375rem;
+}
+
+.ga-bridge-panel-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+}
+
+.ga-bridge-panel-svc-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-transform: capitalize;
+  color: var(--foreground);
+}
+
+.ga-bridge-panel-svc-state {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.66rem;
+  color: var(--ui-text-tertiary);
+  flex-shrink: 0;
+}
+
+.ga-bridge-panel-svc-err {
+  color: #ef4444;
+  font-weight: 700;
+  font-size: 0.625rem;
+}
+
+/* Section header row (label + action link) */
+.ga-bridge-panel-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.ga-bridge-panel-link-btn {
+  border: none;
+  background: none;
+  color: var(--ui-text-tertiary);
+  font-size: 0.625rem;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 0;
+  white-space: nowrap;
+  transition: color 0.1s;
+}
+
+.ga-bridge-panel-link-btn:hover {
+  color: var(--foreground);
+}
+
+/* Log tail view — styling moved to components/log/log.css, class kept for spacing */
+.ga-bridge-panel-log {
+  margin-top: 0.25rem;
+  max-height: 8rem;
+  border: none;
+  padding: 0;
+}
+
+/* Log tab bar */
+.ga-bridge-panel-tabs {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 0.375rem;
+}
+
+.ga-bridge-panel-tab {
+  border: none;
+  background: none;
+  padding: 0.125rem 0.375rem;
+  font-size: 0.625rem;
+  font-weight: 500;
+  color: var(--ui-text-tertiary);
+  border-radius: 3px;
+  cursor: pointer;
+  transition: color 0.1s, background 0.1s;
+}
+
+.ga-bridge-panel-tab:hover {
+  color: var(--foreground);
+  background: var(--chrome-action-hover);
+}
+
+.ga-bridge-panel-tab.active {
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--ui-accent) 12%, transparent);
+}
+
+/* Section footer (truncation indicator + link) */
+.ga-bridge-panel-section-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 0.25rem;
+  min-height: 1rem;
+}
+
+.ga-bridge-panel-truncated {
+  font-size: 0.585rem;
+  color: var(--ui-text-quaternary);
+}
+
+.ga-bridge-panel-log-empty {
+  margin-top: 0.25rem;
+  font-size: 0.6875rem;
+  color: var(--ui-text-quaternary);
+  font-style: italic;
+}
+
+/* Conductor panel — worker stat badges */
+.ga-conductor-panel-stats {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-shrink: 0;
+}
+
+.ga-conductor-stat {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1rem;
+  height: 1rem;
+  padding: 0 0.25rem;
+  border-radius: 0.5rem;
+  font-size: 0.6rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.ga-conductor-stat--run {
+  background: color-mix(in srgb, var(--ui-accent, #0053fd) 12%, transparent);
+  color: var(--ui-accent, #0053fd);
+}
+
+.ga-conductor-stat--done {
+  background: color-mix(in srgb, #10b981 12%, transparent);
+  color: #059669;
+}
+
+.ga-conductor-stat--fail {
+  background: color-mix(in srgb, #ef4444 12%, transparent);
+  color: #dc2626;
+}

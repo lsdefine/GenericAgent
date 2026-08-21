@@ -1,0 +1,124 @@
+.ga-services-page {
+  padding: 16px 12px;
+  height: 100%;
+  width: 100%;
+  overflow-y: auto;
+}
+
+.ga-services-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 48px 0;
+}
+
+.ga-services-loading--col {
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ga-bridge-hint {
+  font-size: 12px;
+  color: var(--semi-color-text-2);
+  background: var(--semi-color-fill-0);
+  padding: 4px 10px;
+  border-radius: 4px;
+  margin-top: 4px;
+}
+
+/* Channel cards */
+.ga-channel-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 0 12px;
+  width: 100%;
+}
+
+.ga-channel-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-radius: 8px;
+  background: var(--dt-card);
+  border: 1px solid var(--ui-stroke-tertiary);
+  transition: border-color 0.15s;
+}
+
+.ga-channel-card:hover {
+  border-color: var(--ui-stroke-secondary);
+}
+
+.ga-channel-card-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ga-channel-icon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.ga-channel-card-name {
+  font-weight: 500;
+  margin-right: 8px;
+}
+
+.ga-channel-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Status panel */
+.ga-status-panel {
+  padding: 4px 0 12px;
+}
+
+/* Offline banner — shown when bridge disconnects but stale data is available */
+.ga-offline-banner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  margin-bottom: 8px;
+  border-radius: 6px;
+  background: var(--semi-color-warning-light-default);
+  color: var(--semi-color-warning);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.ga-offline-banner > span {
+  flex: 1;
+}
+
+.ga-status-actions {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+/* Log dialog — aligned with ga-settings-dialog layout */
+.ga-log-dialog .semi-modal-content {
+  padding-left: 24px;
+  padding-right: 0;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.ga-log-dialog .semi-modal-header {
+  padding-right: 24px;
+  flex-shrink: 0;
+}
+
+.ga-log-dialog .semi-modal-body {
+  padding: 0 24px 0 0;
+  flex: 1;
+  min-height: 0;
+}

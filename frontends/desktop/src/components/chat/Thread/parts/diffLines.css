@@ -1,0 +1,83 @@
+/* ═══════════════════════════════════════════════
+   DiffLines — compact diff color-block renderer
+   ═══════════════════════════════════════════════ */
+
+/* ─── Block Container ─── */
+[data-slot="diff-block"] {
+  margin: 0.5rem 0;
+  border-radius: 0.375rem;
+  border: 1px solid var(--semi-color-border);
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+  font-size: var(--font-size-code, 13px);
+  line-height: 1.375rem;
+}
+
+/* ─── Line ─── */
+[data-slot="diff-line"] {
+  display: flex;
+  padding: 0 0.5rem;
+  min-height: 1.375rem;
+  line-height: 1.375rem;
+  border-left: 2px solid transparent;
+}
+
+/* ─── Kind: add ─── */
+[data-diff-kind="add"] {
+  background: color-mix(in srgb, var(--semi-color-success, #00b42a) 10%, transparent);
+  border-left: 2px solid var(--semi-color-success, #00b42a);
+}
+
+/* ─── Kind: remove ─── */
+[data-diff-kind="remove"] {
+  background: color-mix(in srgb, var(--semi-color-danger, #f53f3f) 10%, transparent);
+  border-left: 2px solid var(--semi-color-danger, #f53f3f);
+}
+
+/* ─── Kind: context ─── */
+[data-diff-kind="context"] {
+  border-left: 2px solid transparent;
+}
+
+/* ─── Kind: header ─── */
+[data-diff-kind="header"] {
+  background: var(--semi-color-fill-0);
+  font-style: italic;
+  color: var(--semi-color-text-2);
+  padding: 0.25rem 0.5rem;
+}
+
+/* ─── Gutter ─── */
+[data-slot="diff-gutter"] {
+  display: flex;
+  gap: 0.25rem;
+  min-width: 4rem;
+  user-select: none;
+  color: var(--semi-color-text-3);
+  font-size: 0.6875rem;
+  justify-content: flex-end;
+  padding-right: 0.5rem;
+  border-right: 1px solid var(--semi-color-border);
+}
+
+[data-slot="diff-line-old"],
+[data-slot="diff-line-new"] {
+  min-width: 1.5rem;
+  text-align: right;
+}
+
+/* ─── Content ─── */
+[data-slot="diff-content"] {
+  flex: 1;
+  white-space: pre-wrap;
+  word-break: break-all;
+  padding-left: 0.5rem;
+}
+
+/* ─── Sign (+/-) ─── */
+[data-slot="diff-sign"] {
+  display: inline-block;
+  width: 1ch;
+  user-select: none;
+}

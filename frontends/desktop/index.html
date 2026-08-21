@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" type="image/svg+xml" href="/assets/ga-logo.svg">
+<title>GenericAgent</title>
+<script>
+// FOUC prevention: apply cached appearance before first paint
+(function(){
+  var l=localStorage.getItem('ga_lang'); if(l==='en') document.documentElement.lang='en';
+  var app=localStorage.getItem('ga_appearance')||'light';
+  document.documentElement.dataset.appearance=app;
+  var LEGACY_FONT={sm:12,md:14,lg:16};
+  function chatFontPx(v){
+    if(v&&LEGACY_FONT[v]) return LEGACY_FONT[v];
+    var n=parseInt(v,10); if(!isNaN(n)&&n>=10&&n<=20) return n;
+    return 14;
+  }
+  var fs=localStorage.getItem('ga_font_size');
+  var cfp=chatFontPx(fs);
+  document.documentElement.dataset.chatFont=String(cfp);
+  document.documentElement.style.setProperty('--chat-font',cfp+'px');
+})();
+</script>
+</head>
+<body class="no-transition">
+<div id="app"></div>
+<script type="module" src="/src/main.tsx"></script>
+</body>
+</html>

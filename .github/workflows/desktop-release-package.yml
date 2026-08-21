@@ -533,6 +533,15 @@ jobs:
             "requests>=2.28" "beautifulsoup4>=4.12" "bottle>=0.12" "simple-websocket-server>=0.4" "aiohttp>=3.9" psutil \
             fastapi uvicorn websockets pydantic setuptools wheel
 
+          # macOS applications must be immutable at first launch. Install from the downloaded
+          # wheelhouse before the runtime enters the signed .app, then carry a durable marker.
+          "$PY" -m pip install --no-index --find-links "$RUNTIME_SRC/wheels" \
+            "requests>=2.28" "beautifulsoup4>=4.12" "bottle>=0.12" "simple-websocket-server>=0.4" "aiohttp>=3.9" psutil \
+            fastapi uvicorn websockets pydantic setuptools wheel
+          "$PY" -c 'import aiohttp, fastapi, pydantic, uvicorn, websockets'
+          printf 'ok\n' > "$RUNTIME_SRC/.prepared"
+          test -s "$RUNTIME_SRC/.prepared"
+
           # Runtime source (project root minus heavy/dev/build dirs) — bsdtar exclude syntax.
           mkdir -p "$RUNTIME_SRC/app"
           tar \
@@ -559,6 +568,7 @@ jobs:
           # Portable zip: keep the existing release shape and helper scripts.
           ditto "$APP_SRC" "$PORTABLE/GenericAgent.app"
           ditto "$RUNTIME_SRC" "$PORTABLE/runtime"
+          test -s "$PORTABLE/runtime/.prepared"
           cp frontends/desktop/packaging/scripts/macos/uninstall.command "$PORTABLE/uninstall.command"
           chmod +x "$PORTABLE/uninstall.command"
           cat > "$PORTABLE/Start GenericAgent.command" <<'EOF'
@@ -603,6 +613,9 @@ jobs:
           ditto "$APP_SRC" "$DMG_APP"
           mkdir -p "$DMG_APP/Contents/Resources"
           ditto "$RUNTIME_SRC" "$DMG_APP/Contents/Resources/runtime"
+          test -s "$DMG_APP/Contents/Resources/runtime/.prepared"
+          "$DMG_APP/Contents/Resources/runtime/python/bin/python3" \
+            -c 'import aiohttp, fastapi, pydantic, uvicorn, websockets'
           codesign --force --deep --sign - "$DMG_APP"
           codesign --verify --deep --strict "$DMG_APP" || true
           ln -s /Applications "$DMG_STAGE/Applications"

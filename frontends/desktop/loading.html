@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>GenericAgent</title>
+<style>
+:root{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI","Microsoft YaHei UI","Helvetica Neue",Helvetica,Arial,sans-serif;--bg:#fff;--text:#111;background:var(--bg);color:var(--text)}
+@media(prefers-color-scheme:dark){:root{--bg:#1a1a1a;--text:#eee}}
+html,body{height:100%;margin:0}
+#loading-root{height:100%;display:flex;align-items:center;justify-content:center}
+.fouc-spinner{width:28px;height:28px;margin:0 auto;border:3px solid #9994;border-top-color:currentColor;border-radius:50%;animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+  <div id="loading-root">
+    <div class="fouc-spinner"></div>
+  </div>
+  <script type="module" src="/src/loading.tsx"></script>
+</body>
+</html>

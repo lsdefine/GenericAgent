@@ -1,0 +1,42 @@
+:root[data-platform="windows"] {
+  --ga-titlebar-height: 32px;
+}
+
+.ga-win-titlebar {
+  height: 32px;
+  flex-shrink: 0;
+  width: 100%;
+  background: hsl(0 0% 4%);
+  display: flex;
+  justify-content: flex-end;
+  align-items: stretch;
+  user-select: none;
+}
+
+.ga-win-controls {
+  display: flex;
+  height: 100%;
+}
+
+.ga-win-btn {
+  width: 46px;
+  height: 100%;
+  border: none;
+  background: transparent;
+  color: hsl(0 0% 82%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.ga-win-btn:hover {
+  background: hsl(0 0% 18%);
+  color: white;
+}
+
+.ga-win-btn--close:hover {
+  background: #c42b1c;
+  color: white;
+}

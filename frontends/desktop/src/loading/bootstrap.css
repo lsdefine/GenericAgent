@@ -1,0 +1,165 @@
+:root {
+  --bs-bg: #fff;
+  --bs-text: #111;
+  --bs-muted: #666;
+  --bs-accent: #0066cc;
+  --bs-input-bg: #f5f5f5;
+  --bs-bar-bg: #e0e0e0;
+  --bs-bar-fill: #0066cc;
+  --bs-dot-pending: #ccc;
+  --bs-dot-running: #f59e0b;
+  --bs-dot-done: #22c55e;
+  --bs-dot-failed: #ef4444;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bs-bg: #1a1a1a;
+    --bs-text: #eee;
+    --bs-muted: #999;
+    --bs-accent: #5ba3f5;
+    --bs-input-bg: #252525;
+    --bs-bar-bg: #333;
+    --bs-bar-fill: #5ba3f5;
+  }
+}
+
+.bootstrap-shell {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.bootstrap-app {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bs-bg);
+  color: var(--bs-text);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "Microsoft YaHei UI", "Helvetica Neue", sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.bs-screen {
+  width: 320px;
+  text-align: center;
+  padding: 24px;
+}
+
+.bs-spinner {
+  width: 28px;
+  height: 28px;
+  margin: 0 auto 16px;
+  border: 3px solid var(--bs-bar-bg);
+  border-top-color: var(--bs-accent);
+  border-radius: 50%;
+  animation: bs-spin 1s linear infinite;
+}
+
+@keyframes bs-spin {
+  to { transform: rotate(360deg); }
+}
+
+.bs-text {
+  margin: 0 0 8px;
+  font-size: 14px;
+  color: var(--bs-text);
+}
+
+.bs-subtext {
+  margin: 0;
+  font-size: 12px;
+  color: var(--bs-muted);
+}
+
+.bs-check {
+  font-size: 32px;
+  color: var(--bs-dot-done);
+  margin-bottom: 12px;
+}
+
+.bs-link {
+  display: inline-block;
+  margin-top: 16px;
+  font-size: 12px;
+  color: var(--bs-muted);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* Progress */
+.bs-bar-track {
+  width: 100%;
+  height: 6px;
+  background: var(--bs-bar-bg);
+  border-radius: 3px;
+  overflow: hidden;
+  margin: 12px 0;
+}
+
+.bs-bar-fill {
+  height: 100%;
+  background: var(--bs-bar-fill);
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+.bs-stages {
+  list-style: none;
+  padding: 0;
+  margin: 16px 0 0;
+  text-align: left;
+}
+
+.bs-stages li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 13px;
+  color: var(--bs-muted);
+}
+
+.bs-stages li[data-state="running"] { color: var(--bs-text); font-weight: 500; }
+.bs-stages li[data-state="done"] { color: var(--bs-dot-done); }
+.bs-stages li[data-state="failed"] { color: var(--bs-dot-failed); }
+
+.bs-stage-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--bs-dot-pending);
+  flex-shrink: 0;
+}
+
+li[data-state="running"] .bs-stage-dot { background: var(--bs-dot-running); }
+li[data-state="done"] .bs-stage-dot { background: var(--bs-dot-done); }
+li[data-state="failed"] .bs-stage-dot { background: var(--bs-dot-failed); }
+
+/* Log */
+.bs-log {
+  margin-top: 16px;
+  text-align: left;
+}
+
+.bs-log summary {
+  font-size: 12px;
+  color: var(--bs-muted);
+  cursor: pointer;
+}
+
+.bs-log pre {
+  margin: 8px 0 0;
+  padding: 10px;
+  background: var(--bs-input-bg);
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1.4;
+  max-height: 150px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}

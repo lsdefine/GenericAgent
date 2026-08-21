@@ -11,11 +11,15 @@
     "core:window:allow-show",
     "core:window:allow-hide",
     "core:window:allow-set-focus",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
     "core:window:allow-close",
     "core:window:allow-get-all-windows",
     "core:webview:default",
     "allow-start-bridge",
     "allow-start-bridge-with-config",
+    "allow-retry-bootstrap",
+    "allow-get-bootstrap-snapshot",
     "allow-get-config",
     "allow-export-mykey",
     "allow-pick-directory",
@@ -24,6 +28,8 @@
     "allow-clear-ga-source",
     "allow-move-ga-runtime",
     "allow-shortcut-should-ask",
-    "allow-shortcut-decide"
+    "allow-shortcut-decide",
+    "core:window:allow-start-dragging",
+    "opener:default"
   ]
 }

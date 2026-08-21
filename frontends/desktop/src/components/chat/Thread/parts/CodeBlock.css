@@ -1,0 +1,220 @@
+/* ═══════════════════════════════════════════════
+   CodeBlock — syntax-highlighted code card
+   ═══════════════════════════════════════════════ */
+
+/* ─── Card Container ─── */
+[data-slot="code-card"] {
+  position: relative;
+  margin: 0.5rem 0;
+  border-radius: 0.375rem;
+  border: 1px solid var(--semi-color-border);
+  background: var(--semi-color-fill-0);
+  overflow: hidden;
+}
+
+/* ─── Header ─── */
+[data-slot="code-card-header"] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.25rem 0.5rem;
+  border-bottom: 1px solid var(--semi-color-border);
+  background: color-mix(in srgb, var(--semi-color-fill-0) 60%, var(--semi-color-bg-0));
+  min-height: 1.5rem;
+}
+
+[data-slot="code-card-lang"] {
+  font-size: 0.6875rem;
+  font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+  color: var(--semi-color-text-2);
+  text-transform: lowercase;
+}
+
+/* ─── Copy Button ─── */
+[data-slot="code-card-copy"] {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border: none;
+  border-radius: 0.25rem;
+  background: transparent;
+  color: var(--semi-color-text-2);
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 0.12s, background 0.12s;
+}
+
+[data-slot="code-card-copy"]:hover {
+  opacity: 1;
+  background: var(--semi-color-fill-1);
+}
+
+/* ─── Body ─── */
+[data-slot="code-card-body"] {
+  position: relative;
+  padding: 0.625rem 0.75rem;
+  overflow-x: auto;
+  overflow-y: auto;
+  max-height: 7.5rem;
+  font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+  font-size: 0.7rem;
+  line-height: 1.6;
+  color: var(--semi-color-text-0);
+  white-space: pre;
+  tab-size: 2;
+}
+
+[data-slot="code-card-body"][data-expanded] {
+  max-height: 40dvh;
+}
+
+/* ─── Expand toggle for code body ─── */
+[data-slot="code-card-expand"] {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  display: flex;
+  height: 1.75rem;
+  cursor: pointer;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 0.25rem;
+  border: none;
+  background: linear-gradient(to top, var(--semi-color-fill-0), transparent);
+  color: var(--ui-text-tertiary);
+  transition: color 120ms ease-out;
+}
+
+[data-slot="code-card-expand"]:hover {
+  color: var(--foreground);
+}
+
+[data-slot="code-card-expand"] svg {
+  width: 0.875rem;
+  height: 0.875rem;
+  transition: transform 150ms ease-out;
+}
+
+[data-slot="code-card-body"][data-expanded] + [data-slot="code-card-expand"] {
+  background: none;
+}
+
+[data-slot="code-card-body"][data-expanded] + [data-slot="code-card-expand"] svg {
+  transform: rotate(180deg);
+}
+
+[data-slot="code-card-body"] code {
+  font-family: inherit;
+  font-size: inherit;
+  background: none !important;
+  padding: 0;
+  display: block;
+}
+
+/* ─── Streaming State ─── */
+[data-slot="code-card"][data-streaming] {
+  animation: code-card-glow 1.8s ease-in-out infinite alternate;
+  border-color: color-mix(in srgb, var(--semi-color-primary) 24%, var(--semi-color-border));
+}
+
+[data-slot="code-card"][data-streaming] [data-slot="code-card-body"] {
+  mask-image: linear-gradient(to bottom, black 0%, black calc(100% - 1.5rem), rgba(0,0,0,0.5) 100%);
+  -webkit-mask-image: linear-gradient(to bottom, black 0%, black calc(100% - 1.5rem), rgba(0,0,0,0.5) 100%);
+}
+
+@keyframes code-card-glow {
+  from {
+    box-shadow: 0 0 0 0.5px color-mix(in srgb, var(--semi-color-primary) 10%, transparent);
+  }
+  to {
+    box-shadow: 0 0 0 0.5px color-mix(in srgb, var(--semi-color-primary) 10%, transparent),
+                0 0.5rem 1.5rem color-mix(in srgb, var(--semi-color-primary) 6%, transparent);
+  }
+}
+
+/* ─── Prism Token Colors (CSS Variable Theme) ─── */
+:root {
+  --code-keyword: #d73a49;
+  --code-string: #032f62;
+  --code-comment: #6a737d;
+  --code-function: #6f42c1;
+  --code-number: #005cc5;
+  --code-operator: #d73a49;
+  --code-class-name: #6f42c1;
+  --code-punctuation: #24292e;
+  --code-property: #005cc5;
+  --code-builtin: #e36209;
+  --code-attr-name: #6f42c1;
+  --code-attr-value: #032f62;
+  --code-tag: #22863a;
+  --code-selector: #22863a;
+  --code-inserted: #22863a;
+  --code-deleted: #d73a49;
+}
+
+[data-appearance="dark"] {
+  --code-keyword: #ff7b72;
+  --code-string: #a5d6ff;
+  --code-comment: #8b949e;
+  --code-function: #d2a8ff;
+  --code-number: #79c0ff;
+  --code-operator: #ff7b72;
+  --code-class-name: #f0c674;
+  --code-punctuation: #c9d1d9;
+  --code-property: #79c0ff;
+  --code-builtin: #ffa657;
+  --code-attr-name: #d2a8ff;
+  --code-attr-value: #a5d6ff;
+  --code-tag: #7ee787;
+  --code-selector: #7ee787;
+  --code-inserted: #7ee787;
+  --code-deleted: #ff7b72;
+}
+
+/* ─── Prism Token Selectors ─── */
+.token.keyword,
+.token.control,
+.token.directive,
+.token.important { color: var(--code-keyword); }
+
+.token.string,
+.token.template-string,
+.token.url { color: var(--code-string); }
+
+.token.comment,
+.token.prolog,
+.token.doctype,
+.token.cdata { color: var(--code-comment); font-style: italic; }
+
+.token.function { color: var(--code-function); }
+
+.token.number,
+.token.boolean { color: var(--code-number); }
+
+.token.operator,
+.token.entity { color: var(--code-operator); }
+
+.token.class-name,
+.token.maybe-class-name { color: var(--code-class-name); }
+
+.token.punctuation { color: var(--code-punctuation); }
+
+.token.property,
+.token.constant,
+.token.variable { color: var(--code-property); }
+
+.token.builtin,
+.token.symbol { color: var(--code-builtin); }
+
+.token.attr-name { color: var(--code-attr-name); }
+.token.attr-value { color: var(--code-attr-value); }
+
+.token.tag { color: var(--code-tag); }
+.token.selector { color: var(--code-selector); }
+.token.inserted { color: var(--code-inserted); }
+.token.deleted { color: var(--code-deleted); text-decoration: line-through; }
+
+.token.italic { font-style: italic; }
+.token.bold { font-weight: bold; }

@@ -1,0 +1,534 @@
+/* Settings Modal — fixed center, inner scroll */
+
+.ga-settings-dialog .semi-modal-content {
+  padding-left: 24px;
+  padding-right: 0;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.ga-settings-dialog .semi-modal-header {
+  padding-right: 24px;
+  flex-shrink: 0;
+}
+
+.ga-settings-dialog .semi-modal-body {
+  padding: 8px 24px 8px 0;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.ga-set-block {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--semi-color-border, #e8e8e8);
+}
+
+.ga-set-block:last-child {
+  border-bottom: none;
+}
+
+.ga-set-sec-t {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--semi-color-text-0, #1c1f23);
+  margin-bottom: 10px;
+}
+
+/* Font size slider */
+.ga-font-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.ga-font-value {
+  font-size: 13px;
+  color: var(--semi-color-text-2, #646a73);
+  min-width: 36px;
+  text-align: right;
+}
+
+/* ── Mixin / 渠道组 ── */
+.ga-mixin-group {
+  margin-bottom: 12px;
+  border: 1px solid var(--semi-color-border, #e8e8e8);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.ga-mixin-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.ga-mixin-head:hover {
+  background: var(--semi-color-fill-0, #f5f5f5);
+}
+
+.ga-mixin-head--active {
+  background: var(--semi-color-primary-light-default, #e8f3ff);
+}
+
+.ga-mixin-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--semi-color-text-2, #646a73);
+  border-radius: 4px;
+}
+
+.ga-mixin-toggle:hover {
+  background: var(--semi-color-fill-1, #eee);
+}
+
+.ga-mixin-label {
+  font-size: 13px;
+  font-weight: 500;
+  flex: 1;
+}
+
+.ga-mixin-body {
+  border-top: 1px solid var(--semi-color-border, #e8e8e8);
+  padding: 6px 0;
+}
+
+.ga-mixin-empty {
+  padding: 8px 16px;
+  font-size: 12px;
+  color: var(--semi-color-text-2, #646a73);
+}
+
+.ga-mixin-members {
+  display: flex;
+  flex-direction: column;
+}
+
+.ga-mixin-member {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  font-size: 13px;
+}
+
+.ga-mixin-member:hover .ga-mixin-member-actions {
+  opacity: 1;
+}
+
+.ga-mixin-member-rank {
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  background: var(--semi-color-fill-0, #f5f5f5);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--semi-color-text-2, #646a73);
+  flex-shrink: 0;
+}
+
+.ga-mixin-member-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ga-mixin-member-actions {
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.ga-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--semi-color-text-2, #646a73);
+}
+
+.ga-icon-btn:hover:not(:disabled) {
+  background: var(--semi-color-fill-1, #eee);
+  color: var(--semi-color-text-0, #1c1f23);
+}
+
+.ga-icon-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.ga-icon-btn--danger:hover:not(:disabled) {
+  background: var(--semi-color-danger-light-default, #fee);
+  color: var(--semi-color-danger, #f93920);
+}
+
+.ga-mixin-hint {
+  padding: 4px 16px 4px;
+  font-size: 11px;
+  color: var(--semi-color-text-3, #8f959e);
+}
+
+/* ── Individual model list ── */
+.ga-model-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 8px;
+}
+
+.ga-model-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.ga-model-item:hover {
+  background: var(--semi-color-fill-0, #f5f5f5);
+}
+
+.ga-model-item--selected {
+  background: var(--semi-color-primary-light-default, #e8f3ff);
+}
+
+.ga-model-row-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ga-model-name {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ga-model-actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.ga-model-item:hover .ga-model-actions {
+  opacity: 1;
+}
+
+.ga-model-empty {
+  padding: 12px 8px;
+  font-size: 13px;
+  color: var(--semi-color-text-2, #646a73);
+  text-align: center;
+}
+
+.ga-add-model-btn {
+  margin-top: 4px;
+}
+
+/* Feature buttons */
+.ga-feature-buttons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* ── Data maintenance section ── */
+.ga-data-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+}
+
+.ga-data-row-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.ga-data-row-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--semi-color-text-0, #1c1f23);
+  cursor: default;
+}
+
+.ga-data-divider {
+  height: 1px;
+  background: var(--semi-color-border, #e8e8e8);
+  margin: 8px 0;
+}
+
+/* ── GA Source block ── */
+.ga-source-block {
+  padding: 8px 0 4px;
+}
+
+.ga-source-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  margin: 6px 0 8px;
+}
+
+.ga-source-status-text {
+  color: var(--semi-color-text-1, #1c1f23);
+  font-weight: 500;
+}
+
+.ga-source-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.ga-source-dot--on {
+  background: #10b981;
+}
+
+.ga-source-dot--switching {
+  background: var(--semi-color-primary, #3370ff);
+  animation: ga-source-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes ga-source-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.85); }
+}
+
+.ga-source-path {
+  color: var(--semi-color-text-2, #646a73);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 260px;
+}
+
+.ga-source-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* Add/Edit Model form */
+.ga-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.ga-form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ga-form-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--semi-color-text-0, #1c1f23);
+}
+
+.ga-form-req {
+  color: var(--semi-color-danger, #f93920);
+  margin-left: 2px;
+}
+
+/* ── Route picker (provider vs custom) ── */
+.ga-route-picker {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.ga-route-btn {
+  flex: 1;
+  padding: 10px 12px;
+  border: 1px solid var(--semi-color-border, #e0e0e0);
+  border-radius: 8px;
+  background: var(--semi-color-bg-0, #fff);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: center;
+  transition: border-color 0.12s, background 0.12s;
+}
+
+.ga-route-btn:hover {
+  border-color: var(--semi-color-primary, #3370ff);
+  background: color-mix(in srgb, var(--semi-color-primary, #3370ff) 4%, transparent);
+}
+
+.ga-route-btn--active {
+  border-color: var(--semi-color-primary, #3370ff);
+  background: color-mix(in srgb, var(--semi-color-primary, #3370ff) 8%, transparent);
+  color: var(--semi-color-primary, #3370ff);
+}
+
+/* ── Provider cards ── */
+.ga-provider-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.ga-provider-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--semi-color-border, #e0e0e0);
+  border-radius: 8px;
+  background: var(--semi-color-bg-0, #fff);
+  cursor: pointer;
+  transition: border-color 0.12s, box-shadow 0.12s;
+  width: 100%;
+  text-align: left;
+}
+
+.ga-provider-card:hover {
+  border-color: var(--provider-color, var(--semi-color-primary));
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--provider-color, #3370ff) 12%, transparent);
+}
+
+.ga-provider-card-icon {
+  flex-shrink: 0;
+}
+
+.ga-provider-card-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ga-provider-card-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--semi-color-text-0, #1c1f23);
+}
+
+.ga-provider-card-desc {
+  font-size: 11px;
+  color: var(--semi-color-text-2, #4e5969);
+}
+
+.ga-provider-card-caret {
+  font-size: 16px;
+  color: var(--semi-color-text-3, #8f959e);
+  flex-shrink: 0;
+}
+
+/* ── Form row (inline fields) ── */
+.ga-form-row {
+  display: flex;
+  gap: 12px;
+}
+
+.ga-form-row > .ga-form-field {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ── Advanced toggle ── */
+.ga-form-advanced-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: 12px;
+  color: var(--semi-color-text-2, #4e5969);
+  cursor: pointer;
+  margin-top: 4px;
+}
+
+.ga-form-advanced-toggle:hover {
+  color: var(--semi-color-text-0, #1c1f23);
+}
+
+.ga-form-advanced-toggle svg {
+  transition: transform 0.15s;
+}
+
+.ga-form-advanced-toggle[data-expanded] svg {
+  transform: rotate(90deg);
+}
+
+.ga-form-advanced-body {
+  margin-top: 12px;
+}
+
+/* ── Form back link ── */
+.ga-form-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: 12px;
+  color: var(--semi-color-text-2, #4e5969);
+  cursor: pointer;
+  margin-bottom: 12px;
+}
+
+.ga-form-back:hover {
+  color: var(--semi-color-primary, #3370ff);
+}
+
+/* ── Key link ── */
+.ga-form-key-link {
+  font-size: 11px;
+  color: var(--semi-color-primary, #3370ff);
+  text-decoration: none;
+  margin-left: 8px;
+  font-weight: 400;
+}
+
+.ga-form-key-link:hover {
+  text-decoration: underline;
+}
+
+/* ── Locked field hint ── */
+.ga-form-locked-hint {
+  font-size: 11px;
+  color: var(--semi-color-text-3, #8f959e);
+  margin-top: 2px;
+}

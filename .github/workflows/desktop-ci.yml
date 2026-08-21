@@ -1,0 +1,214 @@
+name: Desktop Quality Gates
+
+on:
+  push:
+    branches: [main]
+    paths: &desktop_paths
+      - "*.py"
+      - "pyproject.toml"
+      - "assets/**"
+      - "memory/**"
+      - "frontends/conductor.py"
+      - "frontends/cost_tracker.py"
+      - "frontends/desktop_bridge.py"
+      - "frontends/tests/**"
+      - "frontends/desktop/**"
+      - ".github/workflows/desktop-ci.yml"
+      - ".github/workflows/desktop-release-package.yml"
+  pull_request:
+    branches: [main]
+    paths: *desktop_paths
+  workflow_dispatch:
+
+concurrency:
+  group: desktop-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: "1"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  contract-preflight:
+    name: CI contract preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Verify workflow, manifest, and desktop runtime contracts
+        run: node frontends/desktop/scripts/verify-ci-contract.mjs
+      - name: Verify upstream-owned and local-only boundaries
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git diff --exit-code "$BASE_SHA" -- frontends/desktop/static memory
+          test -z "$(git ls-files -- '.agents/**' '.codex/**' '.trellis/**')"
+          test ! -e .github/workflows/desktop-e2e-nightly.yml
+          for image in assets/images/wechat_group{15..21}.jpg; do
+            test ! -e "$image"
+          done
+          ! git grep -nE '^(<<<<<<<|=======|>>>>>>>)' -- .github frontends
+
+  node-contracts:
+    name: TypeScript, Vitest, and packaging contracts
+    needs: contract-preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontends/desktop/package-lock.json
+      - name: Install locked desktop dependencies
+        working-directory: frontends/desktop
+        run: npm ci
+      - name: Type check application
+        working-directory: frontends/desktop
+        run: npm run typecheck
+      - name: Type check E2E harness
+        working-directory: frontends/desktop
+        run: npm run test:e2e-types
+      - name: Frontend and harness contracts
+        working-directory: frontends/desktop
+        run: npm run test
+      - name: Packaging preconditions
+        working-directory: frontends/desktop
+        run: npm run test:packaging
+      - name: Production build excludes WDIO
+        working-directory: frontends/desktop
+        run: npm run test:e2e-isolation
+
+  python-tests:
+    name: Python ${{ matrix.python-version }}
+    needs: contract-preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: frontends/desktop/e2e/requirements.txt
+      - name: Install Python test runtime
+        run: python -m pip install -r frontends/desktop/e2e/requirements.txt
+      - name: Python contracts
+        run: python -m pytest frontends/tests/ -v --tb=short
+
+  rust-contracts:
+    name: Rust ${{ matrix.feature.name }}
+    needs: contract-preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        feature:
+          - name: production
+            args: ""
+          - name: e2e
+            args: "--features e2e"
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Tauri system dependencies
+        run: >-
+          sudo apt-get update && sudo apt-get install -y
+          libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: frontends/desktop/src-tauri -> target
+      - name: Run Rust contracts
+        working-directory: frontends/desktop/src-tauri
+        run: cargo test ${{ matrix.feature.args }}
+
+  browser-e2e:
+    name: Browser E2E
+    needs: [contract-preflight, node-contracts, python-tests]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontends/desktop/package-lock.json
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: frontends/desktop/e2e/requirements.txt
+      - name: Install locked desktop dependencies
+        working-directory: frontends/desktop
+        run: npm ci
+      - name: Install bridge runtime
+        run: python -m pip install -r frontends/desktop/e2e/requirements.txt
+      - name: Run deterministic browser journeys
+        working-directory: frontends/desktop
+        run: npm run e2e:browser
+      - name: Upload failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: browser-e2e-${{ github.run_id }}
+          path: frontends/desktop/e2e-results
+          if-no-files-found: warn
+          retention-days: 7
+
+  linux-tauri-smoke:
+    name: Linux Tauri smoke
+    needs: [contract-preflight, node-contracts, python-tests, rust-contracts]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Tauri system dependencies
+        run: >-
+          sudo apt-get update && sudo apt-get install -y
+          libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xvfb
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontends/desktop/package-lock.json
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: frontends/desktop/e2e/requirements.txt
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: frontends/desktop/src-tauri -> target
+      - name: Install locked desktop dependencies
+        working-directory: frontends/desktop
+        run: npm ci
+      - name: Install bridge runtime
+        run: python -m pip install -r frontends/desktop/e2e/requirements.txt
+      - name: Build and drive native Tauri
+        working-directory: frontends/desktop
+        run: xvfb-run -a npm run e2e:desktop
+      - name: Upload failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-tauri-e2e-${{ github.run_id }}
+          path: frontends/desktop/e2e-results
+          if-no-files-found: warn
+          retention-days: 7

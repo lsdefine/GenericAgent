@@ -197,7 +197,13 @@ class AgentManager:
                 "llm_history": llm_hist}
 
     def _session_file(self, sid: str) -> Path:
-        return self._sessions_dir / f"{sid}.json"
+        if not isinstance(sid, str) or not sid or "/" in sid or '\\' in sid:
+            raise ValueError("invalid session id")
+        root = self._sessions_dir.resolve()
+        target = (root / f"{sid}.json").resolve()
+        if target.parent != root:
+            raise ValueError(f"invalid session id: {sid!r}")
+        return target
 
     def _persist_session(self, s: "Session"):
         """Write a single session file. Cost is O(one session), independent of how many
@@ -206,9 +212,10 @@ class AgentManager:
             self._sessions_dir.mkdir(parents=True, exist_ok=True)
             with self.lock:
                 data = self._session_dict(s)
-            tmp = self._sessions_dir / f"{s.id}.json.tmp"
+            target = self._session_file(s.id)
+            tmp = target.with_suffix(target.suffix + ".tmp")
             tmp.write_text(json.dumps(data, ensure_ascii=False, default=str), encoding="utf-8")
-            os.replace(tmp, self._session_file(s.id))  # atomic swap
+            os.replace(tmp, target)  # atomic swap
         except Exception as e:
             print(f"[bridge] persist session {s.id} failed: {e}", file=sys.stderr)
 
@@ -228,8 +235,10 @@ class AgentManager:
             self._persist_session(s)
 
     def _session_from_item(self, item: dict) -> "Session":
+        sid = item["id"]
+        self._session_file(sid)
         msgs = item.get("messages", [])
-        return Session(id=item["id"], title=item.get("title", "New chat"),
+        return Session(id=sid, title=item.get("title", "New chat"),
                        cwd=item.get("cwd", self.ga_root),
                        created_at=item.get("created_at", time.time()),
                        updated_at=item.get("updated_at", time.time()),
@@ -238,7 +247,7 @@ class AgentManager:
                        pinned=item.get("pinned", False),
                        untitled=item.get("untitled", True),
                        plan_scan_baseline=_load_plan_baseline(item, msgs),
-                       plan_path=_sanitize_desktop_plan_path(item["id"], item.get("plan_path") or ""),
+                       plan_path=_sanitize_desktop_plan_path(sid, item.get("plan_path") or ""),
                        status="idle", agent=None,
                        llm_history=item.get("llm_history"),
                        llm_no=item.get("llm_no"))
@@ -322,6 +331,11 @@ class AgentManager:
             for item in items:
                 sid = item.get("id")
                 if not sid or sid in self.sessions:
+                    skipped += 1
+                    continue
+                try:
+                    self._session_file(sid)
+                except ValueError:
                     skipped += 1
                     continue
                 sess = self._session_from_item(item)

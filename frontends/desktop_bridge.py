@@ -1399,26 +1399,78 @@ async def ws_handler(request):
 # Transport layer: HTTP command/data API
 # ---------------------------------------------------------------------------
 
-def cors_headers():
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
+def _origin_parts(origin: str):
+    if origin != origin.strip(): return None
+    from urllib.parse import urlsplit
+    try:
+        parsed = urlsplit(origin)
+        parsed.port
+    except ValueError:
+        return None
+    if (parsed.scheme.lower() not in ("http", "https") or not parsed.hostname or
+            parsed.username is not None or parsed.password is not None or
+            parsed.path or parsed.query or parsed.fragment):
+        return None
+    return parsed
+
+
+def _request_host_parts(host: str):
+    from urllib.parse import urlsplit
+    try:
+        parsed = urlsplit("//" + host)
+        parsed.port
+    except ValueError:
+        return None
+    if parsed.username is not None or parsed.password is not None or parsed.query or parsed.fragment:
+        return None
+    return parsed if parsed.hostname else None
+
+
+def _origin_matches_host(request, origin: str) -> bool:
+    if not origin:
+        return True
+    parsed_origin = _origin_parts(origin)
+    parsed_host = _request_host_parts(request.host)
+    if parsed_origin is None or parsed_host is None:
+        return False
+    origin_host = parsed_origin.hostname.lower()
+    request_host = parsed_host.hostname.lower()
+    bind_host = os.environ.get("BRIDGE_HOST", "127.0.0.1").strip().lower()
+    if bind_host in _LOOPBACK_HOSTS:
+        return origin_host in _LOOPBACK_HOSTS and request_host in _LOOPBACK_HOSTS
+    return parsed_origin.netloc.lower() == request.host.lower()
+
+
+def cors_headers(origin: str = ""):
+    if not origin:
+        return {}
     return {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS",
+        "Access-Control-Allow-Origin": origin,
+        "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type",
+        "Vary": "Origin",
     }
 
 
 @web.middleware
 async def cors_middleware(request, handler):
+    origin = request.headers.get("Origin", "")
+    if origin and not _origin_matches_host(request, origin):
+        return web.json_response({"ok": False, "error": "cross-origin request rejected"}, status=403)
+    headers = cors_headers(origin)
     if request.method == "OPTIONS":
-        return web.Response(status=204, headers=cors_headers())
+        return web.Response(status=204, headers=headers)
     resp = await handler(request)
-    for k, v in cors_headers().items():
+    for k, v in headers.items():
         resp.headers[k] = v
     return resp
 
 
 def json_ok(data: dict, status: int = 200):
-    return web.json_response(data, status=status, headers=cors_headers(), dumps=lambda x: json.dumps(x, ensure_ascii=False, default=str))
+    return web.json_response(data, status=status, dumps=lambda x: json.dumps(x, ensure_ascii=False, default=str))
 
 
 async def read_json(request) -> dict:

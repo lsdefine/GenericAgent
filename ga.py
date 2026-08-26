@@ -277,6 +277,25 @@ def consume_file(dr, file):
         os.remove(os.path.join(dr, file))
         return content
 
+def _verify_condition(condition, evidence, resolve_path=os.path.abspath):
+    kind = condition.get('kind'); raw_path = condition.get('path', '')
+    path = resolve_path(raw_path) if raw_path else ''
+    if kind == 'file_exists': return bool(path) and os.path.exists(path)
+    if kind == 'file_contains':
+        needle = condition.get('substring', '')
+        if not needle or not os.path.isfile(path): return False
+        try:
+            with open(path, encoding='utf-8', errors='replace') as f: return needle in f.read()
+        except OSError: return False
+    if kind == 'last_exit_code_zero':
+        try: result = json.loads(evidence.get('code_run', ''))
+        except (json.JSONDecodeError, TypeError): return False
+        return isinstance(result, dict) and result.get('exit_code') == 0
+    if kind == 'tool_result_contains':
+        tool = condition.get('tool'); needle = condition.get('substring', '')
+        return bool(tool and needle) and needle in str(evidence.get(tool, ''))
+    return False
+
 class GenericAgentHandler(BaseHandler):
     '''Generic Agent 工具库，包含多种工具的实现。工具函数自动加上了 do_ 前缀。实际工具名没有前缀。'''
     def __init__(self, parent, last_history=None, cwd='./temp'):
@@ -462,6 +481,10 @@ class GenericAgentHandler(BaseHandler):
         '''为整个任务设定后续需要临时记忆的重点。'''
         key_info = args.get("key_info", "")
         if "key_info" in args: self.working['key_info'] = key_info
+        if "verify_conditions" in args:
+            conditions = args['verify_conditions'] or []
+            valid = isinstance(conditions, list) and all(isinstance(c, dict) for c in conditions)
+            self.working['verify_conditions'] = conditions if valid else [{'kind': 'invalid'}]
         self.working['passed_sessions'] = 0
         yield f"[Info] Updated key_info.\n"
         next_prompt = self._get_anchor_prompt(skip=args.get('_index', 0) > 0)
@@ -473,6 +496,11 @@ class GenericAgentHandler(BaseHandler):
         self._empty_ct = getattr(self, '_empty_ct', 0) + 1
         if self._empty_ct >= 3: return StepOutcome({}, should_exit=True)
         return StepOutcome({}, next_prompt=prompt)
+
+    def _unsatisfied_verify_conditions(self):
+        evidence = self.working.get('_tool_evidence', {})
+        return [c for c in self.working.get('verify_conditions', [])
+                if not _verify_condition(c, evidence, self._get_abs_path)]
 
     def do_no_tool(self, args, response):
         '''这是一个特殊工具，由引擎自主调用，不要包含在TOOLS_SCHEMA里。
@@ -515,7 +543,12 @@ class GenericAgentHandler(BaseHandler):
                         "并明确是否还需要额外的实际操作。"
                     )
                     return StepOutcome({}, next_prompt=next_prompt)
-                
+
+        if pending := self._unsatisfied_verify_conditions():
+            yield f"[Warn] {len(pending)} verify condition(s) are not satisfied.\n"
+            details = '\n'.join(f"- {c.get('description') or c.get('kind')}" for c in pending)
+            return StepOutcome({}, next_prompt="[VERIFY] Completion blocked by unmet conditions:\n" + details)
+
         if self._in_plan_mode():
             remaining = self._check_plan_completion()
             if remaining == 0:
@@ -577,6 +610,10 @@ class GenericAgentHandler(BaseHandler):
             self.history_info.append('[Agent] ' + summary)
         if not rsumm and tool_calls and tool_calls[0]['tool_name'] != 'no_tool':
             next_prompt += "\n\n\n[TIPS] 必须在回复文本中包含<summary>！\n\n"
+        by_id = {r['tool_use_id']: r['content'] for r in tool_results}
+        evidence = self.working.setdefault('_tool_evidence', {})
+        for call in tool_calls:
+            if call.get('id') in by_id: evidence[call['tool_name']] = by_id[call['id']]
         _plan = self._in_plan_mode()
 
         if turn % 175 == 0 and (not _plan):

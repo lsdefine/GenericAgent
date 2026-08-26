@@ -55,7 +55,10 @@
     "name": "update_working_checkpoint",
     "description": "Short-term working notepad (auto-injected each turn). Call early/mid task only when there is non-obvious state worth keeping. When: (1) after reading SOP — store needs & constraints (skip tasks <5 steps); (2) before subtask switch / context flush; (3) after repeated failures — re-read SOP and store new findings; (4) on new task — replace notepad, drop old progress, keep still-valid constraints.\n\nDon't call: tasks <5 steps, greetings, or when the task is done (use start_long_term_update instead).",
     "parameters": {"type": "object", "properties": {
-      "key_info": {"type": "string", "description": "Replaces current notepad (<200 tokens). Incremental update: review existing, keep valid, add/remove/modify. Store: pitfalls, user requirements, key params/findings, file paths, progress, next steps. Don't store: ephemeral info, obvious context, old task info when user switched tasks. Prefer over-updating over losing key info"}}}
+      "key_info": {"type": "string", "description": "Replaces current notepad (<200 tokens). Incremental update: review existing, keep valid, add/remove/modify. Store: pitfalls, user requirements, key params/findings, file paths, progress, next steps. Don't store: ephemeral info, obvious context, old task info when user switched tasks. Prefer over-updating over losing key info"},
+      "verify_conditions": {"type": "array", "description": "Observable completion conditions to define before execution. Any unmet condition blocks completion. Kinds: file_exists(path), file_contains(path, substring), last_exit_code_zero, tool_result_contains(tool, substring).", "items": {"type": "object", "required": ["kind"], "properties": {
+        "kind": {"type": "string", "enum": ["file_exists", "file_contains", "last_exit_code_zero", "tool_result_contains"]},
+        "description": {"type": "string"}, "path": {"type": "string"}, "tool": {"type": "string"}, "substring": {"type": "string"}}}}}}
   }},
   {"type": "function", "function": {
     "name": "ask_user",

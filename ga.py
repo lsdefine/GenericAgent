@@ -551,9 +551,9 @@ class GenericAgentHandler(BaseHandler):
 
     def do_start_long_term_update(self, args, response):
         '''Agent觉得当前任务完成后有重要信息需要记忆时调用此工具。'''
-        yield "[Info] Start distilling good memory for long-term storage.\n"
         if self.current_turn < 10:
             return StepOutcome('start_long_term_update is only used after completing a long turn task!', next_prompt='\n')
+        yield "[Info] Start distilling good memory for long-term storage.\n"
         self.long_term_update_pending = False
         return self._begin_long_term_update()
 

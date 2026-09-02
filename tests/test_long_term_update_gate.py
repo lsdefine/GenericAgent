@@ -61,7 +61,8 @@ class LongTermUpdateGateTests(unittest.TestCase):
 
     @patch.object(ga, 'file_read', return_value='memory SOP')
     @patch.object(ga, 'get_global_memory', return_value='memory index')
-    def test_threshold_starts_evaluation_once(self, _memory, _read):
+    @patch.object(ga.os.path, 'exists', return_value=True)
+    def test_threshold_starts_evaluation_once(self, _exists, _memory, _read):
         handler = self.handler()
         outcome = self.finish(handler, 15)
         self.assertIn('memory SOP', outcome.next_prompt)
@@ -79,7 +80,8 @@ class LongTermUpdateGateTests(unittest.TestCase):
 
     @patch.object(ga, 'file_read', return_value='memory SOP')
     @patch.object(ga, 'get_global_memory', return_value='memory index')
-    def test_explicit_update_consumes_completion_gate(self, _memory, _read):
+    @patch.object(ga.os.path, 'exists', return_value=True)
+    def test_explicit_update_consumes_completion_gate(self, _exists, _memory, _read):
         handler = self.handler()
         handler.current_turn = 10
         exhaust(handler.do_start_long_term_update({}, SimpleNamespace()))

@@ -4,7 +4,7 @@
 
 目标：把当前电脑准备为可与手机 GA 安全配对和连接的设备。
 
-> 当前仅适配 Windows 系统；macOS 和 Linux 暂不支持本配置流程，发现操作系统不适配时停止配置并提醒用户，并告诉用户后续测试开发完善后会上线。
+> 当前适配 Windows 与 macOS（Apple Silicon 与 Intel）；Linux 暂不支持本配置流程，发现操作系统不适配时停止配置并提醒用户，并告诉用户后续测试开发完善后会上线。
 
 实际配置顺序：
 
@@ -19,7 +19,7 @@
 → 在用户中心配对手机
 ```
 
-SSH 终端与文件访问由 GAnet 网络组件内嵌提供，全程不需要 Windows 管理员权限。
+SSH 终端与文件访问由 GAnet 网络组件内嵌提供，全程不需要 Windows 管理员权限或 macOS 的 sudo。
 
 遇到环境缺失或安装失败，可以向用户说明情况、给出建议并提问，但问题必须是首次配置ganet的新手也能回答的（例如是否同意安装、是否继续、屏幕上是否出现某个提示）；不要询问用户不知道的信息。
 
@@ -29,15 +29,15 @@ SSH 终端与文件访问由 GAnet 网络组件内嵌提供，全程不需要 Wi
 
 GAnet 是独立组件：组件形态是 GAnet 仓库的 git 检出，运行在当前 GA 的 Python 环境上，没有自带 Python 运行时。组件位置由用户决定，可整体移动；唯一位置约束是不把组件内容提交进 GenericAgent 的 Git。
 
-先读取固定定位记录 `~/.genericagent/ganet/component.json`；记录只用于发现组件位置，不是可信或完整性证明。若记录结构有效，则以记录中的组件目录为工作目录、用当前 GA 进程的绝对 `sys.executable` 运行 `<sys.executable> -m ganet inspect-component --json`；只有命令成功，且返回的 `ok` 为 `true`、`layout` 为 `source`、`packageRoot` 和 `launcher` 与实际位置一致时，才复用该组件。定位记录不存在或自检失败时，以同样标准检查默认安装位置 `<GA 根目录>\temp\GAnet\`；不要扫描磁盘，也不要仅凭目录、`ganet.cmd` 或定位记录认定组件有效。两处都没有有效组件时，按新安装处理。`inspect-component` 是只读检查，不会写入定位记录。
+先读取固定定位记录 `~/.genericagent/ganet/component.json`；记录只用于发现组件位置，不是可信或完整性证明。若记录结构有效，则以记录中的组件目录为工作目录、用当前 GA 进程的绝对 `sys.executable` 运行 `<sys.executable> -m ganet inspect-component --json`；只有命令成功，且返回的 `ok` 为 `true`、`layout` 为 `source`、`packageRoot` 和 `launcher` 与实际位置一致时，才复用该组件。定位记录不存在或自检失败时，以同样标准检查默认安装位置 `~/.genericagent/components/GAnet`（Windows 即 `%USERPROFILE%\.genericagent\components\GAnet`）；不要扫描磁盘，也不要仅凭目录、`ganet.cmd` 或定位记录认定组件有效。不要把组件放进 GA 根目录的 `temp\`：该目录会被 GA 的回退机制清空。两处都没有有效组件时，按新安装处理。`inspect-component` 是只读检查，不会写入定位记录。
 
 组件不存在时，用 git 克隆固定公开仓库获取代码：
 
 ```text
-git clone https://github.com/nianyucatfish/GAnet "<GA 根目录>\temp\GAnet"
+git clone https://github.com/nianyucatfish/GAnet "~/.genericagent/components/GAnet"
 ```
 
-也可克隆到用户选择的其他目录。git 不可用时先安装 Git 再继续，不要改用 ZIP 或 raw 文件获取源代码。首次克隆前向用户说明：GAnet 是可选设备互联组件，Python 代码来自上述公开 GitHub 仓库，网络组件二进制后续从 `ganet.gaagent.ai` 下载并经服务器签名清单校验；当前 Windows 发布文件尚未进行 Authenticode 签名。组件代码同样需要更新检查：用户要求配置或修复设备互联而组件已存在时，先在组件目录执行一次 `git pull` 再复用；用户对组件有本地改动时按普通 git 合并处理，不要强制覆盖；拉取失败但当前组件自检通过时，保留当前代码继续，不把网络失败报告为组件损坏。克隆或更新后必须按上段运行 `inspect-component --json` 自检。不要将组件内容加入 GenericAgent Git；若 Windows 应用控制策略阻止运行网络组件，停止并如实报告，不关闭或绕过系统安全策略。
+（Windows 上把 `~` 换成 `%USERPROFILE%`；父目录 `components` 不存在时先创建。）也可克隆到用户选择的其他目录。git 不可用时先安装 Git 再继续，不要改用 ZIP 或 raw 文件获取源代码；macOS 上未安装 Xcode 命令行工具时，`/usr/bin/git` 与 `/usr/bin/python3` 只是会弹出安装对话框的占位程序，不要调用它们——Python 一律用当前 GA 进程的 `sys.executable`，Git 缺失则请用户先安装。首次克隆前向用户说明：GAnet 是可选设备互联组件，Python 代码来自上述公开 GitHub 仓库，网络组件二进制后续从 `ganet.gaagent.ai` 下载并经服务器签名清单校验；当前 Windows 发布文件尚未进行 Authenticode 签名。组件代码同样需要更新检查：用户要求配置或修复设备互联而组件已存在时，先在组件目录执行一次 `git pull` 再复用；用户对组件有本地改动时按普通 git 合并处理，不要强制覆盖；拉取失败但当前组件自检通过时，保留当前代码继续，不把网络失败报告为组件损坏。克隆或更新后必须按上段运行 `inspect-component --json` 自检。不要将组件内容加入 GenericAgent Git；若 Windows 应用控制策略阻止运行网络组件，停止并如实报告，不关闭或绕过系统安全策略。
 
 组件的轻量 Python 依赖安装进当前 GA 解释器，用当前进程的 `<sys.executable> -m pip install "cryptography>=42" "Pillow>=10" "qrcode>=7.4"` 做最小安装；不得调用裸 `pip`、猜测虚拟环境或安装到其他 Python。GA 解释器缺少 `pip` 模块时，先运行 `<sys.executable> -m ensurepip --upgrade` 补齐再安装。
 
@@ -49,7 +49,7 @@ GA 根目录是本 SOP 所在 `memory\` 目录的上一级，按你读取本 SOP
 
 相同环境重复执行应直接通过。若现有记录指向另一套或已经移动的 GA/Python，先向用户说明需要修复，再仅在本次明确修复流程中追加 `--repair`；不要静默替换。命令成功后，绑定的 GA Python 会写入 `~/.genericagent/ganet/ga_python.cmd`；该文件只由本命令生成和更新，不要手工创建或编辑。
 
-打开 GAnet 用户中心：无参数运行 `<组件目录>\ganet.cmd`（用户双击同样有效）。它以绑定的 GA Python 启动仅监听本机回环地址的用户中心，打印访问地址并自动打开系统默认浏览器；该进程前台驻留，由 GA 代为打开时作为独立进程启动，不要在当前会话阻塞等待。日常打开用户中心不要求 GA 正在运行，也不需要再次传入 GA 根目录或 Python；组件整体移动后从新位置启动会刷新自身入口和定位记录，不应改变已保存的 GA/Python。
+打开 GAnet 用户中心：无参数运行 `<组件目录>\ganet.cmd`（macOS 为 `<组件目录>/ganet.sh`，Finder 双击 `ganet.command` 同样有效；绑定的 Python 写在 `~/.genericagent/ganet/ga_python.sh`）。用户双击同样有效。它以绑定的 GA Python 启动仅监听本机回环地址的用户中心，打印访问地址并自动打开系统默认浏览器；该进程前台驻留，由 GA 代为打开时作为独立进程启动，不要在当前会话阻塞等待。日常打开用户中心不要求 GA 正在运行，也不需要再次传入 GA 根目录或 Python；组件整体移动后从新位置启动会刷新自身入口和定位记录，不应改变已保存的 GA/Python。
 
 ## 2. 确认登录并检查环境
 
@@ -94,9 +94,9 @@ component = sidecar_manager.inspect()
 
 GAnet 网络组件提供电脑与手机之间的私有连接，并内嵌 SSH/SFTP 服务提供终端和文件访问。组件准备完成不代表已经完成组网。
 
-### Windows：GAnet 网络组件
+### GAnet 网络组件
 
-网络组件接口位于 `ganet.device_connection.sidecar_manager`。安装、替换和入网是不同阶段：本节只处理组件文件与本机进程；第 4 节才使用正式 GA 登录态让组件加入 GAnet。
+网络组件接口位于 `ganet.device_connection.sidecar_manager`，各平台共用同一套调用；组件文件在 Windows 位于 `%LOCALAPPDATA%\GenericAgent\GAnet\ganet-sidecar.exe`，在 macOS 位于 `~/Library/Application Support/GenericAgent/GAnet/ganet-sidecar`，登录自启动分别是当前用户的注册表 Run 项与 `~/Library/LaunchAgents/ai.gaagent.ganet-sidecar.plist`。安装、替换和入网是不同阶段：本节只处理组件文件与本机进程；第 4 节才使用正式 GA 登录态让组件加入 GAnet。
 
 #### 读取发布列表并选择文件
 
@@ -121,7 +121,7 @@ release = sidecar_manager.select_release(releases)
 }
 ```
 
-条目选择只用 `select_release(releases)`：它按本机实际平台和架构筛选，并返回其中版本最新的一条，没有匹配项时报错。不要自行筛选列表，不得从 SOP、记忆或固定文件名推断版本或架构映射。若发布页不可读但当前组件可用，保留当前组件并继续设备互联，不把版本检查失败报告为连接故障。
+条目选择只用 `select_release(releases)`：它按本机实际平台和架构筛选（macOS 条目的 `platform` 值为 `darwin`，与 Python `platform.system().lower()` 一致），并返回其中版本最新的一条，没有匹配项时报错。不要自行筛选列表，不得从 SOP、记忆或固定文件名推断版本或架构映射。若发布页不可读但当前组件可用，保留当前组件并继续设备互联，不把版本检查失败报告为连接故障。
 
 #### 下载、验证与安装
 
@@ -132,12 +132,12 @@ result = sidecar_manager.install_release(verified)
 ```
 
 - `download_release(release)` 仅下载选定条目到临时目录，返回本地 artifact；不替换已安装组件。
-- `verify_release(artifact, release)` 验证发布签名、SHA-256、PE 文件、平台和架构；任一检查失败立即停止，不返回可安装 artifact。
-- `install_release(verified)` 安装缺失组件，或安全替换已安装组件：停止旧进程、保留可回滚副本、原子替换、恢复当前用户登录启动项并验证二进制版本；已有入网配置时启动组件并确认可响应，首次安装尚未入网时允许保持未运行；失败恢复旧版。
+- `verify_release(artifact, release)` 验证发布签名、SHA-256、可执行文件格式（Windows PE / macOS Mach-O）、平台和架构；任一检查失败立即停止，不返回可安装 artifact。
+- `install_release(verified)` 安装缺失组件，或安全替换已安装组件：停止旧进程、保留可回滚副本、原子替换、恢复当前用户登录启动项并验证二进制版本；已有入网配置时启动组件并确认可响应，首次安装尚未入网时允许保持未运行；失败恢复旧版。macOS 上成功替换后会顺带申请屏幕录制权限，结果在返回值 `screen_access` 中（见第 8 节），不影响安装结论。
 
 安装成功后重新运行第 2 节检查。组件缺失、无法响应或版本 `required` 时，完成本节后才进入第 4 节；版本 `available` 时当前连接仍可用，但用户本次要求配置或修复设备互联则按本节完成替换后再复检。
 
-连通性验证使用系统自带的 OpenSSH Client（`ssh.exe`，Windows 10 及以上默认存在），用于配置完成后的模拟手机连接。
+连通性验证使用系统自带的 OpenSSH Client（Windows 10 及以上的 `ssh.exe`，macOS 自带 `ssh`），用于配置完成后的模拟手机连接。
 
 组件安装完成后，重新运行第 2 节检查。
 
@@ -163,7 +163,7 @@ result = pairing.configure_environment()
 - `needs_login`：当前正式登录态无效，请用户在 GAnet 用户中心登录，登录后重新开始。
 - `needs_approval`：需要配置内嵌 SSH 环境。向用户一句话说明并取得同意后，带 `approved=True` 重新调用；用户不同意则停止并如实说明现状。
 - `blocked`：根据 `stage`、`message` 和环境检查报告失败阶段、真实原因及已经完成的状态，不把本地 SSH 环境失败解释为登录或入网失败。
-- `ok`：进入验收。若基础环境仅有 `available` 版本提示，仍可进入验收；在本轮按第 3 节完成组件替换后再复检。
+- `ok`：进入验收。若基础环境仅有 `available` 版本提示，仍可进入验收；在本轮按第 3 节完成组件替换后再复检。macOS 上返回值还带 `screen_access`（手机远程截图所需的屏幕录制权限，经网络组件的进程链主动申请）：`granted` 为 `false` 时 `message` 会说明电脑上已弹出授权请求，请原样转达用户并请其趁在电脑旁完成——macOS 15 及以上的弹窗只有"打开系统设置"，用户需在屏幕录制列表中打开 `ganet-sidecar` 的开关；若列表里已有一条开着却不生效的 `ganet-sidecar`（早期未签名版本留下的），删掉后由新弹窗重新加入。这不是失败，不需要重试，也不阻塞后续配对；除截图外的工具都不依赖它。
 
 带授权参数的 `configure_environment()` 每轮只调用一次；无参调用只用于探明待授权事项，不作为失败重试手段。若 `blocked` 信息不足或返回状态与上述阶段职责不一致，可读取 `pairing.py` 中的 `configure_environment()` 以及 `network.py` 中对应的 `apply_confirmed()` 或 `enroll()` 定位接口故障；不要用临时脚本或手工命令绕开受管接口修改授权文件或网络组件状态。
 
@@ -200,7 +200,7 @@ from ganet.device_connection import pairing
 result = pairing.remove_environment(approved=True)
 ```
 
-该调用按固定顺序完成全部卸载：注销远端设备记录（未登录或不可达时自动跳过，结果无须向用户展开）、停止常驻 Worker 与 GAnet 网络组件、移除登录自启动、删除配对密钥与配对记录、删除 `%LOCALAPPDATA%\GenericAgent\GAnet` 和 `~/.genericagent/ganet`。不要用手工命令替代或补充这些步骤。
+该调用按固定顺序完成全部卸载：注销远端设备记录（未登录或不可达时自动跳过，结果无须向用户展开）、停止常驻 Worker 与 GAnet 网络组件、移除登录自启动（Windows 注册表 Run 项 / macOS LaunchAgent）、删除配对密钥与配对记录、删除组件数据目录（Windows `%LOCALAPPDATA%\GenericAgent\GAnet`，macOS `~/Library/Application Support/GenericAgent/GAnet`）和 `~/.genericagent/ganet`。不要用手工命令替代或补充这些步骤。macOS 的屏幕录制授权记录不会被卸载删除，如用户在意可提醒其在"系统设置 → 隐私与安全性 → 屏幕录制"中移除。
 
 - `removed`：向用户说明卸载完成，组件代码目录保留、以后可随时重新配置；提醒用户可在手机 GA 的设备列表中删除这台电脑。用户如要求彻底删除，此时可再删除组件代码目录本身。
 - `partial`：按 `message` 与 `steps` 如实报告未完成的本机步骤（常见原因是文件被占用），处理后重新执行同一调用即可，卸载操作可安全重复。

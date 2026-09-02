@@ -66,7 +66,7 @@
   }},
   {"type": "function", "function": {
     "name": "start_long_term_update",
-    "description": "After a long task completes, distill long-term memory. Call when discovering info worth remembering (env facts/user prefs/lessons learned). Skip if memory already updated or in autonomous flow. Must call when a task that took 15+ turns is completed.",
+    "description": "After a long task completes, distill long-term memory. Call when discovering info worth remembering (env facts/user prefs/lessons learned). Skip if memory already updated or in autonomous flow. Must call when a task that took 15 or more turns is completed.",
     "parameters": {"type": "object", "properties": {}}}
   }
 ]

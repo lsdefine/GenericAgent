@@ -160,6 +160,7 @@ class GenericAgent:
             if raw_query is None:
                 self.task_queue.task_done(); continue
             self.is_running = True; self._current_queue = display_queue
+            is_autonomous = raw_query.lstrip().startswith('[AUTO]')
             if len(raw_query) > 2000:
                 task_file = os.path.join(script_dir, 'temp', f'user_prompt_{os.getpid()}_{time.time_ns()}.md')
                 with open(task_file, 'w', encoding='utf-8') as f: f.write(raw_query)
@@ -170,7 +171,9 @@ class GenericAgent:
             self.history.append(f"[USER]: {rquery}")
             sys_prompt = get_system_prompt() + '\n'.join(self.extra_sys_prompts) + getattr(self.llmclient.backend, 'extra_sys_prompt', '')
             if self.peer_hint: sys_prompt += f"\n[Peer] 用户提及其他会话/后台任务状态时: temp/model_responses/ (只找近期修改的文件尾部)\n"
-            handler = GenericAgentHandler(self, self.history, os.path.join(script_dir, 'temp'))
+            long_term_tool_enabled = any(t.get('function', {}).get('name') == 'start_long_term_update' for t in TOOLS_SCHEMA)
+            handler = GenericAgentHandler(self, self.history, os.path.join(script_dir, 'temp'),
+                                          long_term_update_pending=long_term_tool_enabled and not is_autonomous)
             if getattr(self, 'no_print', False): handler.print = lambda *a, **k: None
             if self.handler and 'key_info' in self.handler.working: 
                 ki = re.sub(r'\n\[SYSTEM\] 此为.*?工作记忆[。\n]*', '', self.handler.working['key_info'])  # 去旧

@@ -17,7 +17,7 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 BANNED_TOOLS = (['ask_user', 'start_long_term_update'] if '--no-user-tools' in sys.argv else [])
 def load_tool_schema(suffix=''):
     global TOOLS_SCHEMA
-    TS = open(os.path.join(script_dir, f'assets/tools_schema{suffix}.json'), 'r', encoding='utf-8').read()
+    with open(os.path.join(script_dir, f'assets/tools_schema{suffix}.json'), 'r', encoding='utf-8') as f: TS = f.read()
     TOOLS_SCHEMA = json.loads(TS if os.name == 'nt' else TS.replace('powershell', 'bash'))
     TOOLS_SCHEMA = [t for t in TOOLS_SCHEMA if t.get('function', {}).get('name') not in BANNED_TOOLS]
 load_tool_schema()
@@ -26,11 +26,14 @@ lang_suffix = '_en' if os.environ.get('GA_LANG', '') == 'en' else ''
 mem_dir = os.path.join(script_dir, 'memory')
 if not os.path.exists(mem_dir): os.makedirs(mem_dir)
 mem_txt = os.path.join(mem_dir, 'global_mem.txt')
-if not os.path.exists(mem_txt): open(mem_txt, 'w', encoding='utf-8').write('# [Global Memory - L2]\n')
+if not os.path.exists(mem_txt):
+    with open(mem_txt, 'w', encoding='utf-8') as f: f.write('# [Global Memory - L2]\n')
 mem_insight = os.path.join(mem_dir, 'global_mem_insight.txt')
 if not os.path.exists(mem_insight):
     t = os.path.join(script_dir, f'assets/global_mem_insight_template{lang_suffix}.txt')
-    open(mem_insight, 'w', encoding='utf-8').write(open(t, encoding='utf-8').read() if os.path.exists(t) else '')
+    with open(mem_insight, 'w', encoding='utf-8') as fw:
+        if os.path.exists(t):
+            with open(t, encoding='utf-8') as fr: fw.write(fr.read())
 
 def get_system_prompt():
     with open(os.path.join(script_dir, f'assets/sys_prompt{lang_suffix}.txt'), 'r', encoding='utf-8') as f: prompt = f.read()
@@ -110,11 +113,14 @@ class GenericAgent:
     def get_ctx_multiplier(self): return getattr(self.llmclient.backend, 'maxlen_multiplier', 1.0)
 
     def abort(self):
-        if not self.is_running: return
-        print('Abort current task...')
-        self.stop_sig = True
-        if self.handler is not None: self.handler.code_stop_signal.append(1)
-        for sess in getattr(self.llmclient.backend, '_sessions', [self.llmclient.backend]):
+        with self.lock:
+            if not self.is_running: return
+            print('Abort current task...')
+            self.stop_sig = True
+            handler = self.handler
+            client = self.llmclient
+        if handler is not None: handler.code_stop_signal.append(1)
+        for sess in getattr(client.backend, '_sessions', [client.backend]):
             sess.should_stop = lambda: self.stop_sig  # live read; cleared by run()'s finally
             try:  # wake a recv() blocked in another thread. Verified on Windows: shutdown()/close() do NOT
                   # wake it (makefile refcount defers real closesocket); _real_close() does -> ChunkedEncodingError
@@ -141,7 +147,8 @@ class GenericAgent:
         if _sm := re.match(r'/session\.(\w+)=(.*)', raw_query.strip()):
             k, v = _sm.group(1), _sm.group(2)
             vfile = os.path.join(script_dir, 'temp', v)
-            if os.path.isfile(vfile): v = open(vfile, encoding='utf-8').read().strip()
+            if os.path.isfile(vfile):
+                with open(vfile, encoding='utf-8') as vf: v = vf.read().strip()
             try: v = json.loads(v)  # cover number parsing
             except (json.JSONDecodeError, ValueError): pass
             setattr(self.llmclient.backend, k, v)
@@ -159,7 +166,9 @@ class GenericAgent:
             raw_query = self._handle_slash_cmd(raw_query, display_queue)
             if raw_query is None:
                 self.task_queue.task_done(); continue
-            self.is_running = True; self._current_queue = display_queue
+            with self.lock:
+                self.is_running = True
+                self._current_queue = display_queue
             if len(raw_query) > 2000:
                 task_file = os.path.join(script_dir, 'temp', f'user_prompt_{os.getpid()}_{time.time_ns()}.md')
                 with open(task_file, 'w', encoding='utf-8') as f: f.write(raw_query)
@@ -205,8 +214,9 @@ class GenericAgent:
                 print(f"Backend Error: {format_error(e)}")
                 display_queue.put({'done': full_resp + f'\n```\n{format_error(e)}\n```', 'source': source, 'turn': curr_turn, 'outputs': turn_resps.copy()})
             finally:
-                if self.stop_sig: print('User aborted the task.')
-                self.is_running = self.stop_sig = False  # keep _current_queue: its final 'done' may still be unclaimed (refreshed UI salvages it); next task overwrites it
+                with self.lock:
+                    if self.stop_sig: print('User aborted the task.')
+                    self.is_running = self.stop_sig = False  # keep _current_queue: its final 'done' may still be unclaimed (refreshed UI salvages it); next task overwrites it
                 self.task_queue.task_done()
                 if self.handler is not None: self.handler.code_stop_signal.append(1)
 
@@ -260,7 +270,8 @@ if __name__ == '__main__':
     elif args.func:
         infile = args.func; outfile = os.path.splitext(args.func)[0] + '.out.txt'
 
-    if histfile and os.path.isfile(histfile): agent.llmclient.backend.history = json.loads(open(histfile, encoding='utf-8').read())
+    if histfile and os.path.isfile(histfile):
+        with open(histfile, encoding='utf-8') as f: agent.llmclient.backend.history = json.loads(f.read())
 
     if args.func or args.task:
         agent.peer_hint = False
@@ -317,7 +328,8 @@ if __name__ == '__main__':
                     print(f'[Reflect] drain error: {e}'); result = f'[ERROR] {e}'
                 log_dir = os.path.join(script_dir, 'temp/reflect_logs'); os.makedirs(log_dir, exist_ok=True)
                 script_name = os.path.splitext(os.path.basename(args.reflect))[0]
-                open(os.path.join(log_dir, f'{script_name}_{datetime.now():%Y-%m-%d}.log'), 'a', encoding='utf-8').write(f'[{datetime.now():%m-%d %H:%M}]\n{result}\n\n')
+                with open(os.path.join(log_dir, f'{script_name}_{datetime.now():%Y-%m-%d}.log'), 'a', encoding='utf-8') as lf:
+                    lf.write(f'[{datetime.now():%m-%d %H:%M}]\n{result}\n\n')
                 if (on_done := getattr(mod, 'on_done', None)):
                     try: on_done(result)
                     except Exception as e: print(f'[Reflect] on_done error: {e}')

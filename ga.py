@@ -279,10 +279,13 @@ def consume_file(dr, file):
 
 class GenericAgentHandler(BaseHandler):
     '''Generic Agent 工具库，包含多种工具的实现。工具函数自动加上了 do_ 前缀。实际工具名没有前缀。'''
-    def __init__(self, parent, last_history=None, cwd='./temp'):
+    LONG_TERM_UPDATE_MIN_TURN = 15
+
+    def __init__(self, parent, last_history=None, cwd='./temp', long_term_update_pending=True):
         self.parent = parent
         self.working = {}
         self.cwd = cwd;  self.current_turn = 0
+        self.long_term_update_pending = long_term_update_pending
         self.history_info = last_history if last_history else []
         self.code_stop_signal = []
         self._done_hooks = []
@@ -520,12 +523,18 @@ class GenericAgentHandler(BaseHandler):
             remaining = self._check_plan_completion()
             if remaining == 0:
                 self._exit_plan_mode(); yield "[Info] Plan完成：plan.md中0个[ ]残留，退出plan模式。\n"
+
+        if (self.current_turn >= self.LONG_TERM_UPDATE_MIN_TURN
+                and self.long_term_update_pending):
+            self.long_term_update_pending = False
+            yield "[Info] Auto-calling start_long_term_update before exit.\n"
+            outcome = yield from self.do_start_long_term_update({}, response)
+            return StepOutcome(None, next_prompt=f'{outcome.data}\n{outcome.next_prompt}')
         
         #yield "[Info] Final response to user.\n"
         return StepOutcome(response, next_prompt=None)
-    
-    def do_start_long_term_update(self, args, response):
-        '''Agent觉得当前任务完成后有重要信息需要记忆时调用此工具。'''
+
+    def _begin_long_term_update(self):
         prompt = '''### [总结提炼经验] 既然你觉得当前任务有重要信息需要记忆，请提取最近一次任务中【事实验证成功且长期有效】的环境事实、用户偏好、重要步骤，更新记忆。
 本工具是标记开启结算过程，若已在更新记忆过程或没有值得记忆的点，忽略本次调用。
 **如果没有经验证的，未来能用上的信息，忽略本次调用！**
@@ -535,12 +544,18 @@ class GenericAgentHandler(BaseHandler):
 **禁止**：临时变量、具体推理过程、未验证信息、通用常识、你可以轻松复现的细节、只是做了但没有验证的信息
 **操作**：严格遵循提供的L0的记忆更新SOP。先 `file_read` 看现有 → 判断类型 → 最小化更新 → 无新内容跳过，保证对记忆库最小局部修改。\n
 ''' + get_global_memory()
-        yield "[Info] Start distilling good memory for long-term storage.\n"
         path = './memory/memory_management_sop.md'
         if os.path.exists(path): result = 'This is L0:\n' + file_read(path, show_linenos=False)
         else: result = "Memory Management SOP not found. Do not update memory."
-        if self.current_turn < 10: result, prompt = 'start_long_term_update is only used after completing a long turn task!', '\n'
         return StepOutcome(result, next_prompt=prompt)
+
+    def do_start_long_term_update(self, args, response):
+        '''Agent觉得当前任务完成后有重要信息需要记忆时调用此工具。'''
+        if self.current_turn < 10:
+            return StepOutcome('start_long_term_update is only used after completing a long turn task!', next_prompt='\n')
+        yield "[Info] Start distilling good memory for long-term storage.\n"
+        self.long_term_update_pending = False
+        return self._begin_long_term_update()
 
     def _fold_earlier(self, lines):
         FALLBACK = '直接回答了用户问题'

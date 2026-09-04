@@ -3424,6 +3424,11 @@ def render_sidebar(sessions: dict[int, AgentSession], current_id: Optional[int])
 
 
 # ---------- App ----------
+# Textual 8.2.6 renamed _select_start to _select_state (SelectState.start.container).
+def _select_origin_widget(screen: Any) -> Any:
+    if (state := getattr(screen, "_select_state", None)) is not None:
+        return start.container if (start := getattr(state, "start", None)) is not None else None
+    return legacy[0] if (legacy := getattr(screen, "_select_start", None)) is not None else None
 
 
 class HelpScreen(ModalScreen):
@@ -3757,13 +3762,7 @@ class GenericAgentTUI(App[None]):
             scroll_lines = app.SELECT_AUTO_SCROLL_LINES
 
             candidates = [select_widget]
-            # Textual 8.2.6 renamed _select_start to _select_state (SelectState.start.container).
-            select_state = getattr(screen, "_select_state", None)
-            if select_state is not None:
-                sw = select_state.start.container
-            else:
-                ss = getattr(screen, "_select_start", None)
-                sw = ss[0] if ss is not None else None
+            sw = _select_origin_widget(screen)
             if sw is not None and sw is not select_widget:
                 candidates.append(sw)
 

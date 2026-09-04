@@ -99,13 +99,57 @@ print = safeprint
 
 STATS = {}
 
+# Default chars-per-token heuristic for the legacy `context_win * 3` rule.
+# Kept as a named module constant so a future model-aware estimator only has
+# to swap the value here (or override per-session via
+# `sess.token_chars_per_token` / `sess.token_estimator`). `trim_messages_history`
+# still uses this as a char-equivalent multiplier — the trim gate is char-based
+# to keep behaviour byte-identical with the previous implementation.
+DEFAULT_CHARS_PER_TOKEN = 3
+
+def estimate_context_tokens(history, sess=None):
+    """Estimate `history`'s "tokens" for debug / diagnostics, *not* the trim gate.
+
+    This is a pure function of `(history, sess)` that returns an int token
+    estimate. It is **not** the trigger that fires `trim_messages_history`
+    (the trigger is still `cost(history) > context_win * 3` chars) — the
+    estimator exists so we can:
+
+      1. Stop burying the heuristic inside `trim_messages_history`. Issue
+         #750: `3 chars/token` is wrong for CJK/code/JSON; today there is no
+         single place to swap it.
+      2. Surface the estimate alongside the real `input_tokens` recorded by
+         `_record_usage()` so future debugging can compare them.
+      3. Give sessions a clean override entry (`sess.token_estimator` callable
+         OR `sess.token_chars_per_token` float) without leaking provider-
+         specific knobs into the trim path.
+
+    Default behaviour (v1, byte-identical with the prior code):
+      `int(sum(len(json.dumps(m, ensure_ascii=False)) for m in history) / 3)`
+    i.e. the same `cost() / 3` the prior code used implicitly for its log.
+    `sess` may be None — used by unit tests and by callers that have no
+    session object handy yet.
+    """
+    estimator = getattr(sess, 'token_estimator', None) if sess is not None else None
+    if estimator is not None:
+        try: return max(0, int(estimator(history) or 0))
+        except Exception: pass                                       # never let an override crash the trim path
+    cpt = getattr(sess, 'token_chars_per_token', DEFAULT_CHARS_PER_TOKEN) if sess is not None else DEFAULT_CHARS_PER_TOKEN
+    try: cpt = float(cpt)
+    except (TypeError, ValueError): cpt = DEFAULT_CHARS_PER_TOKEN
+    if cpt <= 0: cpt = DEFAULT_CHARS_PER_TOKEN                       # guard against a misconfigured zero / negative divisor
+    base = sum(len(json.dumps(m, ensure_ascii=False)) for m in history)
+    return int(base / cpt)
+
 def trim_messages_history(history, sess):
-    cap = sess.context_win * 3
+    cap = sess.context_win * DEFAULT_CHARS_PER_TOKEN
     target = int(cap * getattr(sess, 'trim_keep_rate', 0.6))
     kp = sess.trim_keep_prefix
     def cost(ms): return sum(len(json.dumps(m, ensure_ascii=False)) for m in ms)
     compress_history_tags(history, interval=getattr(sess, 'cut_msg_interval', 7))
-    STATS.update(ctx=(c := cost(history)), msgs=len(history)); print(f'[Debug] Current context: {c} chars, {len(history)} messages.')
+    c = cost(history)
+    STATS.update(ctx=c, tokens_est=estimate_context_tokens(history, sess), msgs=len(history))
+    print(f'[Debug] Current context: {c} chars (~{STATS["tokens_est"]} tokens est), {len(history)} messages.')
     if c <= cap: return
     compress_history_tags(history, keep_recent=4, force=True)
     if cost(history) <= target: return
@@ -123,7 +167,9 @@ def trim_messages_history(history, sess):
         gap = [{"role": "assistant", "content": _d()}] if m.get('role') == 'user' else [{"role": "user", "content": _d()}, {"role": "assistant", "content": _d()}]
         history[:] = pre + gap + post
     else: history[:] = pre + post
-    STATS.update(ctx=(c := cost(history)), msgs=len(history)); print(f'[Debug] Trimmed context, current: {c} chars, {len(history)} messages.')
+    c = cost(history)
+    STATS.update(ctx=c, tokens_est=estimate_context_tokens(history, sess), msgs=len(history))
+    print(f'[Debug] Trimmed context, current: {c} chars (~{STATS["tokens_est"]} tokens est), {len(history)} messages.')
 
 def auto_make_url(base, path):
     b, p = base.rstrip('/'), path.strip('/')

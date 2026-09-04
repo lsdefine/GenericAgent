@@ -261,6 +261,49 @@ def _preview_from_file(path):
     lu = _last_user(tail_s) or _last_user(head.decode('utf-8', errors='replace'))
     if lu:
         return ' '.join(lu.split())[:120]
+    scanned = _preview_from_scan(path, sz)
+    if scanned:
+        return scanned
+    return ''
+
+
+def _first_real_user(text):
+    """First typed user prompt in `text`, skipping tool_result continuations."""
+    for label, body in _BLOCK_RE.findall(text or ''):
+        if label == 'Prompt':
+            t = _user_text(body)
+            if t:
+                return t
+    return ''
+
+
+def _preview_from_scan(path, sz):
+    """Find a user prompt that sits between the 32KB head and tail windows.
+
+    Long tool-heavy sessions often park the first real user text past the head
+    window, with no <summary> in the tail either. list_sessions() then drops
+    the log. Scan extra windows up to _GREP_WIN only when head+tail missed.
+    """
+    if sz <= _PREVIEW_WIN * 2:
+        return ''
+    limit = min(sz, _GREP_WIN)
+    try:
+        with open(path, 'rb') as fh:
+            offset = 0
+            carry = b''
+            while offset < limit:
+                fh.seek(offset)
+                chunk = fh.read(_PREVIEW_WIN)
+                if not chunk:
+                    break
+                text = (carry + chunk).decode('utf-8', errors='replace')
+                t = _first_real_user(text)
+                if t:
+                    return ' '.join(t.split())[:120]
+                carry = chunk[-4096:]
+                offset += len(chunk)
+    except OSError:
+        return ''
     return ''
 
 

@@ -32,6 +32,8 @@ def launch_frontend(cmd_parts, args=None):
     # 插入额外参数
     if args:
         full_cmd.extend(args)
+    if full_cmd and full_cmd[0] == "python":
+        full_cmd[0] = sys.executable
 
     print(f"🚀 {' '.join(full_cmd)}")
     sys.stdout.flush()

@@ -67,8 +67,22 @@ def agent_runner_loop(client, system_prompt, user_input, handler, tools_schema,
         _hook('llm_after', locals())
 
         if not response.tool_calls: tool_calls = [{'tool_name': 'no_tool', 'args': {}}]
-        else: tool_calls = [{'tool_name': tc.function.name, 'args': json.loads(tc.function.arguments), 'id': tc.id}
-                          for tc in response.tool_calls]
+        else:
+            tool_calls = []
+            for tc in response.tool_calls:
+                raw = tc.function.arguments
+                try:
+                    args = json.loads(raw)
+                    if not isinstance(args, dict):
+                        raise TypeError("tool arguments must be a JSON object")
+                except (json.JSONDecodeError, TypeError):
+                    raw_text = raw if isinstance(raw, str) else str(raw)
+                    raw_len = len(raw_text)
+                    raw_preview = raw_text[:800]
+                    if raw_len > len(raw_preview): raw_preview += f"... [truncated, total={raw_len} chars]"
+                    tool_calls.append({'tool_name': 'bad_json', 'args': {'msg': f"Tool {tc.function.name} arguments are invalid JSON or are not a JSON object: {raw_preview!r}. Retry with a valid JSON object."}, 'id': tc.id})
+                    continue
+                tool_calls.append({'tool_name': tc.function.name, 'args': args, 'id': tc.id})
        
         tool_results = []; next_prompts = set(); exit_reason = {}
         for ii, tc in enumerate(tool_calls):

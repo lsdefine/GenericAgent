@@ -24,6 +24,7 @@ class BaseHandler:
             _hook('tool_after', locals())
             return ret
         elif tool_name == 'bad_json': return StepOutcome(None, next_prompt=args.get('msg', 'bad_json'), should_exit=False)
+        elif tool_name == 'no_tool': return StepOutcome(response.content, next_prompt=None, should_exit=False)
         else:
             yield f"未知工具: {tool_name}\n"
             return StepOutcome(None, next_prompt=f"未知工具 {tool_name}", should_exit=False)

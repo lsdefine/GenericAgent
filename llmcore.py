@@ -131,11 +131,14 @@ def auto_make_url(base, path):
     if b.endswith(p): return b
     return f"{b}/{p}" if re.search(r'/v\d+(/|$)', b) else f"{b}/v1/{p}"
 
+class LLMError(str):
+    """Internal diagnostic chunk, never inferred from model-generated text."""
+
 def _parse_claude_json(data):
     if data.get("stop_reason") == "refusal":
-        err = "[Error: Claude refusal]"
+        err = LLMError("[Error: Claude refusal]")
         yield err
-        return [{"type": "text", "text": err}]
+        return [{"type": "text", "text": err, "error": str(err)}]
     content_blocks = data.get("content", [])
     _record_usage(data.get("usage", {}), "messages")
     for b in content_blocks:
@@ -205,11 +208,11 @@ def _parse_claude_sse(resp_lines):
             err = evt.get("error", {})
             emsg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
             _raise_if_retryable_overload(emsg)  # 走 _stream_with_retry，避免落到 ga 应用层
-            warn = f"\n\n!!!Error: SSE {emsg}"; break
+            warn = LLMError(f"\n\n!!!Error: SSE {emsg}"); break
     if not warn:
-        if not got_message_stop and not stop_reason: warn = "\n\n[!!! 流异常中断，未收到完整响应 !!!]"
-        elif stop_reason == "max_tokens": warn = "\n\n[!!! Response truncated: max_tokens !!!]"
-        elif stop_reason == "refusal": warn = "\n\n[Error: Claude refusal]"
+        if not got_message_stop and not stop_reason: warn = LLMError("\n\n[!!! 流异常中断，未收到完整响应 !!!]")
+        elif stop_reason == "max_tokens": warn = LLMError("\n\n[!!! Response truncated: max_tokens !!!]")
+        elif stop_reason == "refusal": warn = LLMError("\n\n[Error: Claude refusal]")
     if current_block:
         if current_block["type"] == "tool_use":
             try: current_block["input"] = json.loads(tool_json_buf) if tool_json_buf else {}
@@ -281,7 +284,7 @@ def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
                 err = evt.get("error", {})
                 emsg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
                 _raise_if_retryable_overload(emsg)
-                if emsg: content_text += f"!!!Error: {emsg}"; yield f"!!!Error: {emsg}"
+                if emsg: content_text += f"!!!Error: {emsg}"; yield LLMError(f"!!!Error: {emsg}")
                 break
             elif etype == "response.completed":
                 usage = evt.get("response", {}).get("usage", {})
@@ -303,7 +306,7 @@ def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
                 err = ((evt.get("response") or {}).get("error") or {})
                 emsg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
                 _raise_if_retryable_overload(emsg)
-                if emsg: content_text += f"!!!Error: {emsg}"; yield f"!!!Error: {emsg}"
+                if emsg: content_text += f"!!!Error: {emsg}"; yield LLMError(f"!!!Error: {emsg}")
                 break
         blocks = []
         if reasoning_text: blocks.append({"type": "thinking", "thinking": reasoning_text})
@@ -404,7 +407,7 @@ def _parse_openai_json(data, api_mode="chat_completions"):
             err = data.get("error") or {}
             emsg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
             _raise_if_retryable_overload(emsg)
-            if emsg: blocks.append({"type": "text", "text": f"!!!Error: {emsg}"}); yield f"!!!Error: {emsg}"
+            if emsg: blocks.append({"type": "text", "text": f"!!!Error: {emsg}"}); yield LLMError(f"!!!Error: {emsg}")
         elif status == "incomplete" and not any(b.get("type") == "text" for b in blocks):
             reason = ((data.get("incomplete_details") or {}).get("reason", "")) or "unknown"
             marker = f"[!!! output truncated: {reason}]"
@@ -455,7 +458,7 @@ def _stream_with_retry(sess, url, headers, payload, parse_fn):
         return _stopped()
     for attempt in range(sess.max_retries + 1):
         if _stopped(): return []
-        streamed = False
+        streamed = False; error = None
         STATS.update(t_start=time.time(), t_ttft=None)
         if not sess.stream: STATS['t_ttft'] = STATS['t_start']
         try:
@@ -471,8 +474,8 @@ def _stream_with_retry(sess, url, headers, payload, parse_fn):
                         continue
                     try: body = r.text.strip()[:500]
                     except: body = ""
-                    err = f"!!!Error: HTTP {r.status_code}" + (f" (retry-after > {cap:.0f}s)" if d is None and r.status_code in _RETRYABLE and attempt < sess.max_retries else "") + (f": {body}" if body else "")
-                    yield err; return [{"type": "text", "text": err}]
+                    err = LLMError(f"!!!Error: HTTP {r.status_code}" + (f" (retry-after > {cap:.0f}s)" if d is None and r.status_code in _RETRYABLE and attempt < sess.max_retries else "") + (f": {body}" if body else ""))
+                    yield err; return [{"type": "text", "text": err, "error": str(err)}]
                 gen = parse_fn(r)
                 try:
                     while True:
@@ -480,24 +483,27 @@ def _stream_with_retry(sess, url, headers, payload, parse_fn):
                             STATS['t_end'] = time.time(); return []
                         chunk = next(gen)
                         if chunk and STATS.get('t_ttft') is None: STATS['t_ttft'] = time.time()
+                        if isinstance(chunk, LLMError): error = str(chunk)
                         streamed = True; yield chunk
                 except StopIteration as e:
                     if not e.value and not streamed: raise requests.ConnectionError("empty response")
                     STATS['t_end'] = time.time()
                     STATS['tps'] = STATS.get('out', 0) / max(1e-9, STATS['t_end'] - max(STATS['t_ttft'] or 0, STATS['t_start']))
-                    return e.value or []
+                    blocks = e.value or []
+                    if error: blocks.append({"type": "text", "text": "", "error": error})
+                    return blocks
         except (requests.Timeout, requests.ConnectionError, requests.exceptions.ChunkedEncodingError) as e:
-            err = f"!!!Error: {type(e).__name__}: {e}" if str(e) else f"!!!Error: {type(e).__name__}"
+            err = LLMError(f"!!!Error: {type(e).__name__}: {e}" if str(e) else f"!!!Error: {type(e).__name__}")
             if getattr(sess, 'should_stop', None) and sess.should_stop(): return []
             if attempt < sess.max_retries:
                 d = _delay(None, attempt)
                 print(f"[LLM Retry] {type(e).__name__}, retry in {d:.1f}s ({attempt+1}/{sess.max_retries+1})")
                 if _sleep(d): return []
                 continue
-            yield err; return [{"type": "text", "text": err}]
+            yield err; return [{"type": "text", "text": err, "error": str(err)}]
         except Exception as e:
-            err = f"\n\n[!!! 流异常中断 {type(e).__name__}: {e} !!!]" if streamed else f"!!!Error: {type(e).__name__}: {e}"
-            yield err; return [{"type": "text", "text": err}]
+            err = LLMError(f"\n\n[!!! 流异常中断 {type(e).__name__}: {e} !!!]" if streamed else f"!!!Error: {type(e).__name__}: {e}")
+            yield err; return [{"type": "text", "text": err, "error": str(err)}]
 
 def _openai_stream(sess, messages):
     model, api_mode = sess.model, sess.api_mode
@@ -681,17 +687,20 @@ class BaseSession:
                 self.history.append({"role": "user", "content": [{"type": "text", "text": prompt}]})
                 trim_messages_history(self.history, self)
                 messages = self.make_messages(self.history)
-            content_blocks = None; content = ''
+            content_blocks = None; content = ''; error = None
             gen = self.raw_ask(messages)
             try:
-                while True: chunk = next(gen); content += chunk; yield chunk
+                while True:
+                    chunk = next(gen)
+                    if isinstance(chunk, LLMError): error = str(chunk)
+                    content += chunk; yield chunk
             except StopIteration as e: content_blocks = e.value or []
             if len(content_blocks) > 1: print(f"[DEBUG BaseSession.ask] content_blocks: {content_blocks}")
             for block in (content_blocks or []):
                 if block.get('type', '') == 'tool_use':
                     tu = {'name': block.get('name', ''), 'arguments': block.get('input', {})}
                     yield f'<tool_use>{json.dumps(tu, ensure_ascii=False)}</tool_use>'
-            if content.strip() and not content.startswith("!!!Error:"): self.history.append({"role": "assistant", "content": [{"type": "text", "text": content}]})
+            if content.strip() and not error: self.history.append({"role": "assistant", "content": [{"type": "text", "text": content}]})
         return _ask_gen()
 
 def _keep_claude_block(b): return not isinstance(b, dict) or b.get("type") != "thinking" or b.get("signature")
@@ -839,12 +848,16 @@ class NativeClaudeSession(BaseSession):
             while True: yield next(gen)
         except StopIteration as e: content_blocks = e.value or []
         if content_blocks and (_injected := _ensure_text_block(content_blocks)): yield _injected
-        if content_blocks and not (len(content_blocks) == 1 and content_blocks[0].get("text", "").startswith("!!!Error:")):
+        error = next((b["error"] for b in content_blocks if b.get("error")), None)
+        if content_blocks and not error:
             history_blocks = content_blocks
             if self.omit_thinking: history_blocks = [b for b in content_blocks if b.get("type") != "thinking"]
             self.history.append({"role": "assistant", "content": history_blocks})
         text_parts = [b["text"] for b in content_blocks if b.get("type") == "text"]
         content = "\n".join(text_parts).strip()
+        if error:
+            raw = "[" + ",\n".join(repr(b) for b in content_blocks) + "]"
+            return MockResponse("", content, [], raw, error=error)
         tool_calls = [MockToolCall(b["name"], b.get("input", {}), id=b.get("id", "")) for b in content_blocks if b.get("type") == "tool_use"]
         if not tool_calls: tool_calls, content = _parse_text_tool_calls(content)
         thinking_parts = [b["thinking"] for b in content_blocks if b.get("type") == "thinking"]
@@ -856,7 +869,7 @@ class NativeClaudeSession(BaseSession):
                 thinking = think_match.group(1).strip()
                 content = re.sub(think_pattern, "", content, flags=re.DOTALL)
         raw = "[" + ",\n".join(repr(b) for b in content_blocks) + "]"
-        return MockResponse(thinking, content, tool_calls, raw)
+        return MockResponse(thinking, content, [] if error else tool_calls, raw, error=error)
 
 class NativeOAISession(NativeClaudeSession):
     native_ua = "codex_exec/0.139.0 (Windows 10.0.26200; x86_64) unknown (codex_exec; 0.139.0)"
@@ -884,7 +897,8 @@ class MockToolCall:
         self.function = MockFunction(name, arg_str); self.id = id
 
 class MockResponse:
-    def __init__(self, thinking, content, tool_calls, raw, stop_reason='end_turn'):
+    def __init__(self, thinking, content, tool_calls, raw, stop_reason='end_turn', error=None):
+        self.error = error
         self.thinking = thinking; self.content = content          
         self.tool_calls = tool_calls; self.raw = raw
         self.stop_reason = 'tool_use' if tool_calls else stop_reason
@@ -914,10 +928,12 @@ class ToolClient:
         print("Full prompt length:", len(full_prompt), 'chars')
         gen = self.backend.ask(full_prompt)
         _write_llm_log('Prompt', full_prompt, self.log_path)
-        raw_text = ''
+        raw_text = ''; error = None
         for chunk in gen:
+            if isinstance(chunk, LLMError): error = str(chunk)
             raw_text += chunk; yield chunk
         _write_llm_log('Response', raw_text, self.log_path, model=self.backend.model)
+        if error: return MockResponse("", raw_text, [], raw_text, error=error)
         return self._parse_mixed_response(raw_text)
 
     def _prepare_tool_instruction(self, tools):
@@ -1119,7 +1135,7 @@ class MixinSession:
         return messages if self._native else session.make_messages(messages)
     def raw_ask(self, messages):
         base, n = self._pick(), len(self._sessions)
-        test_error = lambda x: isinstance(x, str) and x.lstrip().startswith(('!!!Error:', '[Error:'))
+        test_error = lambda x: isinstance(x, LLMError)
         for attempt in range(self._retries + 1):
             idx = (base + attempt) % n
             session = self._sessions[idx]
@@ -1132,10 +1148,10 @@ class MixinSession:
                     if not yielded and test_error(chunk): continue
                     yield chunk; yielded = True
             except StopIteration as e: return_val = e.value or []
-            is_err = test_error(last_chunk)
+            is_err = test_error(last_chunk) and not yielded
             if not is_err:
                 if attempt > 0: self._cur_idx = idx; self._switched_at = time.time()
-                elif isinstance(last_chunk, str) and '[!!! 流异常中断' in last_chunk and n > 1:
+                elif test_error(last_chunk) and n > 1:
                     self._cur_idx = (idx + 1) % n; self._switched_at = time.time()
                     print(f'[MixinSession] Partial failure, next call → s{self._cur_idx} ({self.current.name})')
                 return return_val

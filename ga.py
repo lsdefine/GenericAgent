@@ -132,6 +132,8 @@ def web_scan(tabs_only=False, switch_tab_id=None, text_only=False, maxlen=35000)
             sess['url'] = sess.get('url', '')[:50] + ("..." if len(sess.get('url', '')) > 50 else "")
             tabs.append(sess)
         if switch_tab_id: driver.default_session_id = switch_tab_id
+        for sess in tabs:
+            sess['active'] = str(sess.get('id')) == str(driver.default_session_id)
         result = {
             "status": "success",
             "metadata": {

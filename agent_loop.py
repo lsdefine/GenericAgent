@@ -67,8 +67,14 @@ def agent_runner_loop(client, system_prompt, user_input, handler, tools_schema,
         _hook('llm_after', locals())
 
         if not response.tool_calls: tool_calls = [{'tool_name': 'no_tool', 'args': {}}]
-        else: tool_calls = [{'tool_name': tc.function.name, 'args': json.loads(tc.function.arguments), 'id': tc.id}
-                          for tc in response.tool_calls]
+        else:
+            tool_calls = []
+            for tc in response.tool_calls:
+                try: args = json.loads(tc.function.arguments)
+                except (json.JSONDecodeError, TypeError):
+                    args = {'_raw': tc.function.arguments}
+                    yield f"⚠️ Tool '{tc.function.name}' args parse failed, raw={repr(tc.function.arguments)[:200]}\n"
+                tool_calls.append({'tool_name': tc.function.name, 'args': args, 'id': tc.id})
        
         tool_results = []; next_prompts = set(); exit_reason = {}
         for ii, tc in enumerate(tool_calls):

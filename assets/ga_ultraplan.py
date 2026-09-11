@@ -1,3 +1,5 @@
+import secrets
+import hmac
 from contextlib import contextmanager, redirect_stdout, redirect_stderr
 from concurrent.futures import ThreadPoolExecutor
 from time import time, sleep
@@ -8,6 +10,11 @@ __all__ = ["plan", "phase", "parallel", "mapchain"]
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _PORT = int(os.environ.get("GA_ULTRAPLAN_PORT", "47831"))
+_AUTH_TOKEN = os.environ.get("GA_ULTRAPLAN_TOKEN", secrets.token_urlsafe(32))
+# SECURITY: Log token on startup for first-time setup
+if "GA_ULTRAPLAN_TOKEN" not in os.environ:
+    print(f"[SECURITY] No GA_ULTRAPLAN_TOKEN set. Generated token: {_AUTH_TOKEN}")
+    print(f"[SECURITY] Set GA_ULTRAPLAN_TOKEN env var to authenticate requests.")
 _T0 = time(); _phases = []; _phase_stack = []; _tasks = []; _current = "idle"; _events = []; _srv = None; _last = time(); _lock = threading.Lock(); _exec_lock = threading.Lock()
 _TASK_SLUG = "task"; _FUNC_SEQ = 0; _PLANNED = False; _SESSION = None; _sessions = {}
 _RUN_DIR = os.path.abspath(os.environ.get("GA_ULTRAPLAN_RUNDIR", os.path.join(_ROOT, "temp", "ultraplan_default")))
@@ -71,6 +78,11 @@ class _H(BaseHTTPRequestHandler):
     def do_POST(self):
         global _TASK_SLUG, _PLANNED
         if self.path != "/exec": self.send_response(404); self.end_headers(); return
+        # SECURITY: Require authentication token
+        auth = self.headers.get("Authorization", "")
+        if not auth.startswith("Bearer ") or not hmac.compare_digest(auth[7:], _AUTH_TOKEN):
+            self.send_response(401); self.send_header("Content-Type", "application/json")
+            self.end_headers(); self.wfile.write(json.dumps({"error": "Unauthorized"}).encode()); return
         n = int(self.headers.get("Content-Length", "0")); req = json.loads(self.rfile.read(n).decode("utf-8"))
         out = io.StringIO(); err = io.StringIO(); rc = 0
         with _exec_lock, redirect_stdout(out), redirect_stderr(err):

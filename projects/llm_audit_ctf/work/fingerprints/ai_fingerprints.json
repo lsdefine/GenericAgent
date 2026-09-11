@@ -1,0 +1,220 @@
+{
+  "_meta": {
+    "version": "0.2",
+    "description": "LLM 服务暴露面指纹库：识别可被 2API 化(二次封装为 OpenAI 兼容 API)的站点",
+    "usage": "候选发现：每条 probe 的全部 expect 必须满足；仅保留不读取认证会话且含非状态码特征的低影响 GET 探针。score 仅用于候选排序，不代表漏洞确认。"
+  },
+  "open_source_chat_frameworks": [
+    {
+      "name": "NextChat (ChatGPT-Next-Web)",
+      "repo": "https://github.com/ChatGPTNextWeb/ChatGPT-Next-Web",
+      "score": 10,
+      "probes": [
+        {
+          "path": "/api/models",
+          "expect": [
+            "json_contains:gpt",
+            "status:200"
+          ]
+        },
+        {
+          "path": "/",
+          "expect": [
+            "title_contains:ChatGPT Next Web",
+            "html_contains:ChatGPT-Next-Web"
+          ]
+        }
+      ],
+      "notes": "部署者常未设密码/用默认 key；session 端点暴露 token 即可直接调 backend-api"
+    },
+    {
+      "name": "LobeChat",
+      "repo": "https://github.com/lobehub/lobe-chat",
+      "score": 9,
+      "probes": [
+        {
+          "path": "/",
+          "expect": [
+            "title_contains:LobeChat",
+            "html_contains:lobehub"
+          ]
+        }
+      ],
+      "notes": "同 NextChat，很多部署走 Vercel/自托管，默认无鉴权"
+    },
+    {
+      "name": "LibreChat",
+      "repo": "https://github.com/danny-avila/LibreChat",
+      "score": 9,
+      "probes": [
+        {
+          "path": "/",
+          "expect": [
+            "title_contains:LibreChat"
+          ]
+        }
+      ],
+      "notes": "自带后端代理 /api/ask，默认注册开放时可无限注册拿 token"
+    },
+    {
+      "name": "Open WebUI",
+      "repo": "https://github.com/open-webui/open-webui",
+      "score": 8,
+      "probes": [
+        {
+          "path": "/api/models",
+          "expect": [
+            "json_contains:data",
+            "status:200"
+          ]
+        },
+        {
+          "path": "/",
+          "expect": [
+            "title_contains:Open WebUI"
+          ]
+        }
+      ],
+      "notes": "默认管理员 admin 弱口令常见；/api/models 常未鉴权"
+    },
+    {
+      "name": "ChatGPT 官方网页版",
+      "repo": "https://chatgpt.com",
+      "score": 10,
+      "probes": [
+        {
+          "path": "/backend-api/models",
+          "expect": [
+            "json_contains:slug",
+            "status:200"
+          ]
+        },
+        {
+          "path": "/",
+          "expect": [
+            "html_contains:__NEXT_DATA__"
+          ]
+        }
+      ],
+      "notes": "2API 主战场：泄露的 access token / 共享账号可被封装"
+    },
+    {
+      "name": "ChatBox Web",
+      "repo": "https://github.com/Bin-Huang/chatbox",
+      "score": 7,
+      "probes": [
+        {
+          "path": "/",
+          "expect": [
+            "html_contains:chatbox",
+            "html_contains:_chatbox_"
+          ]
+        }
+      ],
+      "notes": "前端套壳，key 存浏览器；主要看是否泄漏配置"
+    }
+  ],
+  "api_gateway_panels": [
+    {
+      "name": "One-API",
+      "repo": "https://github.com/songquanpeng/one-api",
+      "score": 10,
+      "probes": [
+        {
+          "path": "/api/status",
+          "expect": [
+            "json_contains:data",
+            "status:200"
+          ]
+        },
+        {
+          "path": "/",
+          "expect": [
+            "title_contains:One API",
+            "html_contains:one-api"
+          ]
+        }
+      ],
+      "notes": "中转站本体；默认口令 root/123456 常见，登进去可看全部上游 key"
+    },
+    {
+      "name": "New-API",
+      "repo": "https://github.com/Calcium-Ion/new-api",
+      "score": 10,
+      "probes": [
+        {
+          "path": "/",
+          "expect": [
+            "title_contains:New API",
+            "html_contains:new-api"
+          ]
+        },
+        {
+          "path": "/api/status",
+          "expect": [
+            "json_contains:data",
+            "status:200"
+          ]
+        }
+      ],
+      "notes": "One-API 分支，带 midjourney 等扩展；弱口令同样常见"
+    },
+    {
+      "name": "uni-api / 其他中转面板",
+      "probes": [
+        {
+          "path": "/v1/models",
+          "expect": [
+            "json_contains:data",
+            "status:200"
+          ]
+        }
+      ],
+      "notes": "探测 /v1/models 未鉴权即白送模型列表"
+    }
+  ],
+  "raw_model_backends": [
+    {
+      "name": "Ollama",
+      "score": 7,
+      "probes": [
+        {
+          "path": "/api/tags",
+          "expect": [
+            "json_contains:models",
+            "status:200"
+          ]
+        }
+      ],
+      "notes": "裸模型服务，无鉴权可白嫖算力/模型"
+    },
+    {
+      "name": "vLLM / FastChat / llama.cpp / LocalAI (OpenAI 兼容)",
+      "score": 8,
+      "probes": [
+        {
+          "path": "/v1/models",
+          "expect": [
+            "json_contains:data",
+            "status:200"
+          ]
+        }
+      ],
+      "notes": "OpenAI 兼容端点直出，标准 2API 直接对接"
+    },
+    {
+      "name": "Text Generation WebUI (oobabooga)",
+      "score": 7,
+      "probes": [
+        {
+          "path": "/api/v1/models",
+          "expect": [
+            "json_contains:data",
+            "status:200"
+          ]
+        }
+      ],
+      "notes": "暴露完整 OpenAI 兼容 API"
+    }
+  ]
+}

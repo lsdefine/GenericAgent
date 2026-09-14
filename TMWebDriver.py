@@ -143,10 +143,19 @@ class TMWebDriver:
                                 sess.mark_disconnected()
                         for tab in tabs:
                             session_id = str(tab['id'])
-                            session_info = {'url': tab.get('url'), 'title': tab.get('title', ''), 'connected_at': time.time(), 'type': 'ext_ws'}
+                            session_info = {
+                                'url': tab.get('url'),
+                                'title': tab.get('title', ''),
+                                'connected_at': time.time(),
+                                'type': 'ext_ws',
+                                'active': bool(tab.get('active')),
+                                'windowId': tab.get('windowId'),
+                            }
                             sess = driver.sessions.get(session_id)
                             if sess and sess.is_active(): sess.info = session_info
                             else: driver._register_client(session_id, self, session_info)
+                            if tab.get('active'):
+                                driver.default_session_id = session_id
                     elif data.get('type') == 'ack': driver.acks[data.get('id','')] = True
                     elif data.get('type') == 'result':  
                         driver.results[data.get('id')] = {'success': True, 'data': data.get('result'), 'newTabs': data.get('newTabs', [])}  

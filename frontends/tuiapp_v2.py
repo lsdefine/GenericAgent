@@ -29,7 +29,7 @@ import shutil
 from keysym import fmt_key, fmt_keys  # noqa: E402
 from dataclasses import dataclass, field
 from itertools import count
-from typing import Any, Callable, Optional
+from typing import Any, Callable, List, Optional
 
 
 def _ensure_tui_deps() -> None:
@@ -6591,9 +6591,13 @@ class GenericAgentTUI(App[None]):
                         except Exception: self._refresh_messages()
                     else:
                         self._refresh_messages()
-                    if refresh_chrome:
-                        self._refresh_sidebar()
-                        self._refresh_topbar()
+                    # Mirror the regular done=True path below (line ~6603) which
+                    # always refreshes sidebar+topbar on completion. The replay
+                    # path used to reference an undefined `refresh_chrome` local
+                    # (NameError on every exit-boundary replay); the agent is
+                    # in fact done, so always refresh chrome here.
+                    self._refresh_sidebar()
+                    self._refresh_topbar()
                     self._ensure_spinner()
             return
         s.buffer = text

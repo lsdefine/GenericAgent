@@ -3567,6 +3567,11 @@ class GenericAgentTUI(App[None]):
 
     def __init__(self, agent_factory: Optional[AgentFactory] = None) -> None:
         super().__init__()
+        self._apple_terminal_ime = (
+            sys.platform == "darwin"
+            and os.environ.get("TERM_PROGRAM") == "Apple_Terminal"
+        )
+        self._input_repaint_pending = False
         self.agent_factory: AgentFactory = agent_factory or default_agent_factory
         self.sessions: dict[int, AgentSession] = {}
         self.current_id: Optional[int] = None
@@ -3736,6 +3741,18 @@ class GenericAgentTUI(App[None]):
         if size != self._last_size:
             self._last_size = size
             self._apply_responsive_layout()
+
+    def _schedule_input_repaint(self) -> None:
+        if self._apple_terminal_ime and not self._input_repaint_pending:
+            self._input_repaint_pending = True
+            self.call_after_refresh(self._repaint_input_rows)
+
+    def _repaint_input_rows(self) -> None:
+        """Repair committed input rows, including cells beyond the composer."""
+        self._input_repaint_pending = False
+        inp = self.query_one("#input", InputArea)
+        region = inp.region
+        self.screen.refresh(Region(0, region.y, self.screen.size.width, region.height))
 
     def _patch_auto_scroll_for_selection(self) -> None:
         # Make selection-drag into #input still scroll #messages: include _select_start as a
@@ -4621,6 +4638,7 @@ class GenericAgentTUI(App[None]):
             inp._skip_change_next = False
             return
         self._resize_input(inp)
+        self._schedule_input_repaint()
         val = (inp.text or "").lstrip()
         if self._suppress_palette_open:
             self._suppress_palette_open = False

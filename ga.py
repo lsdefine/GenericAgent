@@ -595,7 +595,7 @@ class GenericAgentHandler(BaseHandler):
         injkeyinfo = self.parent.extrakeyinfo or consume_file(self.parent.task_dir, '_keyinfo')
         injprompt = self.parent.intervene or consume_file(self.parent.task_dir, '_intervene')
         if injkeyinfo: self.working['key_info'] = self.working.get('key_info', '') + f"\n[MASTER] {injkeyinfo}"
-        if injprompt: next_prompt += f"\n\n[MASTER] {injprompt}\n"
+        if injprompt: next_prompt += f"\n\n[MASTER] {injprompt}\n"  
         self.parent.intervene = self.parent.extrakeyinfo = None
         for hook in list(getattr(self.parent, '_turn_end_hooks', {}).values()): hook(locals())  # current readonly
         return next_prompt

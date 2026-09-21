@@ -1767,6 +1767,9 @@ Screen { background: $ga-bg; color: $ga-fg; }
     scrollbar-color-active: $ga-dim;
 }
 
+#history-open { display: none; width: 100%; height: 1; min-height: 1; background: $ga-bg; color: $ga-muted; content-align: center middle; text-align: center; }
+#history-open.-visible { display: block; }
+
 /* Plan/todo panel — fixed 5-row card between messages and composer.
    `display: none` default so the empty post-compose frame doesn't flash;
    renderer flips it on once items materialize. Fixed height (no scroll)
@@ -2769,7 +2772,7 @@ class InputArea(TextArea):
         Binding("ctrl+v",      "paste", "Paste", show=False),
         # macOS muscle-memory alias: most terminals swallow Cmd+V (forward via bracketed
         # paste → _on_paste); this only hits if the terminal forwards Cmd as a key.
-        Binding("cmd+v",       "paste", "Paste", show=False),
+        Binding("cmd+v,super+v", "paste", "Paste", show=False),
         # Ctrl+U: readline-style kill-line, repurposed here to clear the whole input.
         Binding("ctrl+u",      "clear_input", "ClearInput", show=False),
         # Ctrl+S: toggle-stash the current draft.  First press → stash
@@ -3457,6 +3460,130 @@ class HelpScreen(ModalScreen):
         yield Static(self._content)
 
 
+@dataclass
+class HistoryPrompt:
+    text: str
+
+    def __rich_console__(self, console, options):
+        from rich.padding import Padding
+
+        width = max(1, options.max_width)
+        lines = Text(self.text).wrap(console, width, overflow="fold")
+        if len(lines) > 3:
+            lines = lines[:3]
+            lines[-1].truncate(width - 1, overflow="crop")
+            lines[-1].append("…")
+        # OptionList's height calculation excludes component vertical padding.
+        # Match the main session sidebar: equal space above and below the text.
+        yield Padding(Text("\n").join(lines), (1, 0, 1, 0))
+
+
+class HistoryScreen(ModalScreen):
+    """Read-only history: full prompt index and one lazily rendered turn."""
+    CSS = """
+    HistoryScreen { background: $ga-bg; padding: 1 2; }
+    #history-title { height: 2; color: $ga-muted; }
+    #history-columns { height: 1fr; }
+    #history-index {
+        width: 25%; min-width: 18; border: none;
+        border-right: solid $ga-border; padding: 0 1 0 0;
+        background: $ga-bg;
+    }
+    #history-detail {
+        width: 1fr; padding: 0 2; background: $ga-bg;
+        overflow-x: hidden; overflow-y: scroll;
+    }
+    #history-index, #history-detail {
+        scrollbar-size: 1 1;
+        scrollbar-background: $ga-bg;
+        scrollbar-background-hover: $ga-bg;
+        scrollbar-background-active: $ga-bg;
+        scrollbar-color: $ga-border;
+        scrollbar-color-hover: $ga-border-hi;
+        scrollbar-color-active: $ga-border-hi;
+    }
+    #history-index > .option-list--option { padding: 0 2; }
+    #history-detail .role { margin-top: 1; margin-bottom: 1; }
+    #history-detail .fold-header { color: $ga-muted; }
+    """
+    BINDINGS = [Binding("escape", "dismiss", "返回", priority=True),
+                Binding("ctrl+g,cmd+shift+h", "dismiss", "返回", show=False, priority=True)]
+
+    def __init__(self, session):
+        super().__init__()
+        self.session = session
+        self.starts = [i for i, m in enumerate(session.messages) if m.role == "user"]
+        if session.messages and (not self.starts or self.starts[0] != 0):
+            self.starts.insert(0, 0)
+        self.end = len(session.messages)
+        self.selected_turn = None
+        self.preview = []
+        self._render_version = 0
+
+    def compose(self):
+        yield Static("全部历史 · ↑↓ 选择 · Tab 切换栏 · Esc 返回", id="history-title")
+        with Horizontal(id="history-columns"):
+            yield OptionList(id="history-index")
+            yield VerticalScroll(id="history-detail")
+
+    def on_mount(self):
+        self.call_after_refresh(self._populate_index)
+
+    def _populate_index(self):
+        index = self.query_one("#history-index", OptionList)
+        options = []
+        for turn in range(len(self.starts)):
+            m = self.session.messages[self.starts[turn]]
+            label = " ".join(m.content.split()) or "（空提问）"
+            options.append(Option(HistoryPrompt(label), id=str(turn)))
+        index.add_options(options)
+        if options:
+            index.highlighted = 0
+        index.focus()
+
+    async def on_option_list_option_highlighted(self, event):
+        event.stop()
+        self.selected_turn = int(event.option.id)
+        start = self.starts[self.selected_turn]
+        end = (self.starts[self.selected_turn + 1]
+               if self.selected_turn + 1 < len(self.starts) else self.end)
+        # Separate models keep preview folds and widget references out of live chat.
+        self.preview = [ChatMessage(m.role, m.content, done=True,
+                                   image_paths=list(m.image_paths))
+                        for m in self.session.messages[start:end]]
+        await self._render_preview()
+
+    def on_option_list_option_selected(self, event):
+        event.stop()
+
+    async def _render_preview(self, *, preserve_scroll=False):
+        self._render_version += 1
+        version = self._render_version
+        detail = self.query_one("#history-detail", VerticalScroll)
+        scroll_y = detail.scroll_y if preserve_scroll else 0
+        await detail.remove_children()
+        if version != self._render_version or not self.is_mounted:
+            return
+        for m in self.preview:
+            self.app._mount_message(detail, m, preview=True)
+        if preserve_scroll:
+            self.call_after_refresh(detail.scroll_to, y=scroll_y, animate=False)
+        else:
+            detail.scroll_home(animate=False)
+
+    async def on_click(self, event):
+        if isinstance(event.widget, FoldHeader):
+            event.stop()
+            m = event.widget.msg
+            m._toggled_folds.symmetric_difference_update({event.widget.fold_idx})
+            m._cached_body = None
+            await self._render_preview(preserve_scroll=True)
+
+    def on_resize(self):
+        if self.is_mounted and self.preview:
+            self.call_after_refresh(self._render_preview)
+
+
 class ThemePicker(ModalScreen):
     # Live-preview theme picker: highlight applies the theme so the rest of the
     # UI repaints behind the modal; Enter commits + persists, Esc reverts.
@@ -3543,9 +3670,10 @@ class GenericAgentTUI(App[None]):
 
     BINDINGS = [
         Binding("ctrl+c",     "handle_ctrl_c", "Stop/Quit", show=False, priority=True),
+        Binding("ctrl+g,cmd+shift+h", "show_history", "历史", show=False, priority=True),
         # macOS muscle-memory aliases — only fire if the terminal forwards Cmd as a key
         # (Terminal.app / default iTerm2 swallow them; Ghostty / WezTerm / kitty can forward).
-        Binding("cmd+c",      "handle_ctrl_c", "Stop/Quit", show=False, priority=True),
+        Binding("cmd+c,super+c", "copy_selection", "Copy", show=False, priority=True),
         Binding("ctrl+n",     "new_session",   "New",   show=False),
         Binding("cmd+n",      "new_session",   "New",   show=False),
         Binding("ctrl+b",     "toggle_sidebar","Sidebar", show=False),
@@ -3572,6 +3700,8 @@ class GenericAgentTUI(App[None]):
             and os.environ.get("TERM_PROGRAM") == "Apple_Terminal"
         )
         self._input_repaint_pending = False
+        self._pending_stream_renders: dict[tuple[int, int], ChatMessage] = {}
+        self._stream_render_timer = None
         self.agent_factory: AgentFactory = agent_factory or default_agent_factory
         self.sessions: dict[int, AgentSession] = {}
         self.current_id: Optional[int] = None
@@ -3687,6 +3817,7 @@ class GenericAgentTUI(App[None]):
             _sidebar.can_focus = False
             yield _sidebar
             with Vertical(id="main"):
+                yield Static("Ctrl+G 查看所有历史会话", id="history-open")
                 yield VerticalScroll(id="messages")
                 # Plan card: pinned header/step (#planbar-head) above a task list
                 # (#planbar) that scrolls inside a 4-row window (#planbar-tasks).
@@ -3724,6 +3855,9 @@ class GenericAgentTUI(App[None]):
         # CSS `#planbar-scroll { display: none }` keeps it hidden by default —
         # the renderer adds `-visible` once plan items materialize.
         self.query_one("#input", InputArea).focus()
+        messages = self.query_one("#messages", VerticalScroll)
+        self.watch(messages, "scroll_y", self._watch_messages_scroll, init=False)
+        self.call_after_refresh(self._update_history_open)
         self.set_interval(0.5, self._tick)
         self._patch_auto_scroll_for_selection()
         self._start_plan_watcher()
@@ -4212,9 +4346,8 @@ class GenericAgentTUI(App[None]):
             return
         super().copy_to_clipboard(text)
 
-    def action_handle_ctrl_c(self) -> None:
-        # Two-stage quit: when no task is running, first press clears input and arms;
-        # second press within 2s exits.
+    def _copy_selected_text(self) -> bool:
+        """Copy application selection; an empty selection must not stop a task."""
         try:
             inp = self.query_one("#input", InputArea)
         except Exception:
@@ -4225,7 +4358,7 @@ class GenericAgentTUI(App[None]):
             try: self.copy_to_clipboard(inp.selected_text)
             except Exception: pass
             self._disarm_quit()
-            return
+            return True
         try:
             selected_text = self.screen.get_selected_text()
         except Exception:
@@ -4234,7 +4367,20 @@ class GenericAgentTUI(App[None]):
             try: self.copy_to_clipboard(selected_text)
             except Exception: pass
             self._disarm_quit()
+            return True
+        return False
+
+    def action_copy_selection(self) -> None:
+        self._copy_selected_text()
+
+    def action_handle_ctrl_c(self) -> None:
+        # Ctrl+C retains stop/quit behavior, but Command+C only copies.
+        if self._copy_selected_text():
             return
+        try:
+            inp = self.query_one("#input", InputArea)
+        except Exception:
+            inp = None
         sess = self.sessions.get(self.current_id)
         if sess is not None and sess.status == "running":
             self._cmd_stop([], "")
@@ -4483,6 +4629,7 @@ class GenericAgentTUI(App[None]):
             ("Esc",                              "取消选择 / 关闭面板 / 关闭帮助"),
             ("Esc Esc",                          "打开回退选择"),
             (fmt_key("ctrl+t"),                  "切换主题"),
+            (fmt_keys("ctrl+g", "cmd+shift+h"), "查看全部历史"),
             (fmt_key("ctrl+/"),                  "显示 / 隐藏本帮助"),
         ]
         t = Text()
@@ -4618,7 +4765,7 @@ class GenericAgentTUI(App[None]):
             m._segment_widgets = []
             m._segment_sig = ()
             m._spinner_widget = None
-        for m in self.current.messages:
+        for m in self._recent_messages(self.current):
             self._mount_message(container, m)
         if was_at_bottom:
             container.scroll_end(animate=False)
@@ -6366,6 +6513,10 @@ class GenericAgentTUI(App[None]):
             pass
 
     def on_unmount(self) -> None:
+        if self._stream_render_timer is not None:
+            self._stream_render_timer.stop()
+            self._stream_render_timer = None
+        self._pending_stream_renders.clear()
         self._reset_terminal_title()
         # Drop this run's empty signal dirs on graceful exit; the startup
         # sweep mops up anything a crash leaves behind.
@@ -6587,6 +6738,8 @@ class GenericAgentTUI(App[None]):
                 return
 
     def _on_stream(self, agent_id, task_id, text, done):
+        if done:
+            self._pending_stream_renders.pop((agent_id, task_id), None)
         s = self.sessions.get(agent_id)
         if not s: return
         if s.current_task_id != task_id:
@@ -6609,16 +6762,16 @@ class GenericAgentTUI(App[None]):
                         except Exception: self._refresh_messages()
                     else:
                         self._refresh_messages()
-                    if refresh_chrome:
-                        self._refresh_sidebar()
-                        self._refresh_topbar()
+                    self._refresh_sidebar()
+                    self._refresh_topbar()
                     self._ensure_spinner()
             return
         s.buffer = text
         if done:
             s.status = "idle"
             s.current_display_queue = None
-        self._update_assistant(agent_id, text, task_id=task_id, done=done, refresh_chrome=True)
+        self._update_assistant(agent_id, text, task_id=task_id, done=done,
+                               refresh_chrome=True, defer_render=not done)
         if done:
             self._rw_commit(s)   # 落 checkpoint 节点(文件改动已由 tool_before 钩子追踪)
             self._update_plan_state(s, text)
@@ -6790,7 +6943,26 @@ class GenericAgentTUI(App[None]):
             if agent_id != prev: self.current_id = prev
         return value
 
-    def _update_assistant(self, agent_id, text, *, task_id=None, done=True, refresh_chrome=False):
+    def _flush_stream_renders(self) -> None:
+        self._stream_render_timer = None
+        pending = self._pending_stream_renders
+        self._pending_stream_renders = {}
+        refreshed = False
+        for (agent_id, task_id), message in pending.items():
+            sess = self.sessions.get(agent_id)
+            if (sess is None or agent_id != self.current_id
+                    or sess.current_task_id != task_id or message.done
+                    or not any(m is message for m in sess.messages)):
+                continue
+            self._render_assistant_update(message)
+            refreshed = True
+        if refreshed:
+            self._refresh_sidebar()
+            self._refresh_topbar()
+            self._ensure_spinner()
+
+    def _update_assistant(self, agent_id, text, *, task_id=None, done=True,
+                          refresh_chrome=False, defer_render=False):
         # task_id=None matches the last assistant message; otherwise matches by task_id.
         s = self.sessions.get(agent_id)
         if not s: return
@@ -6803,6 +6975,20 @@ class GenericAgentTUI(App[None]):
                 break
         if agent_id != self.current_id:
             return
+        if defer_render and found is not None:
+            # Keep data current for stop/copy/session switching; coalesce only paint.
+            self._pending_stream_renders[(agent_id, task_id)] = found
+            if self._stream_render_timer is None:
+                self._stream_render_timer = self.set_timer(0.05, self._flush_stream_renders)
+            return
+        self._pending_stream_renders.pop((agent_id, task_id), None)
+        self._render_assistant_update(found)
+        if refresh_chrome:
+            self._refresh_sidebar()
+            self._refresh_topbar()
+        self._ensure_spinner()
+
+    def _render_assistant_update(self, found: Optional[ChatMessage]) -> None:
         if found and found._segment_widgets:
             try:
                 container = self.query_one("#messages", VerticalScroll)
@@ -6814,10 +7000,6 @@ class GenericAgentTUI(App[None]):
                 self._refresh_messages()
         else:
             self._refresh_messages()
-        if refresh_chrome:
-            self._refresh_sidebar()
-            self._refresh_topbar()
-        self._ensure_spinner()
 
     # ---------------- Plan/todo panel ----------------
     # State machine (graces absorb mid-stream parse misses / let final tally read):
@@ -7196,6 +7378,37 @@ class GenericAgentTUI(App[None]):
         except Exception:
             return True
 
+    def _watch_messages_scroll(self, _scroll_y) -> None:
+        self._update_history_open()
+
+    def _update_history_open(self) -> None:
+        """Show the history entry only while the main conversation is at its top."""
+        try:
+            messages = self.query_one("#messages", VerticalScroll)
+            button = self.query_one("#history-open", Static)
+        except Exception:
+            return
+        starts = [m for m in self.current.messages if m.role == "user"]
+        truncated = len(starts) > 20
+        button.set_class(truncated and messages.scroll_y <= 0, "-visible")
+
+    def action_show_history(self):
+        if isinstance(self.screen, HistoryScreen):
+            self.pop_screen()
+        elif self.current_id is not None:
+            self.push_screen(HistoryScreen(self.current))
+
+    @staticmethod
+    def _recent_messages(sess):
+        # Keep complete recent turns, including all pending interaction cards.
+        starts = [i for i, m in enumerate(sess.messages) if m.role == "user"]
+        start = starts[-20] if len(starts) > 20 else 0
+        for i, m in enumerate(sess.messages[:start]):
+            if m.kind in ("choice", "multi_choice") and m.selected_label is None:
+                start = i
+                break
+        return sess.messages[start:]
+
     def _refresh_messages(self):
         if not self.is_mounted or self.current_id is None: return
         sess = self.current
@@ -7211,7 +7424,20 @@ class GenericAgentTUI(App[None]):
                 m._segment_sig = ()
                 m._spinner_widget = None
             self._last_session_id = sess.agent_id
+        recent = self._recent_messages(sess)
+        visible = {id(m) for m in recent}
         for m in sess.messages:
+            if id(m) not in visible and m._role_widget is not None:
+                widgets = [m._role_widget, m._body_widget, m._hint_widget,
+                           m._spinner_widget, *m._segment_widgets]
+                for w in {id(w): w for w in widgets if w is not None}.values():
+                    w.remove()
+                m._role_widget = m._body_widget = m._hint_widget = m._spinner_widget = None
+                m._segment_widgets = []
+                m._segment_sig = ()
+                m._cached_body = None
+                m._seg_render_cache.clear()
+        for m in recent:
             if m._role_widget is None:
                 self._mount_message(container, m)
         if was_at_bottom:
@@ -7628,7 +7854,7 @@ class GenericAgentTUI(App[None]):
         # (in-place .update of last widget) vs. full remount (when folds appear/expand).
         return tuple((kind, idx) for kind, _, idx in segs)
 
-    def _mount_message(self, container: VerticalScroll, m: ChatMessage) -> None:
+    def _mount_message(self, container: VerticalScroll, m: ChatMessage, *, preview=False) -> None:
         # Looked up at call time (not class init) so theme switches propagate.
         color = {"user": C_PURPLE, "system": C_BLUE, "assistant": C_GREEN}.get(m.role, C_GREEN)
         label = m.role.upper() if m.role != "assistant" else "AGENT"
@@ -7703,7 +7929,8 @@ class GenericAgentTUI(App[None]):
             container.mount(m._body_widget)
             return
         if m.role == "user":
-            body = Text(); body.append("> ", style=C_DIM); body.append(_elide_user_display(m.content), style=C_FG)
+            body = Text(); body.append("> ", style=C_DIM); body.append(
+                m.content if preview else _elide_user_display(m.content), style=C_FG)
             for path in m.image_paths:
                 body.append(f"\n📎 {path}", style=C_MUTED)
             m._body_widget = SelectableStatic(body, classes="msg")
@@ -7714,7 +7941,8 @@ class GenericAgentTUI(App[None]):
             container.mount(m._body_widget)
             return
         # assistant — multi-segment for per-fold click-to-expand
-        segs = self._assistant_segments(m, self._messages_width())
+        width = max(10, container.scrollable_content_region.width) if preview else self._messages_width()
+        segs = self._assistant_segments(m, width)
         self._mount_assistant_segments(container, m, segs)
 
     def _mount_assistant_segments(self, container, m: ChatMessage, segs: list[tuple],

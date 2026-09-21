@@ -7380,6 +7380,14 @@ class GenericAgentTUI(App[None]):
 
     def _watch_messages_scroll(self, _scroll_y) -> None:
         self._update_history_open()
+        try:
+            messages = self.query_one("#messages", VerticalScroll)
+            # Scrolling changes which virtual rows are visible. In some terminal
+            # backends the compositor leaves stale cells until the container is
+            # explicitly invalidated.
+            messages.refresh()
+        except Exception:
+            pass
 
     def _update_history_open(self) -> None:
         """Show the history entry only while the main conversation is at its top."""
@@ -8047,6 +8055,10 @@ class GenericAgentTUI(App[None]):
                 # progress-bar overwrites still work.
                 display = last_text.replace("\r\n", "\n")
                 last_widget.update(Text.from_ansi(display, style=C_FG))
+            try:
+                self.query_one("#messages", VerticalScroll).refresh()
+            except Exception:
+                pass
             if m.done and m._spinner_widget is not None:
                 # Convert the live spinner into the post-turn ⠿ card in place.
                 self._capture_done_summary(m)
@@ -8089,6 +8101,10 @@ class GenericAgentTUI(App[None]):
             m._spinner_widget = None
         segs = self._assistant_segments(m, self._messages_width())
         self._mount_assistant_segments(container, m, segs, after=anchor)
+        try:
+            container.refresh()
+        except Exception:
+            pass
 
 
 # ---------- CLI ----------

@@ -241,6 +241,20 @@ def _try_parse_tool_args(raw):
         return parsed
     return [{"_raw": raw}]
 
+_DSML_PATTERN = re.compile(
+    r"<‖DSML‖[^>]*>"  # Full-width ‖ variant (DeepSeek primary)
+    r"|<\uff5cDSML\uff5c[^>]*>"  # Unicode fullwidth ｜ variant
+    r"|<\|DSML\|[^>]*>"  # ASCII pipe fallback
+    r"|\uff5c\uff5cDSML\uff5c\uff5c[^>]*>",  # Double-escaped variant
+    re.IGNORECASE
+)
+
+def _strip_dsml_markers(text: str) -> str:
+    """Remove DeepSeek DSML tool-call markers that leak into content text."""
+    if not text or "DSML" not in text:
+        return text
+    return _DSML_PATTERN.sub("", text)
+
 def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
     """Parse OpenAI SSE stream (chat_completions or responses API).
     Yields text chunks, returns list[content_block].
@@ -260,10 +274,10 @@ def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
             etype = evt.get("type", "")
             if etype == "response.output_text.delta":
                 delta = evt.get("delta", "")
-                if delta: seen_delta = True; content_text += delta; yield delta
+                if delta: seen_delta = True; content_text += delta; yield _strip_dsml_markers(delta)
             elif etype == "response.output_text.done" and not seen_delta:
                 text = evt.get("text", "")
-                if text: content_text += text; yield text
+                if text: content_text += text; yield _strip_dsml_markers(text)
             elif etype == "response.reasoning_text.delta":
                 delta = evt.get("delta", "")
                 if delta: reasoning_text += delta
@@ -312,7 +326,7 @@ def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
                 break
         blocks = []
         if reasoning_text: blocks.append({"type": "thinking", "thinking": reasoning_text})
-        if content_text: blocks.append({"type": "text", "text": content_text})
+        if content_text: blocks.append({"type": "text", "text": _strip_dsml_markers(content_text)})
         for idx in sorted(fc_buf):
             fc = fc_buf[idx]
             inps = _try_parse_tool_args(fc["args"])
@@ -337,7 +351,7 @@ def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
             if rc := delta.get("reasoning_content") or delta.get("reasoning", ""):
                 reasoning_text += rc; yield rc
             if delta.get("content"):
-                text = delta["content"]; content_text += text; yield text
+                text = delta["content"]; content_text += text; yield _strip_dsml_markers(text)
             for tc in (delta.get("tool_calls") or []):
                 idx = tc.get("index", 0)
                 has_name = bool(tc.get("function", {}).get("name"))
@@ -351,7 +365,7 @@ def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
             if usage: _record_usage(usage, api_mode)
         blocks = []
         if reasoning_text: blocks.append({"type": "thinking", "thinking": reasoning_text})
-        if content_text: blocks.append({"type": "text", "text": content_text})
+        if content_text: blocks.append({"type": "text", "text": _strip_dsml_markers(content_text)})
         for idx in sorted(tc_buf):
             tc = tc_buf[idx]
             inps = _try_parse_tool_args(tc["args"])

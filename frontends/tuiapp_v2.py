@@ -1739,6 +1739,13 @@ Screen { background: $ga-bg; color: $ga-fg; }
     /* Reserve the 1-col scrollbar gutter up front so overflowing the window
        doesn't suddenly squeeze the session rows narrower. */
     scrollbar-gutter: stable;
+    scrollbar-background: $ga-bg;
+    scrollbar-background-hover: $ga-bg;
+    scrollbar-background-active: $ga-bg;
+    scrollbar-color: $ga-border;
+    scrollbar-color-hover: $ga-border-hi;
+    scrollbar-color-active: $ga-dim;
+    scrollbar-corner-color: $ga-bg;
 }
 #sidebar-scroll.-hidden, #sidebar-scroll.-narrow { display: none; }
 
@@ -3489,6 +3496,9 @@ class HistoryScreen(ModalScreen):
         border-right: solid $ga-border; padding: 0 1 0 0;
         background: $ga-bg;
     }
+    /* OptionList tints its own background on focus. The option rows cover
+       most of that surface, leaving the scrollbar gutter as a bright stripe. */
+    #history-index:focus { background-tint: transparent; }
     #history-detail {
         width: 1fr; padding: 0 2; background: $ga-bg;
         overflow-x: hidden; overflow-y: scroll;
@@ -3671,8 +3681,9 @@ class GenericAgentTUI(App[None]):
     BINDINGS = [
         Binding("ctrl+c",     "handle_ctrl_c", "Stop/Quit", show=False, priority=True),
         Binding("ctrl+g,cmd+shift+h", "show_history", "历史", show=False, priority=True),
-        # macOS muscle-memory aliases — only fire if the terminal forwards Cmd as a key
-        # (Terminal.app / default iTerm2 swallow them; Ghostty / WezTerm / kitty can forward).
+        # Ghostty forwards Cmd+C to TUI applications in its default
+        # configuration, so GA can copy its internal Textual selection directly.
+        # Terminals that intercept Cmd+C natively may require their own setup.
         Binding("cmd+c,super+c", "copy_selection", "Copy", show=False, priority=True),
         Binding("ctrl+n",     "new_session",   "New",   show=False),
         Binding("cmd+n",      "new_session",   "New",   show=False),
@@ -4374,7 +4385,8 @@ class GenericAgentTUI(App[None]):
         self._copy_selected_text()
 
     def action_handle_ctrl_c(self) -> None:
-        # Ctrl+C retains stop/quit behavior, but Command+C only copies.
+        # Ctrl+C retains the TUI's stop/quit behavior. Cmd+C is handled by the
+        # copy action above when the terminal forwards it to the application.
         if self._copy_selected_text():
             return
         try:
@@ -4423,7 +4435,7 @@ class GenericAgentTUI(App[None]):
         except Exception: pass
 
     def on_key(self, event: events.Key) -> None:
-        if self._quit_armed and event.key not in ("ctrl+c", "cmd+c"):
+        if self._quit_armed and event.key != "ctrl+c":
             self._disarm_quit()
         if self._rewind_armed and event.key != "escape":
             self._disarm_rewind()

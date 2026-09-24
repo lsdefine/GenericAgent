@@ -424,12 +424,14 @@ class AgentManager:
         try:
             self._sessions_dir.mkdir(parents=True, exist_ok=True)
             with self.lock:
+                if self.sessions.get(s.id) is not s:
+                    return
                 data = self._session_dict(s)
                 data["messages"] = copy.deepcopy(data["messages"])
                 if data.get("llm_history"):
                     data["llm_history"] = copy.deepcopy(data["llm_history"])
-            tmp.write_text(json.dumps(data, ensure_ascii=False, default=str), encoding="utf-8")
-            os.replace(tmp, self._session_file(s.id))
+                tmp.write_text(json.dumps(data, ensure_ascii=False, default=str), encoding="utf-8")
+                os.replace(tmp, self._session_file(s.id))
         except Exception as e:
             with contextlib.suppress(OSError):
                 tmp.unlink()
@@ -439,9 +441,10 @@ class AgentManager:
 
     def _delete_session_file(self, sid: str):
         try:
-            f = self._session_file(sid)
-            if f.exists():
-                f.unlink()
+            with self.lock:
+                f = self._session_file(sid)
+                if f.exists():
+                    f.unlink()
         except Exception as e:
             bridge_print(f"[bridge] delete session file {sid} failed: {e}")
 

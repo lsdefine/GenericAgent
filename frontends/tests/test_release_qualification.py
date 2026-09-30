@@ -408,8 +408,9 @@ def test_package_start_injects_only_the_isolated_e2e_conductor_port(tmp_path, mo
     candidate.process_log.close()
 
     assert captured["env"]["GA_DESKTOP_E2E_CONDUCTOR_PORT"] == "29890"
-    assert captured["env"]["GA_DESKTOP_E2E_REPORT_DIR"].endswith(
-        "bootstrap/first-launch"
+    assert Path(captured["env"]["GA_DESKTOP_E2E_REPORT_DIR"]).parts[-2:] == (
+        "bootstrap",
+        "first-launch",
     )
     assert candidate.report["pids"] == [{"scenario": "first-launch", "app": 44120}]
 

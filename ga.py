@@ -1,5 +1,6 @@
 import sys, os, re, json, time, threading, importlib, webbrowser
 from datetime import datetime
+from urllib.parse import urlparse
 from pathlib import Path
 import tempfile, traceback, subprocess, itertools, collections, difflib, shutil
 if sys.stdout is None: sys.stdout = open(os.devnull, "w")
@@ -154,6 +155,24 @@ def format_error(e):
         fname = os.path.basename(f.filename)
         return f"{exc_type.__name__}: {str(e)} @ {fname}:{f.lineno}, {f.name} -> `{f.line}`"
     return f"{exc_type.__name__}: {str(e)}"
+
+def _url_host(url):
+    # urlparse rejects malformed IPv6 brackets; a diagnostic must never crash the retry path
+    try: return urlparse(url).hostname or 'unknown'
+    except ValueError: return 'unknown'
+
+def describe_blank_response(response, content, thinking, backend=None):
+    '''Redacted one-liner for do_no_tool's blank-response guard: kind, sizes,
+    block types, model and gateway host — never credentials.'''
+    cs, ts = content or '', thinking or ''
+    kind = 'empty_payload' if not cs and not ts else 'whitespace_only'
+    parts = [f'kind={kind}', f'len(content)={len(cs)}', f'len(thinking)={len(ts)}']
+    blocks = re.findall(r"'type':\s*'([a-z_]+)'", getattr(response, 'raw', '') or '')
+    if blocks: parts.append('blocks=' + '+'.join(sorted(set(blocks))))
+    if backend is not None:
+        parts.append(f"model={getattr(backend, 'model', '') or '?'}")
+        parts.append(f"host={_url_host(getattr(backend, 'api_base', '') or '')}")
+    return ' '.join(parts)
 
 def log_memory_access(path):
     if 'memory' not in path: return
@@ -481,7 +500,9 @@ class GenericAgentHandler(BaseHandler):
         content = getattr(response, 'content', '') or ""
         thinking = getattr(response, 'thinking', '') or ""
         if not response or (not content.strip() and not thinking.strip()):
-            yield "[Warn] LLM returned an empty response. Retrying...\n"
+            backend = getattr(getattr(self.parent, 'llmclient', None), 'backend', None)
+            yield (f"[Warn] Empty LLM response ({getattr(self, '_empty_ct', 0) + 1}/3); retrying "
+                   f"[{describe_blank_response(response, content, thinking, backend)}]\n")
             return self._retry_or_exit("[ERROR] Blank response, regenerate and tooluse")
         if '[!!! 流异常中断' in content[-100:] or '!!!Error:' in content[50:][-100:] or (content.endswith('</summary>') and len(content) < 100):
             return self._retry_or_exit("[ERROR] Incomplete response. Regenerate and tooluse.")

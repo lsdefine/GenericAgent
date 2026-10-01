@@ -287,6 +287,7 @@ class GenericAgentHandler(BaseHandler):
         self.code_stop_signal = []
         self._done_hooks = []
         self.print = safe_print
+        self._lt_started = False
 
     def _get_tool_maxlen(self, l, args, growth_rate=1.0):
         multiplier = 1 + (self.parent.get_ctx_multiplier() - 1) * growth_rate
@@ -474,6 +475,21 @@ class GenericAgentHandler(BaseHandler):
         if self._empty_ct >= 3: return StepOutcome({}, should_exit=True)
         return StepOutcome({}, next_prompt=prompt)
 
+    _LONG_TASK_TURNS = 15   # schema：15+ turns / 达到15轮（含），turn >= 15 才门控
+
+    def _in_autonomous_flow(self):
+        for line in reversed(self.history_info):
+            if line.startswith('[USER]: '):
+                return line[8:].lstrip().startswith('[AUTO]')
+        return False
+
+    def _needs_long_term_settlement(self):
+        '''完成时一次性结算门控（#789）：schema 措辞只是建议，15+ 轮任务可能不带结算就退出。
+        已结算 / --no-user-tools / 自主流程 / 未到阈值 → 放行正常退出。'''
+        if self._lt_started or self.current_turn < self._LONG_TASK_TURNS: return False
+        if '--no-user-tools' in sys.argv: return False
+        return not self._in_autonomous_flow()
+
     def do_no_tool(self, args, response):
         '''这是一个特殊工具，由引擎自主调用，不要包含在TOOLS_SCHEMA里。
         当模型在一轮中未显式调用任何工具时，由引擎自动触发。
@@ -522,6 +538,8 @@ class GenericAgentHandler(BaseHandler):
                 self._exit_plan_mode(); yield "[Info] Plan完成：plan.md中0个[ ]残留，退出plan模式。\n"
         
         #yield "[Info] Final response to user.\n"
+        if self._needs_long_term_settlement():
+            return (yield from self.do_start_long_term_update(args, response))
         return StepOutcome(response, next_prompt=None)
     
     def do_start_long_term_update(self, args, response):
@@ -534,7 +552,10 @@ class GenericAgentHandler(BaseHandler):
         path = './memory/memory_management_sop.md'
         if os.path.exists(path): result = 'This is L0:\n' + file_read(path, show_linenos=False)
         else: result = "Memory Management SOP not found. Do not update memory."
-        if self.current_turn < 10: result, prompt = 'start_long_term_update is only used after completing a long turn task!', '\n'
+        if self.current_turn < 10:
+            result, prompt = 'start_long_term_update is only used after completing a long turn task!', '\n'
+        else:
+            self._lt_started = True   # 结算已启动：完成门控放行；settlement 自身完成也不会递归再触发
         return StepOutcome(result, next_prompt=prompt)
 
     def _fold_earlier(self, lines):

@@ -1695,7 +1695,12 @@ _XML_TOOL_RE = re.compile(
 
 
 _ACTION_RE = re.compile(
-    r'^[ \t]*\[(?:Action|Status|Info|Debug|Warn|Warning|Error)\][ \t]*', re.M)
+    r'^[ \t]*\[(?:Action|Status|Info|Debug)\][ \t]*', re.M)
+# severity tags stay visible as `· [Warn]` so failures don't read as routine output (#815)
+_SEVERITY_RE = re.compile(r'^[ \t]*\[(Warn|Warning|Error)\][ \t]*', re.M)
+
+def _severity_sub(m):
+    return '· [' + m.group(1) + '] '
 
 
 @dataclass
@@ -5331,7 +5336,7 @@ class SB:
 
         out = _XML_TOOL_RE.sub(xrepl, out)
         self._last_tool_n = idx
-        out = _ACTION_RE.sub('· ', _TURN_MK_RE.sub('', out))
+        out = _SEVERITY_RE.sub(_severity_sub, _ACTION_RE.sub('· ', _TURN_MK_RE.sub('', out)))
         return strip_meta_tags(out)        # empty when fully meta — render nothing,
                                             # else early '...' placeholders pollute _sent
 

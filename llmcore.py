@@ -528,6 +528,9 @@ def _openai_stream(sess, messages):
                    'include': ['reasoning.encrypted_content']}
         if sess.reasoning_effort: payload["reasoning"] = {"effort": sess.reasoning_effort}
         if sess.max_tokens: payload["max_output_tokens"] = sess.max_tokens
+        # 对齐 chat 分支：Responses API 官方支持 temperature（默认1.0），此前该分支
+        # 漏传，用户在 mykey 里配的 temperature 对 responses 端点静默失效。
+        if temperature != 1: payload["temperature"] = temperature
     else:
         url = auto_make_url(sess.api_base, "chat/completions")
         if sess.system: messages = [{"role": "system", "content": sess.system}] + messages
@@ -665,7 +668,7 @@ class BaseSession:
         def _enum(key, valid):
             v = cfg.get(key); v = None if v is None else str(v).strip().lower()
             return v if not v or v in valid else print(f"[WARN] Invalid {key} {v!r}, ignored.")
-        self.reasoning_effort = _enum('reasoning_effort', {'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'})
+        self.reasoning_effort = _enum('reasoning_effort', {'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'})
         self.service_tier = _enum('service_tier', {'auto', 'default', 'priority', 'flex'})
         self.thinking_type = _enum('thinking_type', {'adaptive', 'enabled', 'disabled'})
         self.thinking_budget_tokens = cfg.get('thinking_budget_tokens')

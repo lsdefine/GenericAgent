@@ -56,7 +56,10 @@
     "description": "短期工作便签，每轮自动注入上下文，防长任务信息丢失。前中期调用，非结束时。何时调用：(1)任务开始读SOP后，存用户需求和关键约束/参数（简单1-2步任务除外）；(2)子任务切换或上下文即将被冲刷前；(3)多次重试失败后，重读SOP并必须调用存储新发现；(4)切换新任务时更新内容，清旧进度但保留仍有效的约束。\n\n何时不调用：简单任务（1-2步且无严重约束）、任务已完成时（应当用长期结算工具）",
     "parameters": {"type": "object", "properties": {
       "key_info": {"type": "string", "description": "替换当前便签（<200 tokens）。增量更新：先回顾现有内容，保留仍有效的，再增删改。存：要避的坑、用户原始需求、关键参数/发现、文件路径、当前进度、下一步计划。不存：马上要用用完即丢的、上下文中显而易见的、用户已换全新任务时的旧任务信息。宁多更新不丢关键"},
-      "related_sop": {"type": "string", "description": "相关sop名称，可以多个，必要时需要再读"}}}
+      "related_sop": {"type": "string", "description": "相关sop名称，可以多个，必要时需要再读"},
+      "verify_conditions": {"type": "array", "description": "执行前定义的可观察完成条件；任一条件未满足都会阻止任务结束。kind 支持 file_exists(path)、file_contains(path, substring)、last_exit_code_zero、tool_result_contains(tool, substring)。", "items": {"type": "object", "required": ["kind"], "properties": {
+        "kind": {"type": "string", "enum": ["file_exists", "file_contains", "last_exit_code_zero", "tool_result_contains"]},
+        "description": {"type": "string"}, "path": {"type": "string"}, "tool": {"type": "string"}, "substring": {"type": "string"}}}}}}
   }},
   {"type": "function", "function": {
     "name": "ask_user",

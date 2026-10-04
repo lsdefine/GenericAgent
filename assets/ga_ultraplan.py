@@ -1,7 +1,7 @@
 from contextlib import contextmanager, redirect_stdout, redirect_stderr
 from concurrent.futures import ThreadPoolExecutor
 from time import time, sleep
-import html, io, json, os, re, subprocess, sys, tempfile, threading, traceback, urllib.request, webbrowser
+import html, io, json, os, re, secrets, subprocess, sys, tempfile, threading, traceback, urllib.request, webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 __all__ = ["plan", "phase", "parallel", "mapchain"]
@@ -12,6 +12,8 @@ _T0 = time(); _phases = []; _phase_stack = []; _tasks = []; _current = "idle"; _
 _TASK_SLUG = "task"; _FUNC_SEQ = 0; _PLANNED = False; _SESSION = None; _sessions = {}
 _RUN_DIR = os.path.abspath(os.environ.get("GA_ULTRAPLAN_RUNDIR", os.path.join(_ROOT, "temp", "ultraplan_default")))
 os.makedirs(_RUN_DIR, exist_ok=True)
+_TOKEN = os.environ.get("GA_ULTRAPLAN_TOKEN") or ""
+_TOKEN_FILE = os.path.join(_RUN_DIR, ".ultraplan_token")
 
 def _bind(rundir):
     global _SESSION, _RUN_DIR, _phases, _phase_stack, _tasks, _current, _events, _FUNC_SEQ, _TASK_SLUG
@@ -71,6 +73,12 @@ class _H(BaseHTTPRequestHandler):
     def do_POST(self):
         global _TASK_SLUG, _PLANNED
         if self.path != "/exec": self.send_response(404); self.end_headers(); return
+        if _TOKEN:
+            got = ""
+            for k, v in self.headers.items():
+                if k.lower() == "authorization": got = v; break
+            if not got.startswith("Bearer ") or not secrets.compare_digest(got[7:], _TOKEN):
+                self.send_response(401); self.end_headers(); return
         n = int(self.headers.get("Content-Length", "0")); req = json.loads(self.rfile.read(n).decode("utf-8"))
         out = io.StringIO(); err = io.StringIO(); rc = 0
         with _exec_lock, redirect_stdout(out), redirect_stderr(err):
@@ -91,8 +99,14 @@ class _H(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
 
 def _serve_daemon():
-    global _srv
+    global _srv, _TOKEN
     sys.modules.setdefault("assets.ga_ultraplan", sys.modules[__name__])
+    if not _TOKEN:
+        _TOKEN = secrets.token_urlsafe(32)
+        os.makedirs(_RUN_DIR, exist_ok=True)
+        with open(_TOKEN_FILE, "w") as f: f.write(_TOKEN)
+        try: os.chmod(_TOKEN_FILE, 0o600)
+        except OSError: pass
     _srv = ThreadingHTTPServer(("127.0.0.1", _PORT), _H); _srv.timeout = 60; url = f"http://127.0.0.1:{_PORT}/"
     print(f"[ultraplan] {url}", flush=True)
     if os.environ.get("GA_ULTRAPLAN_BROWSER") != "0": webbrowser.open(url)
@@ -105,7 +119,13 @@ def _ping():
 def _show():
     if os.environ.get("GA_ULTRAPLAN_DAEMON") == "1" or os.environ.get("GA_ULTRAPLAN_HTML") == "0": return
     if not _ping():
-        subprocess.Popen([sys.executable, __file__, "--daemon"], cwd=_ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env={**os.environ, "GA_ULTRAPLAN_DAEMON":"1"})
+        tok = secrets.token_urlsafe(32) if not _TOKEN else _TOKEN
+        if not _TOKEN:
+            os.makedirs(_RUN_DIR, exist_ok=True)
+            with open(_TOKEN_FILE, "w") as f: f.write(tok)
+            try: os.chmod(_TOKEN_FILE, 0o600)
+            except OSError: pass
+        subprocess.Popen([sys.executable, __file__, "--daemon"], cwd=_ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env={**os.environ, "GA_ULTRAPLAN_DAEMON":"1", "GA_ULTRAPLAN_TOKEN": tok})
         for _ in range(20):
             if _ping(): break
             sleep(0.25)
@@ -117,7 +137,10 @@ def plan(rundir):
     if os.environ.get("GA_ULTRAPLAN_DAEMON") == "1": return
     _show(); path = os.path.abspath(sys.argv[0]); code = open(path, encoding="utf-8").read()
     data = json.dumps({"path": path, "cwd": os.getcwd(), "rundir": _RUN_DIR, "task": _task_slug(path), "code": code}).encode("utf-8")
-    r = urllib.request.urlopen(urllib.request.Request(f"http://127.0.0.1:{_PORT}/exec", data=data, headers={"Content-Type":"application/json"}), timeout=None)
+    tok = os.environ.get("GA_ULTRAPLAN_TOKEN") or (open(_TOKEN_FILE).read().strip() if os.path.exists(_TOKEN_FILE) else "")
+    headers = {"Content-Type": "application/json"}
+    if tok: headers["Authorization"] = "Bearer " + tok
+    r = urllib.request.urlopen(urllib.request.Request(f"http://127.0.0.1:{_PORT}/exec", data=data, headers=headers), timeout=None)
     resp = json.loads(r.read().decode("utf-8")); sys.stdout.write(resp.get("stdout", "")); sys.stderr.write(resp.get("stderr", "")); sys.exit(resp.get("returncode", 1))
 
 @contextmanager

@@ -357,7 +357,7 @@ function connectWS() {
     const tabs = (await chrome.tabs.query({})).filter(t => isScriptable(t.url));
     ws.send(JSON.stringify({
       type: 'ext_ready',
-      tabs: tabs.map(t => ({ id: t.id, url: t.url, title: t.title }))
+      tabs: tabs.map(t => ({ id: t.id, url: t.url, title: t.title, active: !!t.active, windowId: t.windowId }))
     }));
     console.log('[TMWD-WS] Sent ext_ready with', tabs.length, 'tabs');
   };
@@ -412,7 +412,7 @@ async function sendTabsUpdate() {
   const tabs = (await chrome.tabs.query({})).filter(t => isScriptable(t.url) && !/streamlit/i.test(t.title));
   ws.send(JSON.stringify({
     type: 'tabs_update',
-    tabs: tabs.map(t => ({ id: t.id, url: t.url, title: t.title }))
+    tabs: tabs.map(t => ({ id: t.id, url: t.url, title: t.title, active: !!t.active, windowId: t.windowId }))
   }));
 }
 chrome.tabs.onUpdated.addListener((_, changeInfo) => {
@@ -420,3 +420,7 @@ chrome.tabs.onUpdated.addListener((_, changeInfo) => {
 });
 chrome.tabs.onRemoved.addListener(() => sendTabsUpdate());
 chrome.tabs.onCreated.addListener(() => sendTabsUpdate());
+chrome.tabs.onActivated.addListener(() => sendTabsUpdate());
+if (chrome.windows && chrome.windows.onFocusChanged) {
+  chrome.windows.onFocusChanged.addListener(() => sendTabsUpdate());
+}

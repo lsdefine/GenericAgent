@@ -38,6 +38,32 @@ def get_system_prompt():
     prompt += get_global_memory()
     return prompt
 
+_VISION_MIMES = {'image/png', 'image/jpeg', 'image/gif', 'image/webp'}
+_MAX_IMAGE_BYTES = 10 * 1024 * 1024
+_MAX_IMAGE_TOTAL_BYTES = 20 * 1024 * 1024
+_MAX_IMAGE_COUNT = 8
+
+def build_image_content(query, image_paths):
+    """Build first-turn multimodal content without allowing oversized requests."""
+    import base64, mimetypes
+    blocks = [{"type": "text", "text": query}]
+    total_bytes = image_count = 0
+    for p in image_paths:
+        try:
+            mime = mimetypes.guess_type(p)[0] or 'image/png'
+            size = os.path.getsize(p)
+            oversized = size > _MAX_IMAGE_BYTES or total_bytes + size > _MAX_IMAGE_TOTAL_BYTES
+            if mime not in _VISION_MIMES or oversized or image_count >= _MAX_IMAGE_COUNT:
+                blocks.append({"type": "text", "text": f"[attached file: {p}]"})
+                continue
+            with open(p, 'rb') as f:
+                data = base64.b64encode(f.read()).decode()
+            total_bytes += size; image_count += 1
+            blocks.append({"type": "image", "source": {"type": "base64", "media_type": mime, "data": data}})
+        except OSError:
+            pass
+    return blocks
+
 # SDK:
 # agent = GenericAgent(); threading.Thread(target=agent.run, daemon=True).start()
 # output1_queue = agent.put_task(prompt1)
@@ -154,6 +180,7 @@ class GenericAgent:
             task = self.task_queue.get()
             if isinstance(task, str): break
             raw_query, source, display_queue = task["query"], task["source"], task["output"]
+            images = task.get("images") or []
             raw_query = self._handle_slash_cmd(raw_query, display_queue)
             if raw_query is None:
                 self.task_queue.task_done(); continue
@@ -180,8 +207,11 @@ class GenericAgent:
             if self.force_non_stream:
                 self.llmclient.backend.stream = False
                 self.llmclient.backend.read_timeout = max(self.llmclient.backend.read_timeout, 1200)
+            native_images = images and isinstance(self.llmclient, NativeToolClient)
+            init_content = build_image_content(raw_query, images) if native_images else None
             gen = agent_runner_loop(self.llmclient, sys_prompt, raw_query, handler, TOOLS_SCHEMA, 
-                                    max_turns=180, verbose=self.verbose, yield_info=True)
+                                    max_turns=180, verbose=self.verbose, yield_info=True,
+                                    initial_user_content=init_content)
             try:
                 full_resp = ""; last_pos = 0; curr_turn = 0; turn_resps = self.all_outputs[-1]["outputs"]
                 for chunk in gen:

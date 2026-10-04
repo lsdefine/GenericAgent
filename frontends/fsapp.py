@@ -8,6 +8,7 @@ os.chdir(PROJECT_ROOT)
 import traceback
 import lark_oapi as lark
 from lark_oapi.api.im.v1 import *
+from lark_oapi.ws.client import loop as ws_loop
 
 
 def _ensure_dir(path):
@@ -844,6 +845,37 @@ def handle_message(data):
     ).start()
 
 
+def _start_ws_client(cli, loop, timeout=180, interval=5):
+    """Exit on a stalled SDK loop so the service manager can restart the process.
+
+    A restart interrupts in-flight tasks; supervise this frontend (e.g. systemd).
+    A live loop alone does not prove that the remote connection is healthy.
+    """
+    stopped = threading.Event()
+    last_beat = [time.monotonic()]
+
+    def beat():
+        if not stopped.is_set():
+            last_beat[0] = time.monotonic()
+            loop.call_later(interval, beat)
+
+    def watch():
+        while not stopped.wait(interval):
+            if time.monotonic() - last_beat[0] >= timeout:
+                print(f"[ERROR] 飞书事件循环超过 {timeout}s 未响应，退出以交由服务管理器重启",
+                      file=sys.stderr, flush=True)
+                os._exit(1)  # sys.exit() would only terminate this watchdog thread.
+
+    loop.call_soon_threadsafe(beat)
+    watcher = threading.Thread(target=watch, name="feishu-watchdog", daemon=True)
+    watcher.start()
+    try:
+        cli.start()
+    finally:
+        stopped.set()
+        watcher.join()
+
+
 def main():
     global client, APP_ID, APP_SECRET, ALLOWED_USERS, PUBLIC_ACCESS, CONFIG_PATH
     APP_ID, APP_SECRET, ALLOWED_USERS, PUBLIC_ACCESS, CONFIG_PATH = _feishu_config()
@@ -857,7 +889,7 @@ def main():
             client = create_client()
             cli = lark.ws.Client(APP_ID, APP_SECRET, event_handler=handler, log_level=lark.LogLevel.INFO)
             print("=" * 50 + "\n飞书 Agent 已启动（长连接模式）\n" + f"App ID: {APP_ID}\n配置: {CONFIG_PATH}\n等待消息...\n" + "=" * 50, flush=True)
-            cli.start()
+            _start_ws_client(cli, ws_loop)
             retry_delay = 5
         except KeyboardInterrupt:
             raise

@@ -82,6 +82,25 @@ LLM_PROVIDERS = [
     },
     # ═══════════════════════════ 直连 API（按旗舰能力降序）═══════════════════════════
     {
+        'id': 'atlascloud',
+        'name': 'Atlas Cloud (DeepSeek / Qwen)',
+        'desc': 'OpenAI 兼容的多模型 API，支持 DeepSeek、Qwen 等模型',
+        'type': 'native_oai',
+        'template': {
+            'name': 'atlascloud', 'apikey': '<your-atlas-cloud-key>',
+            'apibase': 'https://api.atlascloud.ai/v1',
+            'model': 'deepseek-ai/deepseek-v4-pro',
+            'api_mode': 'chat_completions', 'reasoning_effort': 'high',
+            'max_retries': 3, 'connect_timeout': 10, 'read_timeout': 120,
+        },
+        'key_hint': '在 https://www.atlascloud.ai/ 获取 API Key',
+        'model_choices': [
+            'deepseek-ai/deepseek-v4-pro',
+            'deepseek-ai/deepseek-v4-flash',
+            'qwen/qwen3.5-flash',
+        ],
+    },
+    {
         'id': 'deepseek',
         'name': 'DeepSeek (v4-Pro / Flash)',
         'desc': '开源模型，v4-Pro 旗舰 1M 上下文',

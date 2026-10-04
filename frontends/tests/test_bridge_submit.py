@@ -3,7 +3,24 @@
 Tests the core file-attachment contract: files_meta → agent_prompt path prepend.
 Run: pytest frontends/tests/test_bridge_submit.py -v
 """
+import ast
+import base64
 import json
+import os
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parent.parent.parent
+
+
+def _load_image_builder():
+    tree = ast.parse((ROOT / "agentmain.py").read_text(encoding="utf-8"))
+    names = {"_VISION_MIMES", "_MAX_IMAGE_BYTES", "_MAX_IMAGE_TOTAL_BYTES", "_MAX_IMAGE_COUNT"}
+    nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "build_image_content"
+             or isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id in names for t in n.targets)]
+    ns = {"os": os}
+    exec(compile(ast.Module(nodes, []), "agentmain.py", "exec"), ns)
+    return ns["build_image_content"]
 
 
 class TestPathPrepend:
@@ -116,7 +133,7 @@ class TestAddMessageExtra:
 
 
 class TestImagePathExtraction:
-    """Test image_paths extraction from image_metas (used for _patch_chat_for_images)."""
+    """Test image_paths extraction from image_metas."""
 
     def test_extracts_paths(self):
         image_metas = [
@@ -138,6 +155,38 @@ class TestImagePathExtraction:
         ]
         image_paths = [m["path"] for m in (image_metas or []) if m.get("path")]
         assert image_paths == ["/tmp/a.png"]
+
+
+class TestImageContent:
+    def test_builds_image_and_limits_oversized_files(self, tmp_path):
+        small, large = tmp_path / "small.png", tmp_path / "large.png"
+        small.write_bytes(b"png-data")
+        large.write_bytes(b"x" * (10 * 1024 * 1024 + 1))
+        blocks = _load_image_builder()("describe", [str(small)] + [str(large)] * 9)
+        assert blocks[0] == {"type": "text", "text": "describe"}
+        assert blocks[1]["source"] == {"type": "base64", "media_type": "image/png",
+                                       "data": base64.b64encode(b"png-data").decode()}
+        assert len(blocks) == 11
+        assert all(b == {"type": "text", "text": f"[attached file: {large}]"} for b in blocks[2:])
+
+    def test_native_chat_keeps_image_blocks(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("image_test_llmcore", ROOT / "llmcore.py")
+        llmcore = importlib.util.module_from_spec(spec); spec.loader.exec_module(llmcore)
+        captured = {}
+
+        class Backend:
+            history, tools, model = [], None, "test"
+            def set_system(self, _): pass
+            def ask(self, message):
+                captured["message"] = message
+                if False: yield
+
+        client = llmcore.NativeToolClient.__new__(llmcore.NativeToolClient)
+        client.backend, client.log_path = Backend(), False
+        image = {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "x"}}
+        list(client.chat([{"role": "user", "content": [{"type": "text", "text": " "}, image]}]))
+        assert captured["message"]["content"] == [image]
 
 
 class TestSessionFiltering:
@@ -223,13 +272,10 @@ class TestRunAgentTurnScope:
             f"Use 'sess.id' instead — 'sid' is only defined in submit_prompt's scope."
         )
 
-    def test_patch_chat_for_images_exists(self):
-        """_patch_chat_for_images must exist in bridge — it's the image injection path."""
+    def test_images_flow_through_task(self):
         source = self._get_bridge_source()
-        assert "_patch_chat_for_images" in source, (
-            "_patch_chat_for_images method missing from desktop_bridge.py — "
-            "image uploads will silently fail (agent won't see images)"
-        )
+        assert "_patch_chat_for_images" not in source
+        assert "put_task(prompt, images=" in self._extract_method_body(source, "run_agent_turn")
 
     def test_submit_prompt_separates_agent_prompt_from_stored_message(self):
         """submit_prompt must store clean prompt in message but pass paths to agent."""
@@ -257,5 +303,5 @@ class TestRunAgentTurnScope:
         body = self._extract_method_body(source, "submit_prompt")
         assert "image_paths" in body, (
             "submit_prompt must extract image_paths from image_metas and pass to "
-            "run_agent_turn. Without this, _patch_chat_for_images receives None."
+            "run_agent_turn. Without this, put_task receives no images."
         )

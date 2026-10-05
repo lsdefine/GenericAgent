@@ -11,7 +11,7 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 
 def safe_print(*args, **kwargs):
     try: print(*args, **kwargs)
-    except: pass
+    except Exception: pass
 
 def code_run(code, code_type="python", timeout=60, cwd=None, code_cwd=None, stop_signal=None, maxlen=10000, myprint=safe_print):
     """代码执行器
@@ -52,7 +52,7 @@ def code_run(code, code_type="python", timeout=60, cwd=None, code_cwd=None, stop
                 except UnicodeDecodeError: line = line_bytes.decode('gbk', errors='ignore')
                 logs.append(line)
                 myprint(line, end="")
-        except: pass
+        except Exception: pass
 
     try:
         process = subprocess.Popen(
@@ -160,7 +160,7 @@ def log_memory_access(path):
     stats_file = os.path.join(script_dir, 'memory/file_access_stats.json')
     try:
         with open(stats_file, 'r', encoding='utf-8') as f: stats = json.load(f)
-    except: stats = {}
+    except Exception: stats = {}
     fname = os.path.basename(path)
     stats[fname] = {'count': stats.get(fname, {}).get('count', 0) + 1, 'last': datetime.now().strftime('%Y-%m-%d')}
     with open(stats_file, 'w', encoding='utf-8') as f: json.dump(stats, f, indent=2, ensure_ascii=False)
@@ -367,7 +367,7 @@ class GenericAgentHandler(BaseHandler):
             try:
                 with open(abs_path, 'w', encoding='utf-8') as f: f.write(str(content))
                 result["js_return"] += f"\n\n[已保存完整内容到 {abs_path}]"
-            except: result['js_return'] += f"\n\n[保存失败，无法写入文件 {abs_path}]"
+            except Exception: result['js_return'] += f"\n\n[保存失败，无法写入文件 {abs_path}]"
         show = smart_format(json.dumps(result, ensure_ascii=False, indent=2, default=json_default), max_str_len=300)
         self.print("Web Execute JS Result:", show)
         yield f"JS 执行结果:\n{show}\n"
@@ -456,7 +456,7 @@ class GenericAgentHandler(BaseHandler):
     def _check_plan_completion(self):
         if not os.path.isfile(p:=self._in_plan_mode() or ''): return None
         try: return len(re.findall(r'\[ \]', open(p, encoding='utf-8', errors='replace').read()))
-        except: return None
+        except Exception: return None
     
     def do_update_working_checkpoint(self, args, response):
         '''为整个任务设定后续需要临时记忆的重点。'''

@@ -223,12 +223,41 @@ class TestRunAgentTurnScope:
             f"Use 'sess.id' instead — 'sid' is only defined in submit_prompt's scope."
         )
 
-    def test_patch_chat_for_images_exists(self):
-        """_patch_chat_for_images must exist in bridge — it's the image injection path."""
+    def test_core_forwards_images_to_agent_loop(self):
+        """agentmain.run() must forward task images to agent_runner_loop.
+
+        Replaces the old desktop_bridge._patch_chat_for_images monkey-patch:
+        the core now injects image blocks via initial_user_content, so image
+        uploads cannot silently fail on any frontend (fsapp/tui/bridge alike),
+        and there is exactly one injection point.
+        """
+        from pathlib import Path
+        candidates = [
+            Path(__file__).parent.parent.parent / "agentmain.py",
+            Path(__file__).parent.parent.parent.parent / "agentmain.py",
+        ]
+        source = next((p.read_text(encoding="utf-8") for p in candidates if p.exists()), "")
+        assert source, "agentmain.py not found"
+        assert "_multimodal_initial_content" in source, (
+            "_multimodal_initial_content missing from agentmain.py — "
+            "images passed to put_task() would be silently dropped again"
+        )
+        assert "initial_user_content" in source, (
+            "agentmain.run() must pass initial_user_content to agent_runner_loop"
+        )
+
+    def test_run_agent_turn_does_not_monkeypatch_images(self):
+        """run_agent_turn must not re-inject images at the backend level.
+
+        The core (put_task -> initial_user_content) is the single injection
+        point; a leftover backend.ask patch would duplicate every image.
+        """
         source = self._get_bridge_source()
-        assert "_patch_chat_for_images" in source, (
-            "_patch_chat_for_images method missing from desktop_bridge.py — "
-            "image uploads will silently fail (agent won't see images)"
+        body = self._extract_method_body(source, "run_agent_turn")
+        assert body, "Could not extract run_agent_turn body"
+        assert "_patch_chat_for_images" not in body, (
+            "run_agent_turn still monkey-patches backend.ask for images — "
+            "the core now injects them, so this would duplicate every image"
         )
 
     def test_submit_prompt_separates_agent_prompt_from_stored_message(self):
@@ -257,5 +286,5 @@ class TestRunAgentTurnScope:
         body = self._extract_method_body(source, "submit_prompt")
         assert "image_paths" in body, (
             "submit_prompt must extract image_paths from image_metas and pass to "
-            "run_agent_turn. Without this, _patch_chat_for_images receives None."
+            "run_agent_turn. Without this, the agent never receives the images."
         )

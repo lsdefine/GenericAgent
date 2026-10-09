@@ -1460,7 +1460,7 @@ def discover_im_services(ga_root: Path) -> List[dict]:
         if "app" not in f or not f.endswith(".py") or f in _SKIP or "stapp" in f or "tuiapp" in f:
             continue
         rel = f"frontends/{f}"
-        out.append({"id": rel, "cmd": [sys.executable, str(d / f)]})
+        out.append({"id": rel, "cmd": [sys.executable, str(d / f)], "script": str(d / f)})
     return out
 
 
@@ -1471,6 +1471,7 @@ def discover_extra_services(ga_root: Path) -> List[dict]:
         out.append({
             "id": "reflect/scheduler.py",
             "cmd": [sys.executable, "agentmain.py", "--reflect", "reflect/scheduler.py"],
+            "script": str(sched),
         })
     # conductor 跟 scheduler 一样,bridge 启动时自动拉起。--no-browser 是关键:
     # conductor.py 默认会用 webbrowser.open 在用户浏览器弹一个 8900 端口 UI,
@@ -1490,6 +1491,7 @@ def discover_extra_services(ga_root: Path) -> List[dict]:
                 str(conductor_port),
             ],
             "port": conductor_port,
+            "script": str(conductor),
         })
     return out
 
@@ -1502,6 +1504,92 @@ def _port_alive(port: Optional[int]) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(0.3)
         return s.connect_ex(("127.0.0.1", port)) == 0
+
+
+# ---------------------------------------------------------------------------
+# External instance detection
+#
+# The panel used to only know about processes *this* bridge spawned, so a
+# service started elsewhere (the repo's own App Manager, schtasks, a terminal)
+# was always reported "offline" - even for channels that have no port to probe
+# (fsapp / wecomapp / dcapp ...). We now also look at running command lines.
+# One psutil sweep is shared by every service and cached briefly.
+# ---------------------------------------------------------------------------
+
+_EXTERNAL_PROC_CACHE: Dict[str, Any] = {"ts": 0.0, "by_cmdline": {}}
+_EXTERNAL_PROC_TTL = 3.0
+
+
+def _refresh_external_proc_index() -> Dict[str, List[int]]:
+    now = time.time()
+    if now - float(_EXTERNAL_PROC_CACHE.get("ts") or 0.0) < _EXTERNAL_PROC_TTL:
+        return _EXTERNAL_PROC_CACHE["by_cmdline"]
+    by_cmdline: Dict[str, List[int]] = {}
+    me = os.getpid()
+    try:
+        import psutil
+        for proc in psutil.process_iter(["pid", "cmdline"]):
+            try:
+                pid = proc.info.get("pid")
+                if pid in (None, me):
+                    continue
+                parts = proc.info.get("cmdline") or []
+                if not parts:
+                    continue
+                joined = " ".join(str(p) for p in parts)
+                key = os.path.normcase(joined).replace("/", "\\")
+                by_cmdline.setdefault(key, []).append(int(pid))
+            except Exception:
+                continue
+    except Exception:
+        by_cmdline = {}
+    _EXTERNAL_PROC_CACHE["ts"] = now
+    _EXTERNAL_PROC_CACHE["by_cmdline"] = by_cmdline
+    return by_cmdline
+
+
+def _external_proc_pids(script: Optional[str]) -> List[int]:
+    """PIDs currently running `script`, excluding this bridge process."""
+    if not script:
+        return []
+    target = os.path.normcase(os.path.normpath(str(script))).replace("/", "\\")
+    if not target:
+        return []
+    hits: List[int] = []
+    for cmdline_key, pids in _refresh_external_proc_index().items():
+        if target in cmdline_key:
+            hits.extend(pids)
+    return hits
+
+
+def _terminate_pids(pids: List[int], timeout: float = 5.0) -> str:
+    """Best-effort graceful stop of foreign PIDs. "" on success, else error text."""
+    try:
+        import psutil
+    except Exception as exc:
+        return f"psutil unavailable: {exc}"
+    procs = []
+    for pid in pids:
+        try:
+            procs.append(psutil.Process(pid))
+        except Exception:
+            continue
+    for proc in procs:
+        with contextlib.suppress(Exception):
+            proc.terminate()
+    deadline = time.time() + timeout
+    for proc in procs:
+        while time.time() < deadline:
+            try:
+                if not proc.is_running():
+                    break
+            except Exception:
+                break
+            time.sleep(0.1)
+        with contextlib.suppress(Exception):
+            if proc.is_running():
+                proc.kill()
+    return ""
 
 
 def _mem_mb(pid: Optional[int]) -> Optional[int]:
@@ -1630,7 +1718,20 @@ class ServiceManager:
         catalog_port = self._catalog.get(sid, {}).get("port")
         port_alive = _port_alive(catalog_port)
         external = bool(catalog_port and port_alive and not owned)
-        if proc is not None and not owned:
+        foreign_pids = [] if owned else _external_proc_pids(self._catalog.get(sid, {}).get("script"))
+        foreign_pid = foreign_pids[0] if foreign_pids else None
+        if not owned and foreign_pids:
+            # Same service already runs outside this bridge (repo's own App
+            # Manager / scheduler / a terminal). Report it as running instead of
+            # pretending it is offline, and stop calling the occupied port a
+            # conflict - that instance explains it.
+            running = True
+            status = "running"
+            external = False
+            if scan["warning"]:
+                last_warning = scan["warning"][0]
+                warning_key = scan["warning"][1]
+        elif proc is not None and not owned:
             if sid in self._stopping:
                 status, last_error = "offline", ""
             elif external:
@@ -1665,9 +1766,10 @@ class ServiceManager:
             "running": running,
             "owned": owned,
             "external": external,
+            "externalProc": bool(foreign_pids),
             "portConflict": external,
             "port": catalog_port,
-            "pid": proc.pid if owned and proc is not None else None,
+            "pid": proc.pid if owned and proc is not None else foreign_pid,
             "lastError": last_error,
             "errorKey": error_key,
             "lastWarning": last_warning,
@@ -1743,6 +1845,12 @@ class ServiceManager:
             proc = self.procs.get(sid)
             if proc is not None and proc.poll() is None:
                 return {"ok": True, "service": self._managed_state(sid)}
+            foreign_pids = _external_proc_pids(svc.get("script"))
+            if foreign_pids:
+                err = f"already running outside this bridge (pid {foreign_pids[0]})"
+                item = self._managed_state(sid, err=err)
+                self._notify(sid, err=err)
+                return {"ok": False, "error": "already_running_external", "service": item}
             catalog_port = svc.get("port")
             if catalog_port and _port_alive(catalog_port):
                 err = f"port {catalog_port} is occupied by an untracked process"
@@ -1829,7 +1937,7 @@ class ServiceManager:
                 tag = f"exception {type(e).__name__}: {e}"
             bridge_print(f"[restart-broken] {sid}: {tag}")
 
-    def stop_service(self, sid: str) -> dict:
+    def stop_service(self, sid: str, *, include_external: bool = False) -> dict:
         with self.lock:
             if sid not in self._catalog:
                 raise KeyError(sid)
@@ -1848,6 +1956,13 @@ class ServiceManager:
                     stop_error = f"failed to stop managed process: {type(exc).__name__}: {exc}"
             if proc is None or proc.poll() is not None:
                 self.procs.pop(sid, None)
+            if include_external and not stop_error:
+                # The panel asked to stop this channel: also stop an instance that
+                # was started outside the bridge. Never done from stop_all_extras /
+                # bridge shutdown, which must not kill processes it does not own.
+                foreign_pids = _external_proc_pids(self._catalog.get(sid, {}).get("script"))
+                if foreign_pids:
+                    stop_error = _terminate_pids(foreign_pids)
             self._stopping.discard(sid)
             item = self._managed_state(sid, err=stop_error)
             self._notify(sid, err=stop_error)
@@ -2782,7 +2897,7 @@ async def service_stop_handler(request):
     sid = body.get("id") or request.query.get("id")
     if not sid:
         return json_ok({"ok": False, "error": "missing_id"}, status=400)
-    return json_ok(services.stop_service(sid))
+    return json_ok(services.stop_service(sid, include_external=True))
 
 
 async def service_logs_handler(request):

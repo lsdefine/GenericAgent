@@ -1,0 +1,12 @@
+# Runtime data may contain customer targets, response evidence, or audit findings.
+work/data/raw/*
+!work/data/raw/.gitkeep
+work/data/candidates/*
+!work/data/candidates/.gitkeep
+work/data/findings/*
+!work/data/findings/.gitkeep
+work/reports_out/*
+!work/reports_out/.gitkeep
+
+# Python cache
+work/scanner/__pycache__/

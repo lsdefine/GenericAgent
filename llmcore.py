@@ -1138,13 +1138,26 @@ class MixinSession:
             session = self._sessions[idx]
             gen = session.raw_ask(self._prepare(idx, messages))
             print(f'[MixinSession] Using session ({session.name})')
-            last_chunk, return_val, yielded = None, [], False
+            last_chunk, return_val, yielded, failed_after_output = None, [], False, False
             try:
                 while True:
                     chunk = next(gen); last_chunk = chunk
-                    if not yielded and test_error(chunk): continue
-                    yield chunk; yielded = True
+                    if failed_after_output:
+                        yield chunk
+                        continue
+                    if test_error(chunk):
+                        if yielded:
+                            yield chunk
+                            failed_after_output = True
+                            continue
+                        continue
+                    yield chunk; yielded = yielded or bool(chunk)
             except StopIteration as e: return_val = e.value or []
+            if failed_after_output:
+                self._cur_idx = (idx + 1) % n if n > 1 else idx
+                self._switched_at = time.time()
+                print(f'[MixinSession] Partial failure, next call → s{self._cur_idx} ({self.current.name})')
+                return return_val
             is_err = test_error(last_chunk)
             if not is_err:
                 if attempt > 0: self._cur_idx = idx; self._switched_at = time.time()

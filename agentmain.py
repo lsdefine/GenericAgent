@@ -15,6 +15,41 @@ from ga import GenericAgentHandler, smart_format, get_global_memory, format_erro
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 BANNED_TOOLS = (['ask_user', 'start_long_term_update'] if '--no-user-tools' in sys.argv else [])
+
+_VISION_MIMES = {'image/png', 'image/jpeg', 'image/gif', 'image/webp'}
+
+def _multimodal_initial_content(raw_query, images, llmclient):
+    """Build the first user turn's content blocks when the task carries images.
+
+    put_task() has always accepted images and every frontend passes them, but
+    run() used to drop them on the floor. Only NativeToolClient backends
+    understand Claude-style image blocks (the native Claude API takes them
+    as-is; the OAI paths convert them), so other clients keep plain text.
+    Returns None when there is nothing to add — callers pass the result
+    straight to agent_runner_loop(initial_user_content=...).
+    """
+    import base64, mimetypes
+    if not images or not isinstance(llmclient, NativeToolClient):
+        return None
+    blocks = [{"type": "text", "text": raw_query}]
+    for img in images:
+        path = img if isinstance(img, str) else (img.get("path") if isinstance(img, dict) else None)
+        if not path:
+            continue
+        mime = mimetypes.guess_type(path)[0] or 'image/png'
+        if mime not in _VISION_MIMES:
+            # Unsupported format (e.g. SVG) — reference the path as text instead
+            blocks.append({"type": "text", "text": f"[attached file: {path}]"})
+            continue
+        try:
+            with open(path, 'rb') as f:
+                data = base64.b64encode(f.read()).decode('ascii')
+        except OSError as e:
+            blocks.append({"type": "text", "text": f"[image read failed: {path}: {e}]"})
+            continue
+        blocks.append({"type": "image", "source": {"type": "base64", "media_type": mime, "data": data}})
+    return blocks
+
 def load_tool_schema(suffix=''):
     global TOOLS_SCHEMA
     TS = open(os.path.join(script_dir, f'assets/tools_schema{suffix}.json'), 'r', encoding='utf-8').read()
@@ -181,7 +216,8 @@ class GenericAgent:
                 self.llmclient.backend.stream = False
                 self.llmclient.backend.read_timeout = max(self.llmclient.backend.read_timeout, 1200)
             gen = agent_runner_loop(self.llmclient, sys_prompt, raw_query, handler, TOOLS_SCHEMA, 
-                                    max_turns=180, verbose=self.verbose, yield_info=True)
+                                    max_turns=180, verbose=self.verbose, yield_info=True,
+                                    initial_user_content=_multimodal_initial_content(raw_query, task.get("images"), self.llmclient))
             try:
                 full_resp = ""; last_pos = 0; curr_turn = 0; turn_resps = self.all_outputs[-1]["outputs"]
                 for chunk in gen:

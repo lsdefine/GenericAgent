@@ -1039,45 +1039,6 @@ class AgentManager:
         emit_session_state(sess, "running")
         return {"ok": True, "sessionId": sid, "accepted": True, "userMessageId": user_msg["id"], "seq": seq}
 
-    @staticmethod
-    def _patch_chat_for_images(client, image_paths):
-        """Monkey-patch backend.ask to inject base64 image blocks on the first LLM call."""
-        import base64 as b64, mimetypes
-        try:
-            from llmcore import NativeToolClient
-        except ImportError:
-            return
-        if not isinstance(client, NativeToolClient):
-            return
-        backend = client.backend
-        original_ask = backend.ask
-
-        _VISION_MIMES = {'image/png', 'image/jpeg', 'image/gif', 'image/webp'}
-
-        def patched_ask(msg):
-            try:
-                del backend.ask
-            except AttributeError:
-                backend.ask = original_ask
-            if isinstance(msg, dict) and isinstance(msg.get("content"), list):
-                for p in image_paths:
-                    try:
-                        mime = mimetypes.guess_type(p)[0] or 'image/png'
-                        if mime not in _VISION_MIMES:
-                            # Unsupported image format (e.g. SVG) — inject as text path reference
-                            msg["content"].append({"type": "text", "text": f"[attached file: {p}]"})
-                            continue
-                        with open(p, 'rb') as f:
-                            raw = f.read()
-                        data = b64.b64encode(raw).decode()
-                        msg["content"].append({"type": "image", "source": {"type": "base64", "media_type": mime, "data": data}})
-                    except Exception:
-                        pass
-            resp = yield from original_ask(msg)
-            return resp
-
-        backend.ask = patched_ask
-
     def run_agent_turn(
         self,
         sess: Session,
@@ -1131,8 +1092,6 @@ class AgentManager:
                     ) or None
                 except Exception:
                     sess.running_model = None
-            if images:
-                self._patch_chat_for_images(agent.llmclient, images)
             full = ""
             done_outputs = None  # done时agent给的全量轮文本(turn_resps.copy())
             if hasattr(agent, "put_task"):

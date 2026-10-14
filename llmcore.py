@@ -579,6 +579,15 @@ def _to_responses_input(messages):
                 elif ptype == "image_url":
                     url = (part.get("image_url") or {}).get("url", "")
                     if url and role != "assistant": parts.append({"type": "input_image", "image_url": url})
+                elif ptype == "image" and role != "assistant":
+                    # Claude-style image blocks (fsapp/tui/desktop attachments) were
+                    # silently dropped here; convert them like _msgs_claude2oai does.
+                    src = part.get("source") or {}
+                    if src.get("type") == "base64" and src.get("data"):
+                        parts.append({"type": "input_image",
+                                      "image_url": f"data:{src.get('media_type', 'image/png')};base64,{src['data']}"})
+                    elif src.get("type") == "url" and src.get("url"):
+                        parts.append({"type": "input_image", "image_url": src["url"]})
         if len(parts) == 0: parts = [{"type": text_type, "text": str(content) if not isinstance(content, list) else '[empty]'}]
         result.append({"role": role, "content": parts})
         pending = []
@@ -588,6 +597,15 @@ def _to_responses_input(messages):
             pending.append(cid)
             result.append({"type": "function_call", "call_id": cid, "name": f.get("name", ""), "arguments": f.get("arguments", "")})
     return result
+
+
+def _drop_blank_text_blocks(blocks):
+    """Drop whitespace-only text blocks (they 400 on strict API proxies).
+
+    Only text blocks are candidates: image/tool_result blocks carry no "text"
+    key and must survive untouched.
+    """
+    return [b for b in blocks if b.get("type") != "text" or b.get("text", "").strip()]
 
 
 def _msgs_claude2oai(messages):
@@ -1208,7 +1226,7 @@ class NativeToolClient:
             if tid not in tr_id_set: tool_result_blocks.append({"type": "tool_result", "tool_use_id": tid, "content": ""})
         self._pending_tool_ids = []
         # Filter whitespace-only text blocks that cause 400 on strict API proxies
-        filtered_content = [c for c in combined_content if c.get("text", "").strip()]
+        filtered_content = _drop_blank_text_blocks(combined_content)
         final_content = tool_result_blocks + filtered_content
         if not final_content: final_content = [{"type": "text", "text": "."}]
         merged = {"role": "user", "content": final_content}

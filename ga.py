@@ -293,7 +293,15 @@ class GenericAgentHandler(BaseHandler):
         return int(l * multiplier / args.get('_tool_num', 1))
     def _get_abs_path(self, path):
         if not path: return ""
-        return os.path.abspath(os.path.join(self.cwd, path))   
+        root = os.path.realpath(self.cwd)
+        resolved = os.path.realpath(os.path.join(root, path))
+        try:
+            inside_root = os.path.commonpath((root, resolved)) == root
+        except ValueError:
+            inside_root = False
+        if not inside_root:
+            raise ValueError(f"Path must stay inside working directory: {path}")
+        return resolved
 
     def _extract_code_block(self, response, code_type):
         code_type = {'python':'python|py', 'powershell':'powershell|ps1|pwsh', 'bash':'bash|sh|shell'}.get(code_type, re.escape(code_type))
@@ -353,8 +361,12 @@ class GenericAgentHandler(BaseHandler):
         '''web情况下的优先使用工具，执行任何js达成对浏览器的*完全*控制。支持将结果保存到文件供后续读取分析。'''
         script = args.get("script", "") or self._extract_code_block(response, "javascript")
         if not script: return StepOutcome("[Error] Script missing. Use ```javascript block or 'script' arg.", next_prompt="\n")
-        abs_path = self._get_abs_path(script.strip())
-        if os.path.isfile(abs_path):
+        script_path = os.path.join(self.cwd, script.strip())
+        if os.path.isfile(script_path):
+            try:
+                abs_path = self._get_abs_path(script.strip())
+            except ValueError as e:
+                return StepOutcome({"status": "error", "msg": str(e)}, next_prompt="\n")
             with open(abs_path, 'r', encoding='utf-8') as f: script = f.read()
         save_to_file = args.get("save_to_file", "")
         switch_tab_id = args.get("switch_tab_id") or args.get("tab_id")
@@ -362,12 +374,14 @@ class GenericAgentHandler(BaseHandler):
         result = web_execute_js(script, switch_tab_id=switch_tab_id, no_monitor=no_monitor)
         if save_to_file and "js_return" in result:
             content = str(result["js_return"] or '')
-            abs_path = self._get_abs_path(save_to_file)
-            result["js_return"] = smart_format(content, max_str_len=170)
             try:
+                abs_path = self._get_abs_path(save_to_file)
+                result["js_return"] = smart_format(content, max_str_len=170)
                 with open(abs_path, 'w', encoding='utf-8') as f: f.write(str(content))
                 result["js_return"] += f"\n\n[已保存完整内容到 {abs_path}]"
-            except: result['js_return'] += f"\n\n[保存失败，无法写入文件 {abs_path}]"
+            except Exception as e:
+                result["js_return"] = smart_format(content, max_str_len=170)
+                result['js_return'] += f"\n\n[保存失败: {e}]"
         show = smart_format(json.dumps(result, ensure_ascii=False, indent=2, default=json_default), max_str_len=300)
         self.print("Web Execute JS Result:", show)
         yield f"JS 执行结果:\n{show}\n"
@@ -377,7 +391,11 @@ class GenericAgentHandler(BaseHandler):
         return StepOutcome(smart_format(result, max_str_len=maxlen), next_prompt=next_prompt)
     
     def do_file_patch(self, args, response):
-        path = self._get_abs_path(args.get("path", ""))
+        try:
+            path = self._get_abs_path(args.get("path", ""))
+        except ValueError as e:
+            yield f"[Status] ❌ 路径拒绝: {e}\n"
+            return StepOutcome({"status": "error", "msg": str(e)}, next_prompt="\n")
         yield f"[Action] Patching file: {path}\n"
         old_content = args.get("old_content", "")
         new_content = args.get("new_content", "")
@@ -393,7 +411,11 @@ class GenericAgentHandler(BaseHandler):
     def do_file_write(self, args, response):
         '''用于对整个文件的大量处理，精细修改要用file_patch。
         需要将要写入的内容放在<file_content>标签内，或者放在代码块中'''
-        path = self._get_abs_path(args.get("path", ""))
+        try:
+            path = self._get_abs_path(args.get("path", ""))
+        except ValueError as e:
+            yield f"[Status] ❌ 路径拒绝: {e}\n"
+            return StepOutcome({"status": "error", "msg": str(e)}, next_prompt="\n")
         mode = args.get("mode", "overwrite")  # overwrite/append/prepend
         action_str = {"prepend": "Prepending to", "append": "Appending to"}.get(mode, "Overwriting")
         yield f"[Action] {action_str} file: {os.path.basename(path)}\n"
@@ -426,7 +448,11 @@ class GenericAgentHandler(BaseHandler):
         
     def do_file_read(self, args, response):
         '''读取文件内容。从第start行开始读取。如有keyword则返回第一个keyword(忽略大小写)周边内容'''
-        path = self._get_abs_path(args.get("path", ""))
+        try:
+            path = self._get_abs_path(args.get("path", ""))
+        except ValueError as e:
+            yield f"[Status] ❌ 路径拒绝: {e}\n"
+            return StepOutcome({"status": "error", "msg": str(e)}, next_prompt="\n")
         yield f"\n[Action] Reading file: {path}\n"
         start = _arg(args, "start", 1, int)
         count = _arg(args, "count", 200, int)

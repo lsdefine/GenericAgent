@@ -10,6 +10,7 @@ except NameError:
 
 INTERVAL = 120
 ONCE = False
+FRESH_CONTEXT = True
 
 _dir = os.path.dirname(os.path.abspath(__file__))
 TASKS = os.path.join(_dir, '../sche_tasks')

@@ -324,6 +324,7 @@ if __name__ == '__main__':
             if task:
                 print(f'[Reflect] triggered: {task[:80]}')
                 if (_ln := getattr(mod, 'LLM', None)): agent.next_llm(next((i for i, b in enumerate(agent.llmclients) if not isinstance(b, dict) and b.backend.name == _ln), agent.llm_no))
+                if getattr(mod, 'FRESH_CONTEXT', False): from frontends.continue_cmd import reset_conversation; reset_conversation(agent, snapshot=False)
                 dq = agent.put_task(task, source='reflect')
                 try:
                     while 'done' not in (item := dq.get(timeout=2200)): pass

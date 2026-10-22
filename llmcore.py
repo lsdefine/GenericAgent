@@ -573,15 +573,27 @@ def _openai_stream(sess, messages):
     return (yield from _stream_with_retry(sess, url, headers, payload, parse_fn))
         
 def _prepare_oai_tools(tools, api_mode="chat_completions"):
-    if api_mode == "responses":
-        resp_tools = []
-        for t in tools:
-            if t.get("type") == "function" and "function" in t:
-                rt = {"type": "function"}; rt.update(t["function"])
-                resp_tools.append(rt)
-            else: resp_tools.append(t)
-        return resp_tools
-    return tools
+    prepared = []
+    for t in tools:
+        fn = t.get("function") if isinstance(t, dict) else None
+        if not isinstance(fn, dict) or t.get("type") != "function":
+            prepared.append(t)
+            continue
+
+        # Some strict OpenAI-compatible gateways reject a missing `required`
+        # field even though JSON Schema treats it the same as an empty list.
+        fn = copy.deepcopy(fn)
+        params = fn.get("parameters")
+        if isinstance(params, dict) and not isinstance(params.get("required"), list):
+            params["required"] = []
+
+        if api_mode == "responses":
+            rt = {"type": "function"}; rt.update(fn)
+            prepared.append(rt)
+        else:
+            normalized = dict(t); normalized["function"] = fn
+            prepared.append(normalized)
+    return prepared
 
 def _to_responses_input(messages):
     result, pending = [], []

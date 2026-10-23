@@ -7,6 +7,11 @@ def _conn_request_hook(self, *a, **k):  # after request() the socket is connecte
     r = _orig_conn_request(self, *a, **k); _INFLIGHT[threading.get_ident()] = self.sock; return r
 urllib3.connection.HTTPConnection.request = _conn_request_hook
 _RESP_CACHE_KEY = str(uuid.uuid4()); _RESP_CODEX_KEY = str(uuid.uuid4())
+_OC_SIDS = {}
+def _oc_session_id(name):
+    """OpenCode Go 要求每个会话上报稳定的 x-opencode-session，进程内按模型名复用同一 ID。"""
+    if name not in _OC_SIDS: _OC_SIDS[name] = str(uuid.uuid4())
+    return _OC_SIDS[name]
 _ROOT = os.path.dirname(os.path.abspath(__file__))
 if _ROOT not in sys.path: sys.path.append(_ROOT)
 
@@ -549,6 +554,7 @@ def _openai_stream(sess, messages):
     elif 'minimax' in ml: temperature = max(0.01, min(temperature, 1.0))  # MiniMax requires temp in (0, 1]
     headers = {"Authorization": f"Bearer {sess.api_key}", "Content-Type": "application/json", "Accept": "text/event-stream", 'originator': 'codex_exec'}
     headers["User-Agent"] = sess.user_agent
+    headers.update(getattr(sess, 'extra_headers', None) or {})
     if api_mode == "responses":
         url = auto_make_url(sess.api_base, "responses")
         payload = {"model": model, "input": _to_responses_input(messages), "stream": sess.stream, 
@@ -705,6 +711,12 @@ class BaseSession:
         self.max_tokens = cfg.get('max_tokens')
         self.default_ua = "claude-cli/2.1.280 (external, cli)"
         self.user_agent = cfg.get("user_agent", self.default_ua)
+        # ── OpenCode Go (opencode.ai)：必须按会话上报 x-opencode-session，否则 400 MissingSessionID ──
+        self.extra_headers = dict(cfg.get('extra_headers') or {})
+        if 'opencode.ai' in self.api_base:
+            self.session_id = str(cfg.get('session_id') or _oc_session_id(self.name))
+            self.extra_headers.setdefault('x-opencode-session', self.session_id)
+            if self.user_agent == self.default_ua: self.user_agent = 'GenericAgent/1.0'  # 官方要求客户端自报 UA
     def _apply_claude_thinking(self, payload):
         if self.thinking_type:
             thinking = {"type": self.thinking_type}
@@ -759,6 +771,7 @@ class ClaudeSession(BaseSession):
         messages = _fix_messages(messages)
         if self.max_tokens is None: self.max_tokens = 8192
         headers = {"x-api-key": self.api_key, "Content-Type": "application/json", "anthropic-version": "2023-06-01", "anthropic-beta": "prompt-caching-2024-07-31"}
+        headers.update(self.extra_headers)
         payload = {"model": self.model, "messages": messages, "max_tokens": self.max_tokens, "stream": self.stream}
         if self.temperature != 1: payload["temperature"] = self.temperature
         self._apply_claude_thinking(payload)
@@ -840,7 +853,7 @@ class NativeClaudeSession(BaseSession):
         headers.update({"Accept": "application/json", "X-Claude-Code-Session-Id": self._session_id, "X-Stainless-Arch": "x64", "X-Stainless-Lang": "js", "X-Stainless-OS": "Windows", "X-Stainless-Package-Version": "0.94.0", "X-Stainless-Retry-Count": "0", "X-Stainless-Runtime": "node", "X-Stainless-Runtime-Version": "v24.3.0", "X-Stainless-Timeout": "600"})
         if self.api_key_header == 'x-api-key': headers["x-api-key"] = self.api_key
         elif self.api_key_header == 'bearer': headers["authorization"] = f"Bearer {self.api_key}"
-        elif self.api_key.startswith("sk-ant-"): headers["x-api-key"] = self.api_key
+        elif self.api_key.startswith("sk-ant-") or 'opencode.ai' in self.api_base: headers["x-api-key"] = self.api_key
         else: headers["authorization"] = f"Bearer {self.api_key}"
         payload = {"model": model, "messages": messages, "max_tokens": self.max_tokens, "stream": self.stream}
         #if self.fake_cc_system_prompt: payload["max_tokens"] = 64000

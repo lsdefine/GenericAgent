@@ -471,13 +471,13 @@ def _snapshot_current_log(pid=None):
     return snapshot
 
 
-def reset_conversation(agent, message='🆕 已开启新对话，当前上下文已清空'):
+def reset_conversation(agent, message='🆕 已开启新对话，当前上下文已清空', snapshot=True):
     """Abort current work and clear all known frontend-visible conversation state."""
     try:
         agent.abort()
     except Exception:
         pass
-    _snapshot_current_log()
+    if snapshot: _snapshot_current_log()
     if hasattr(agent, 'history'):
         agent.history = []
     for client in _agent_clients(agent):

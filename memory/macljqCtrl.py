@@ -40,6 +40,7 @@ except Exception:
 
 import Quartz
 from AppKit import NSScreen, NSWorkspace, NSPasteboard, NSStringPboardType, NSRunningApplication
+from Foundation import NSDate, NSRunLoop
 
 verbose_click = True  # Click 像素变化打印开关
 
@@ -157,10 +158,10 @@ _MODS = {
 
 def _key_tap(keycode, flags=0):
     down = Quartz.CGEventCreateKeyboardEvent(None, keycode, True)
-    if flags: Quartz.CGEventSetFlags(down, flags)
+    Quartz.CGEventSetFlags(down, flags)
     _post(down)
     up = Quartz.CGEventCreateKeyboardEvent(None, keycode, False)
-    if flags: Quartz.CGEventSetFlags(up, flags)
+    Quartz.CGEventSetFlags(up, 0)
     _post(up)
 
 def Press(cmd, staytime=0):
@@ -185,9 +186,11 @@ def TypeText(s):
     """直接键入 Unicode 文本 (无需剪贴板)。"""
     for ch in str(s):
         ev = Quartz.CGEventCreateKeyboardEvent(None, 0, True)
+        Quartz.CGEventSetFlags(ev, 0)  # 字符事件不能继承上一次快捷键的修饰键。
         Quartz.CGEventKeyboardSetUnicodeString(ev, len(ch), ch)
         _post(ev)
         ev2 = Quartz.CGEventCreateKeyboardEvent(None, 0, False)
+        Quartz.CGEventSetFlags(ev2, 0)
         Quartz.CGEventKeyboardSetUnicodeString(ev2, len(ch), ch)
         _post(ev2)
         time.sleep(0.005)
@@ -297,22 +300,22 @@ def ActivateApp(target):
                (微信 com.tencent.xinWeChat 与腾讯会议 com.tencent.meeting 都含 'tencent')。
     返回是否成功。"""
     ws = NSWorkspace.sharedWorkspace()
+    def _fire(app):
+        if not app.activateWithOptions_(1 << 1):  # NSApplicationActivateIgnoringOtherApps
+            return False
+        # Cocoa 的前台状态需要处理通知；普通 sleep 会让后续检查读到旧应用。
+        NSRunLoop.currentRunLoop().runUntilDate_(NSDate.dateWithTimeIntervalSinceNow_(0.3))
+        return bool(app.isActive())
     # 1) pid 精确激活 (首选)
     if isinstance(target, int):
         app = NSRunningApplication.runningApplicationWithProcessIdentifier_(target)
         if app is not None:
-            app.activateWithOptions_(1 << 1)  # NSApplicationActivateAllWindows
-            time.sleep(0.3)
-            return True
+            return _fire(app)
         return False
     # 2) 字符串: 按精确度分级匹配 (避免同厂商前缀误伤)
     key = str(target)
     keyl = key.lower()
     apps = list(ws.runningApplications())
-    def _fire(app):
-        app.activateWithOptions_(1 << 1)
-        time.sleep(0.3)
-        return True
     # ① bundle id 精确等值
     for app in apps:
         if (app.bundleIdentifier() or '').lower() == keyl:
@@ -328,7 +331,8 @@ def ActivateApp(target):
     # 3) 兜底用 open -a
     try:
         subprocess.run(['open', '-a', str(target)], check=True, capture_output=True)
-        time.sleep(0.5); return True
+        NSRunLoop.currentRunLoop().runUntilDate_(NSDate.dateWithTimeIntervalSinceNow_(0.5))
+        return True
     except Exception:
         return False
 

@@ -715,6 +715,7 @@ class BaseSession:
             else: payload["thinking"] = thinking
         if self.reasoning_effort:
             effort = {'low': 'low', 'medium': 'medium', 'high': 'high', 'xhigh': 'max', 'max': 'max'}.get(self.reasoning_effort)
+            if self.model == 'MiniMax-M3.1-Flash' and self.reasoning_effort == 'xhigh': effort = 'xhigh'
             if effort: payload["output_config"] = {"effort": effort}
             else: print(f"[WARN] reasoning_effort {self.reasoning_effort!r} is unsupported for Claude output_config.effort, ignored.")
     def ask(self, prompt):

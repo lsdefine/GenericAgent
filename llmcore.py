@@ -270,29 +270,155 @@ def _try_parse_tool_args(raw):
         return parsed
     return [{"_raw": raw}]
 
+# DSML (DeepSeek tool-call markup) leak guard.
+# Leaked shapes seen in the wild: '<|P|DSML|P|invoke ...>', '</|P|DSML|P| parameter>',
+# '</|P|DSML|P|tool_calls>', '<|DSML|parameter>'. P = ASCII bar / fullwidth bar / double bar.
+_DSML_WS = chr(32) + chr(9)
+_DSML_PIPES = chr(124) + chr(0xFF5C) + chr(0x2016)
+_DSML_TAG = '</?[' + _DSML_WS + ']*[' + _DSML_PIPES + ']{1,2}[' + _DSML_WS + ']*DSML[' + _DSML_WS + ']*[' + _DSML_PIPES + ']{1,2}[^>]{0,200}?>'
+_DSML_PATTERN = re.compile(_DSML_TAG, re.IGNORECASE)
+_DSML_LEAK = False  # latched while parsing one response; reset at the start of each parse
+
+def _strip_dsml_markers(text: str) -> str:
+    # Remove DSML markers that leak into content text (used both on streamed chunks and on the
+    # final assembled text). Handles the closing-tag variants that previously slipped through,
+    # e.g. '</|P|DSML|P| parameter>' and '<|P|DSML|P|invoke name="x">'.
+    # Latches _DSML_LEAK so callers can detect the leak even when payload text remains.
+    global _DSML_LEAK
+    if not text or 'DSML' not in text: return text
+    out = _DSML_PATTERN.sub('', text)
+    if out != text: _DSML_LEAK = True
+    return out
+
+class _DsmlStreamFilter:
+    # Chunk-safe stripper: holds back a trailing '<...' without '>' so a marker split across
+    # SSE chunks is still removed (a plain per-chunk regex cannot see such a split tag).
+    _HOLD_MAX = 64
+    def __init__(self): self.buf = ''
+    def feed(self, chunk):
+        self.buf += chunk
+        cut = self.buf.rfind('<')
+        hold = ''
+        if cut >= 0 and '>' not in self.buf[cut:] and len(self.buf) - cut <= self._HOLD_MAX:
+            hold = self.buf[cut:]; self.buf = self.buf[:cut]
+        out = _strip_dsml_markers(self.buf); self.buf = hold
+        return out
+    def flush(self):
+        out = _strip_dsml_markers(self.buf); self.buf = ''
+        return out
+
+# --- text-channel tool-call recovery -------------------------------------------
+# The model sometimes writes the call as literal markup in the assistant *text*
+# channel instead of returning a real tool_call, e.g. "<code_run><parameter
+# name=\"script\">...</parameter></code_run>", or the truncated "<code_run\">" that
+# ends a turn.  Nothing executes, no tool_calls come back, and the agent loop stops
+# silently (the #804 / #837 family).  These helpers recover that trailing markup.
+_TEXT_CALL_TAG = re.compile(r'<\s*([A-Za-z_][\w\-]*)\s*([^<>]*?)/?\s*>', re.S)
+_TEXT_PARAM = re.compile(r'<\s*parameter\s+name\s*=\s*["\']([^"\']+)["\']\s*>(.*?)<\s*/\s*parameter\s*>', re.S | re.I)
+_TEXT_ATTR = re.compile(r'([A-Za-z_][\w\-]*)\s*=\s*("([^"]*)"|\'([^\']*)\')')
+
+def _text_tag_args(attrs):
+    out = {}
+    for m in _TEXT_ATTR.finditer(attrs or ''):
+        out[m.group(1)] = m.group(3) if m.group(3) is not None else m.group(4)
+    return out
+
+def _text_call_body(name, body):
+    body = (body or '').strip()
+    if not body: return None
+    if body.startswith('{'):
+        obj = None
+        for candidate in (body, body.replace('\\n', '\n').replace('\\"', '"')):
+            try: obj = json.loads(candidate); break
+            except Exception: continue
+        if isinstance(obj, dict):
+            if isinstance(obj.get('arguments'), dict): return obj['arguments']
+            if isinstance(obj.get('input'), dict): return obj['input']
+            return obj
+        return None
+    params = _TEXT_PARAM.findall(body)
+    if params: return {k: v.strip() for k, v in params}
+    return {'script': body} if name == 'code_run' else None
+
+def split_text_tool_calls(text, tool_names):
+    """Recover a tool call the model emitted as markup in the text channel.
+
+    Only *trailing* markup is considered: a leaked call is the last thing a turn
+    produces, so code samples quoted earlier in the reply are left alone.
+
+    Returns (calls, partial):
+      calls   -- [(name, args), ...] parsed from the trailing markup (executable)
+      partial -- True when the turn ends with an unterminated opening tag, e.g.
+                 '<code_run">'; the model meant to call but the call never completed
+    """
+    if not text or not tool_names: return [], False
+    tail = text.rstrip()
+    if not tail.endswith('>'):
+        m = re.search(r'<\s*([A-Za-z_][\w\-]*)\s*[^<>]*$', tail)
+        if m and (m.group(1) in tool_names or m.group(1) in ('tool_use', 'tool_call')):
+            return [], True
+        return [], False
+    last = None
+    for m in _TEXT_CALL_TAG.finditer(tail):
+        if m.group(1) in tool_names or m.group(1) in ('tool_use', 'tool_call'): last = m
+    if last is None: return [], False
+    name = last.group(1)
+    close = '</%s>' % name
+    end = tail.find(close, last.end())
+    if name in ('tool_use', 'tool_call'):
+        if end < 0: return [], True
+        if tail[end + len(close):].strip(): return [], False
+        try: obj = json.loads(tail[last.end():end].strip())
+        except Exception: return [], True
+        if not isinstance(obj, dict): return [], True
+        cname = obj.get('name') or obj.get('tool')
+        cargs = obj.get('arguments', obj.get('input', obj.get('args', {})))
+        if isinstance(cargs, str):
+            try: cargs = json.loads(cargs)
+            except Exception: return [], True
+        if cname in tool_names and isinstance(cargs, dict): return [(cname, cargs)], False
+        return [], False
+    if end < 0:
+        # opening tag closed but body never came: '<code_run">' / '<code_run>'
+        body = tail[last.end():].strip()
+        if not body: return [], True
+        args = _text_call_body(name, body)
+        if args is None: return [], True
+        args.update(_text_tag_args(last.group(2)))
+        return [(name, args)], False
+    if tail[end + len(close):].strip(): return [], False   # text follows: not a leaked call
+    args = _text_call_body(name, tail[last.end():end])
+    if args is None: return [], True
+    args.update(_text_tag_args(last.group(2)))
+    return [(name, args)], False
+
 def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
     """Parse OpenAI SSE stream (chat_completions or responses API).
     Yields text chunks, returns list[content_block].
     content_block: {type:'text', text:str} | {type:'tool_use', id:str, name:str, input:dict}
     """
+    global _DSML_LEAK
+    _DSML_LEAK = False  # this parse latches leaks via _strip_dsml_markers
     content_text = ""
     if api_mode == "responses":
         seen_delta = False; fc_buf = {}; current_fc_idx = None; reasoning_text = ""
+        saw_terminal = False; saw_done = False
+        dsml_f = _DsmlStreamFilter()
         for line in resp_lines:
             if not line: continue
             line = line.decode('utf-8', errors='replace') if isinstance(line, bytes) else line
             if not line.startswith("data:"): continue
             data_str = line[5:].lstrip()
-            if data_str == "[DONE]": break
+            if data_str == "[DONE]": saw_done = True; break
             try: evt = json.loads(data_str)
             except: continue
             etype = evt.get("type", "")
             if etype == "response.output_text.delta":
                 delta = evt.get("delta", "")
-                if delta: seen_delta = True; content_text += delta; yield delta
+                if delta: seen_delta = True; content_text += delta; yield dsml_f.feed(delta)
             elif etype == "response.output_text.done" and not seen_delta:
                 text = evt.get("text", "")
-                if text: content_text += text; yield text
+                if text: content_text += text; yield dsml_f.feed(text)
             elif etype == "response.reasoning_text.delta":
                 delta = evt.get("delta", "")
                 if delta: reasoning_text += delta
@@ -304,6 +430,14 @@ def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
                 if item.get("type") == "function_call":
                     idx = evt.get("output_index", 0)
                     fc_buf[idx] = {"id": item.get("call_id", item.get("id", "")), "name": item.get("name", ""), "args": ""}
+                    current_fc_idx = idx
+            elif etype == "response.output_item.done":
+                # Not every gateway emits output_item.added; take the final item snapshot too.
+                item = evt.get("item", {})
+                if item.get("type") == "function_call":
+                    idx = evt.get("output_index", len(fc_buf))
+                    fc_buf.setdefault(idx, {"id": item.get("call_id", item.get("id", "")), "name": item.get("name", ""), "args": ""})
+                    if item.get("arguments"): fc_buf[idx]["args"] = item["arguments"]
                     current_fc_idx = idx
             elif etype == "response.function_call_arguments.delta":
                 idx = evt.get("output_index", current_fc_idx or 0)
@@ -318,20 +452,36 @@ def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
                 if emsg: content_text += f"!!!Error: {emsg}"; yield f"!!!Error: {emsg}"
                 break
             elif etype == "response.completed":
-                usage = evt.get("response", {}).get("usage", {})
+                saw_terminal = True
+                resp_obj = evt.get("response") or {}
+                usage = resp_obj.get("usage", {})
                 _record_usage(usage, api_mode)
+                # Some gateways omit delta events and only ship the final snapshot here;
+                # without this fallback both text and tool calls are silently dropped.
+                for item in resp_obj.get("output") or []:
+                    itype = item.get("type")
+                    if itype == "function_call":
+                        idx = item.get("output_index", len(fc_buf))
+                        fc_buf.setdefault(idx, {"id": item.get("call_id", item.get("id", "")), "name": item.get("name", ""), "args": ""})
+                        if item.get("arguments"): fc_buf[idx]["args"] = item["arguments"]
+                    elif itype == "message" and not seen_delta:
+                        for c in item.get("content") or []:
+                            if c.get("type") in ("output_text", "text") and c.get("text"):
+                                content_text += c["text"]; yield dsml_f.feed(c["text"])
                 break
             elif etype == "response.incomplete":
                 # DeepSeek/OpenAI responses stream may end here (no [DONE]); treat as valid terminal,
-                # record usage and surface a truncation marker instead of an empty-response retry storm.
+                # record usage and surface a truncation marker so a half-written turn is never silent
+                # (issue #837: a reply stopping mid-tool-call used to look like a normal answer).
+                saw_terminal = True
                 usage = (evt.get("response") or {}).get("usage", {})
                 _record_usage(usage, api_mode)
                 reason = ((evt.get("response") or {}).get("incomplete_details") or {}).get("reason", "") or "unknown"
-                if not content_text and not fc_buf:
-                    marker = f"[!!! output truncated: {reason}]"
-                    content_text += marker; yield marker
+                marker = f"[!!! output truncated: {reason}]"
+                content_text += marker; yield marker
                 break
             elif etype == "response.failed":
+                saw_terminal = True
                 usage = (evt.get("response") or {}).get("usage", {})
                 _record_usage(usage, api_mode)
                 err = ((evt.get("response") or {}).get("error") or {})
@@ -339,9 +489,16 @@ def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
                 _raise_if_retryable_overload(emsg)
                 if emsg: content_text += f"!!!Error: {emsg}"; yield f"!!!Error: {emsg}"
                 break
+        if not saw_terminal and not saw_done and (content_text or fc_buf):
+            # Stream died without any terminal event (connection reset, proxy cutoff, server bug).
+            # Say so instead of letting a truncated turn look like a finished answer.
+            marker = "[!!! stream ended without a terminal event]"
+            content_text += marker; yield marker
+        if (rest := dsml_f.flush()):
+            content_text += rest; yield rest
         blocks = []
         if reasoning_text: blocks.append({"type": "thinking", "thinking": reasoning_text})
-        if content_text: blocks.append({"type": "text", "text": content_text})
+        if content_text: blocks.append({"type": "text", "text": _strip_dsml_markers(content_text)})
         for idx in sorted(fc_buf):
             fc = fc_buf[idx]
             inps = _try_parse_tool_args(fc["args"])
@@ -353,6 +510,7 @@ def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
     else:
         tc_buf = {}  # index -> {id, name, args}
         reasoning_text = ""
+        dsml_f = _DsmlStreamFilter()
         for line in resp_lines:
             if not line: continue
             line = line.decode('utf-8', errors='replace') if isinstance(line, bytes) else line
@@ -366,7 +524,7 @@ def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
             if rc := delta.get("reasoning_content") or delta.get("reasoning", ""):
                 reasoning_text += rc; yield rc
             if delta.get("content"):
-                text = delta["content"]; content_text += text; yield text
+                text = delta["content"]; content_text += text; yield dsml_f.feed(text)
             for tc in (delta.get("tool_calls") or []):
                 idx = tc.get("index", 0)
                 has_name = bool(tc.get("function", {}).get("name"))
@@ -378,9 +536,11 @@ def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
                 if tc.get("id") and not tc_buf[idx]["id"]: tc_buf[idx]["id"] = tc["id"]
             usage = evt.get("usage")
             if usage: _record_usage(usage, api_mode)
+        if (rest := dsml_f.flush()):
+            content_text += rest; yield rest
         blocks = []
         if reasoning_text: blocks.append({"type": "thinking", "thinking": reasoning_text})
-        if content_text: blocks.append({"type": "text", "text": content_text})
+        if content_text: blocks.append({"type": "text", "text": _strip_dsml_markers(content_text)})
         for idx in sorted(tc_buf):
             tc = tc_buf[idx]
             inps = _try_parse_tool_args(tc["args"])
@@ -416,6 +576,8 @@ def _record_usage(usage, api_mode):
     STATS.update(inp=inp, cached=cached, out=out)
     
 def _parse_openai_json(data, api_mode="chat_completions"):
+    global _DSML_LEAK
+    _DSML_LEAK = False
     blocks = []
     if api_mode == "responses":
         _record_usage(data.get("usage") or {}, api_mode)
@@ -423,7 +585,8 @@ def _parse_openai_json(data, api_mode="chat_completions"):
             if item.get("type") == "message":
                 for p in (item.get("content") or []):
                     if p.get("type") in ("output_text", "text") and p.get("text"):
-                        blocks.append({"type": "text", "text": p["text"]}); yield p["text"]
+                        _txt = _strip_dsml_markers(p["text"])
+                        if _txt: blocks.append({"type": "text", "text": _txt}); yield _txt
             elif item.get("type") == "reasoning":
                 for p in (item.get("content") or []):
                     if p.get("type") in ("reasoning_text", "summary_text") and p.get("text"):
@@ -449,7 +612,7 @@ def _parse_openai_json(data, api_mode="chat_completions"):
         reasoning = msg.get("reasoning_content") or msg.get("reasoning", "")
         if reasoning:
             blocks.append({"type": "thinking", "thinking": reasoning})
-        content = msg.get("content", "")
+        content = _strip_dsml_markers(msg.get("content", ""))
         if content:
             blocks.append({"type": "text", "text": content}); yield content
         for tc in (msg.get("tool_calls") or []):
@@ -930,6 +1093,7 @@ class MockResponse:
         self.thinking = thinking; self.content = content          
         self.tool_calls = tool_calls; self.raw = raw
         self.stop_reason = 'tool_use' if tool_calls else stop_reason
+        self.dsml_leak = _DSML_LEAK  # latched by _strip_dsml_markers while parsing this response
     def __repr__(self):    
         return f"<MockResponse thinking={bool(self.thinking)}, content='{self.content}', tools={bool(self.tool_calls)}>"
 

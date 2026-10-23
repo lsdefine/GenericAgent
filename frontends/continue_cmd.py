@@ -448,10 +448,10 @@ def _current_log_path(pid=None):
     return os.path.join(_LOG_DIR, f'model_responses_{pid}.txt')
 
 
-def _snapshot_current_log(pid=None):
-    """Persist current PID log as a standalone recoverable snapshot, then clear it."""
-    path = _current_log_path(pid)
-    if not os.path.isfile(path):
+def _snapshot_current_log(pid=None, path=None):
+    """Persist the active log as a standalone recoverable snapshot, then clear it."""
+    path = _current_log_path(pid) if path is None else path
+    if not path or not os.path.isfile(path):
         return None
     try:
         with open(path, encoding='utf-8', errors='replace') as fh:
@@ -477,7 +477,7 @@ def reset_conversation(agent, message='🆕 已开启新对话，当前上下文
         agent.abort()
     except Exception:
         pass
-    _snapshot_current_log()
+    _snapshot_current_log(path=getattr(agent, 'log_path', None))
     if hasattr(agent, 'history'):
         agent.history = []
     for client in _agent_clients(agent):

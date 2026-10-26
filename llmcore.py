@@ -165,6 +165,14 @@ def auto_make_url(base, path):
     if b.endswith(p): return b
     return f"{b}/{p}" if re.search(r'/v\d+(/|$)', b) else f"{b}/v1/{p}"
 
+def _oc_headers(sess, base):
+    """opencode go 网关自2026-09-06起强制 x-opencode-session 头(会话亲和+提示词缓存)。
+    同一会话对象内恒定、跨会话唯一; 可在cfg里加 'opencode_session' 覆盖自动生成的uuid"""
+    if 'opencode.ai' not in (base or ''): return {}
+    if not getattr(sess, '_oc_session', None):
+        sess._oc_session = getattr(sess, 'opencode_session', None) or str(uuid.uuid4())
+    return {"x-opencode-session": sess._oc_session}
+
 def _parse_claude_json(data):
     if data.get("stop_reason") == "refusal":
         err = "[Error: Claude refusal]"
@@ -549,6 +557,7 @@ def _openai_stream(sess, messages):
     elif 'minimax' in ml: temperature = max(0.01, min(temperature, 1.0))  # MiniMax requires temp in (0, 1]
     headers = {"Authorization": f"Bearer {sess.api_key}", "Content-Type": "application/json", "Accept": "text/event-stream", 'originator': 'codex_exec'}
     headers["User-Agent"] = sess.user_agent
+    headers.update(_oc_headers(sess, sess.api_base))
     if api_mode == "responses":
         url = auto_make_url(sess.api_base, "responses")
         payload = {"model": model, "input": _to_responses_input(messages), "stream": sess.stream, 
@@ -838,6 +847,7 @@ class NativeClaudeSession(BaseSession):
             "anthropic-beta": ",".join(beta_parts), "anthropic-dangerous-direct-browser-access": "true",
             "user-agent": self.user_agent, "x-app": "cli"}
         headers.update({"Accept": "application/json", "X-Claude-Code-Session-Id": self._session_id, "X-Stainless-Arch": "x64", "X-Stainless-Lang": "js", "X-Stainless-OS": "Windows", "X-Stainless-Package-Version": "0.94.0", "X-Stainless-Retry-Count": "0", "X-Stainless-Runtime": "node", "X-Stainless-Runtime-Version": "v24.3.0", "X-Stainless-Timeout": "600"})
+        headers.update(_oc_headers(self, getattr(self, 'api_base', '')))
         if self.api_key_header == 'x-api-key': headers["x-api-key"] = self.api_key
         elif self.api_key_header == 'bearer': headers["authorization"] = f"Bearer {self.api_key}"
         elif self.api_key.startswith("sk-ant-"): headers["x-api-key"] = self.api_key
@@ -888,7 +898,7 @@ class NativeClaudeSession(BaseSession):
         text_parts = [b["text"] for b in content_blocks if b.get("type") == "text"]
         content = "\n".join(text_parts).strip()
         tool_calls = [MockToolCall(b["name"], b.get("input", {}), id=b.get("id", "")) for b in content_blocks if b.get("type") == "tool_use"]
-        if not tool_calls: tool_calls, content = _parse_text_tool_calls(content)
+        if not tool_calls: tool_calls, content = _parse_text_tool_calls(content, _tool_names(getattr(self, 'tools', None)))
         thinking_parts = [b["thinking"] for b in content_blocks if b.get("type") == "thinking"]
         thinking = "\n".join(thinking_parts).strip()
         if not thinking:
@@ -1013,7 +1023,7 @@ Follow these steps to think and act:
         if think_match:
             thinking = think_match.group(1).strip()
             remaining_text = re.sub(r"<think(?:ing)?>(.*?)</think(?:ing)?>", "", remaining_text, flags=re.DOTALL)
-        tool_calls, remaining_text = _parse_text_tool_calls(remaining_text)
+        tool_calls, remaining_text = _parse_text_tool_calls(remaining_text, _tool_names(getattr(self, 'tools', None)))
         if not tool_calls:
             json_strs = []; errors = []
             if '<tool_use>' in remaining_text:
@@ -1044,8 +1054,142 @@ Follow these steps to think and act:
                     print(f"[Warn] {e}"); tool_calls.append(MockToolCall('bad_json', {'msg': e}))
         return MockResponse(thinking, remaining_text.strip(), tool_calls, text)
 
-def _parse_text_tool_calls(content):
+_DEFAULT_TOOL_NAMES = ('code_run', 'file_read', 'file_write', 'file_patch', 'web_scan',
+                       'web_execute_js', 'ask_user', 'update_working_checkpoint',
+                       'start_long_term_update')
+_TOOL_PRIMARY_ARG = {'code_run': 'script', 'web_execute_js': 'script', 'file_read': 'path',
+                     'file_write': 'content', 'file_patch': 'new_content',
+                     'ask_user': 'question', 'update_working_checkpoint': 'key_info'}
+_VIRTUAL_TOOL_TAGS = ('tool_use', 'tool_call', 'invoke', 'parameter', 'function_call',
+                      'function_results', 'tool_calls')
+_DSML_TAG_RE = re.compile(r"<(/?)\s*(?:[｜|]+\s*)?DSML(?:\s*[｜|]+)?\s*", re.I)
+
+def _normalize_dsml(text):
+    """`<|DSML|invoke ...>` variants -> `<invoke ...>` so one regex handles both dialects."""
+    if not text or 'DSML' not in text: return text or ''
+    return _DSML_TAG_RE.sub(lambda m: '<' + (m.group(1) or ''), text)
+
+def _code_spans(text):
+    """Spans of fenced/inline code: never auto-execute tool markup that is only being shown."""
+    spans = [m.span() for m in re.finditer(r"```[\s\S]*?```", text)]
+    spans += [m.span() for m in re.finditer(r"`[^`\n]+`", text)]
+    return spans
+
+def _in_spans(pos, spans):
+    return any(s <= pos < e for s, e in spans)
+
+def _tool_names(tools):
+    out = []
+    for t in tools or []:
+        if not isinstance(t, dict): continue
+        n = t.get('name') or (t.get('function') or {}).get('name')
+        if n and n not in out: out.append(n)
+    return out
+
+def _coerce(v):
+    v = (v or '').strip(); low = v.lower()
+    if low in ('true', 'false'): return low == 'true'
+    if re.fullmatch(r'-?\d{1,12}', v): return int(v)
+    if re.fullmatch(r'-?\d+\.\d+', v): return float(v)
+    if v[:1] in '[{':
+        try: return json.loads(v)
+        except Exception: pass
+    return v
+
+def _attrs_to_args(attrs):
+    args = {}
+    for m in re.finditer(r"""([\w-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))""", attrs or ''):
+        val = next((g for g in m.groups()[1:] if g is not None), '')
+        args[m.group(1)] = _coerce(val)
+    return args
+
+def _body_to_args(name, body):
+    body = (body or '').strip()
+    if not body: return None
+    if body[0] in '[{':
+        try:
+            d = json.loads(body)
+            if isinstance(d, dict):
+                args = d.get('arguments') or d.get('args') or d.get('input') or d.get('params')
+                if isinstance(args, dict): return args
+                if not any(k in d for k in ('name', 'type', 'function')): return d
+        except Exception: pass
+    if name in ('code_run', 'web_execute_js'):
+        m = re.search(r"<(?:script|code)>\s*([\s\S]*?)\s*</(?:script|code)>", body, re.I)
+        if m: body = m.group(1)
+        body = re.sub(r'^(?:script|code|js|python|bash)\s*:\s*', '', body, count=1, flags=re.I)
+        return {'script': body} if body.strip() else None
+    if name == 'file_write': return {'content': body}
+    if name == 'file_patch':
+        parts = {k: v.strip() for k, v in re.findall(r"<(old_content|new_content)>([\s\S]*?)</\1>", body)}
+        return parts or None
+    if name == 'ask_user':
+        q = re.search(r"<question>([\s\S]*?)</question>", body, re.I)
+        cs = re.findall(r"<candidate>([\s\S]*?)</candidate>", body, re.I)
+        if q or cs:
+            out = {'question': (q.group(1).strip() if q else body)}
+            if cs: out['candidates'] = [c.strip() for c in cs]
+            return out
+        return {'question': body}
+    key = _TOOL_PRIMARY_ARG.get(name)
+    return {key: body} if key else None
+
+def _markup_search_region(text):
+    """Salvage only markup *after* the summary line: legit answers can mention tags earlier."""
+    m = re.search(r"</summary>\s*", text)
+    off = m.end() if m else 0
+    tail = text[off:]
+    # If the tail still reads like natural prose (long lines, no tags), don't salvage anything.
+    return off, tail
+
+def _parse_markup_invocations(text, tool_names=None):
+    """Salvage tool calls written as reply text: <invoke name=..><parameter ..>, <code_run>..</code_run>, etc.
+    Only well-formed markup outside code fences is executed; truncated/ambiguous ones are left for detection."""
+    names = [n for n in dict.fromkeys(list(tool_names or []) + list(_DEFAULT_TOOL_NAMES)) if n]
+    alt = '|'.join(re.escape(n) for n in sorted(names, key=len, reverse=True))
+    spans = _code_spans(text)
+    found, used = [], []
+    for m in re.finditer(r"<invoke\b([^<>]*)>([\s\S]*?)</invoke\s*>", text, re.I):
+        if _in_spans(m.start(), spans): continue
+        nm = re.search(r"""name\s*=\s*["']([^"']+)["']""", m.group(1))
+        if not nm or nm.group(1) not in names: continue
+        args = {}
+        for pm in re.finditer(r"<parameter\b([^<>]*)>([\s\S]*?)</parameter\s*>", m.group(2), re.I):
+            pn = re.search(r"""name\s*=\s*["']([^"']+)["']""", pm.group(1))
+            if pn: args[pn.group(1)] = _coerce(pm.group(2))
+        found.append(MockToolCall(nm.group(1), args)); used.append(m.span())
+    for m in re.finditer(r"<(%s)\b([^<>]*)>([\s\S]*?)</\1\s*>" % alt, text, re.I):
+        if _in_spans(m.start(), spans): continue
+        name, attrs, body = m.group(1), m.group(2), m.group(3)
+        args = _attrs_to_args(attrs) or _body_to_args(name, body)
+        if args: found.append(MockToolCall(name, args)); used.append(m.span())
+    for m in re.finditer(r"<(%s)\b([^<>]*?)/>" % alt, text, re.I):
+        if _in_spans(m.start(), spans): continue
+        args = _attrs_to_args(m.group(2))
+        if args: found.append(MockToolCall(m.group(1), args)); used.append(m.span())
+    if not found: return [], text
+    for s, e in sorted(used, reverse=True): text = text[:s] + text[e:]
+    return found, text.strip()
+
+def find_phantom_tool_markup(content, tool_names=None):
+    """Return a snippet when the reply *text* still contains a fake/unexecuted tool invocation."""
+    if not content or not isinstance(content, str): return None
+    text = _normalize_dsml(content)
+    if re.search(r"<\s*[｜|]*DSML[｜|]*", text, re.I): return '残留 DSML 标记'
+    names = [n for n in dict.fromkeys(list(tool_names or []) + list(_DEFAULT_TOOL_NAMES)) if n]
+    alt = '|'.join(re.escape(n) for n in sorted(names, key=len, reverse=True))
+    pat = re.compile(r"<\s*/?\s*(?:%s|%s)\b" % (alt, '|'.join(_VIRTUAL_TOOL_TAGS)), re.I)
+    spans = _code_spans(text)
+    window_start = max(0, len(text) - 600)
+    for m in pat.finditer(text):
+        if m.start() < window_start or _in_spans(m.start(), spans): continue
+        return text[m.start():m.start() + 100]
+    return None
+
+def _parse_text_tool_calls(content, tool_names=None):
     """Fallback: extract tool calls from text when model doesn't use native tool_use blocks."""
+    if not content or not isinstance(content, str): return [], content or ''
+    content = _normalize_dsml(content)
     tcs = []
     # try JSON array: [{"type":"tool_use", "name":..., "input":...}]
     _jp = next((p for p in ['[{"type":"tool_use"', '[{"type": "tool_use"'] if p in content), None)
@@ -1064,6 +1208,11 @@ def _parse_text_tool_calls(content):
             if name: tcs.append(MockToolCall(name, args))
         except: pass
     if tcs: content = re.sub(_xp, "", content, flags=re.DOTALL).strip()
+    if not tcs:
+        _off, _tail = _markup_search_region(content)
+        if _tail:
+            tcs, _rest = _parse_markup_invocations(_tail, tool_names)
+            if tcs: content = (content[:_off] + _rest).rstrip()
     return tcs, content
 
 def _ensure_text_block(blocks):

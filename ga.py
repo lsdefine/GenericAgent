@@ -7,6 +7,9 @@ if sys.stderr is None: sys.stderr = open(os.devnull, "w")
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from agent_loop import BaseHandler, StepOutcome, json_default
+try: from llmcore import find_phantom_tool_markup
+except Exception:
+    def find_phantom_tool_markup(*a, **k): return None
 script_dir = os.path.dirname(os.path.abspath(__file__))
 
 def safe_print(*args, **kwargs):
@@ -477,9 +480,20 @@ class GenericAgentHandler(BaseHandler):
             return self._retry_or_exit("[ERROR] Blank response, regenerate and tooluse")
         if '[!!! 流异常中断' in content[-100:] or '!!!Error:' in content[50:][-100:] or (content.endswith('</summary>') and len(content) < 100):
             return self._retry_or_exit("[ERROR] Incomplete response. Regenerate and tooluse.")
-        tail = content.rstrip()[-50:]
-        if 'DSML' in tail and '｜' in tail and tail.endswith('>'):
-            return self._retry_or_exit("[ERROR] Tool call format invalid; no tool was called. Regenerate using proper tool calls.")
+        phantom = find_phantom_tool_markup(content)
+        if phantom is None:
+            fenced = re.search(r"```[a-zA-Z0-9_]*\n([\s\S]*?)```\s*$", content)
+            if fenced and re.search(r"<\s*/?\s*(?:code_run|file_read|file_write|file_patch|web_scan|web_execute_js|ask_user|tool_use|tool_call|invoke)\b", fenced.group(1)):
+                phantom = fenced.group(1).strip()[:60]
+        if phantom:
+            yield f"[Warn] Unexecuted tool-call markup found in reply text: {phantom.strip()[:60]}\n"
+            return self._retry_or_exit(
+                "[ERROR] 你的回复正文里出现了伪工具调用标记（例如 <code_run>、<invoke>、<parameter> 或 DSML 残留），"
+                "它不是真正的工具调用，引擎没有执行（检测片段：" + phantom.strip()[:80].replace('\n', ' ') + "）。\n"
+                "请立刻改用真正的工具通道重新发起同一操作，例如：\n"
+                '<tool_use>{"name": "code_run", "arguments": {"script": "..."}}</tool_use>\n'
+                "严禁在正文中手写工具标签，也不要伪造 <function_results>；正文只保留 <summary> 与自然语言。"
+            )
         if 'max_tokens !!!]' in content[-100:]:
             return self._retry_or_exit("[ERROR] max_tokens limit reached. Use multi small steps to do it.")
         
@@ -549,6 +563,7 @@ class GenericAgentHandler(BaseHandler):
         return prompt
     
     def turn_end_callback(self, response, tool_calls, tool_results, turn, next_prompt, exit_reason):
+        if tool_calls and tool_calls[0].get('tool_name') != 'no_tool': self._empty_ct = 0
         _c = re.sub(r'```.*?```|<thinking>.*?</thinking>', '', response.content, flags=re.DOTALL)
         rsumm = re.search(r"<summary>(.*?)</summary>", _c, re.DOTALL)
         raw = (rsumm.group(1) if rsumm else _c).strip()

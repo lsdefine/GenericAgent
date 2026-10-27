@@ -28,6 +28,22 @@ class BaseHandler:
             yield f"未知工具: {tool_name}\n"
             return StepOutcome(None, next_prompt=f"未知工具 {tool_name}", should_exit=False)
 
+def tool_names_from_schema(tools_schema):
+    """Collect tool names from a schema list.
+
+    Accepts both the flat form ({"name": ...}) and the OpenAI form
+    ({"type": "function", "function": {"name": ...}}) -- the shipped
+    assets/tools_schema.json uses the latter, and reading only the top level
+    silently yields an empty set (which made text-channel recovery a no-op).
+    """
+    names = set()
+    for entry in tools_schema or []:
+        if not isinstance(entry, dict): continue
+        fn = entry.get("function")
+        name = (fn.get("name") if isinstance(fn, dict) else None) or entry.get("name")
+        if name: names.add(name)
+    return names
+
 def json_default(o): return list(o) if isinstance(o, set) else str(o)
 def exhaust(g):
     try: 
@@ -66,7 +82,22 @@ def agent_runner_loop(client, system_prompt, user_input, handler, tools_schema,
             if cleaned: yield cleaned + '\n'
         _hook('llm_after', locals())
 
-        if not response.tool_calls: tool_calls = [{'tool_name': 'no_tool', 'args': {}}]
+        if not response.tool_calls:
+            # #837: the model sometimes writes the call as literal markup in the text channel
+            # ("<code_run>...</code_run>" or a truncated "<code_run\">"). Recover and execute it
+            # instead of silently ending the turn; a torn marker still falls through to no_tool,
+            # which asks for a retry.
+            try:
+                from llmcore import split_text_tool_calls
+                _names = tool_names_from_schema(tools_schema)
+                _calls, _partial = split_text_tool_calls(response.content or '', _names)
+            except Exception:
+                _calls, _partial = [], False
+            if _calls:
+                if verbose: yield f"♻️ 文本通道工具调用已恢复执行: {', '.join(n for n, _ in _calls)}\n"
+                tool_calls = [{'tool_name': n, 'args': a, 'id': f'text_call_{turn}_{i}'} for i, (n, a) in enumerate(_calls)]
+            else:
+                tool_calls = [{'tool_name': 'no_tool', 'args': {}}]
         else: tool_calls = [{'tool_name': tc.function.name, 'args': json.loads(tc.function.arguments), 'id': tc.id}
                           for tc in response.tool_calls]
        

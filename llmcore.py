@@ -1,4 +1,4 @@
-import os, json, re, time, requests, sys, threading, urllib3, base64, importlib, uuid, pathlib, copy
+import os, json, re, time, requests, sys, threading, urllib3, base64, importlib, uuid, pathlib, copy, ast
 from datetime import datetime
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 _INFLIGHT = {}  # thread ident -> live socket; lets abort() close it even before response headers arrive
@@ -165,14 +165,6 @@ def auto_make_url(base, path):
     if b.endswith(p): return b
     return f"{b}/{p}" if re.search(r'/v\d+(/|$)', b) else f"{b}/v1/{p}"
 
-def _oc_headers(sess, base):
-    """opencode go 网关自2026-09-06起强制 x-opencode-session 头(会话亲和+提示词缓存)。
-    同一会话对象内恒定、跨会话唯一; 可在cfg里加 'opencode_session' 覆盖自动生成的uuid"""
-    if 'opencode.ai' not in (base or ''): return {}
-    if not getattr(sess, '_oc_session', None):
-        sess._oc_session = getattr(sess, 'opencode_session', None) or str(uuid.uuid4())
-    return {"x-opencode-session": sess._oc_session}
-
 def _parse_claude_json(data):
     if data.get("stop_reason") == "refusal":
         err = "[Error: Claude refusal]"
@@ -265,8 +257,14 @@ def _parse_claude_sse(resp_lines):
 
 def _try_parse_tool_args(raw):
     """Parse tool args string; split concatenated JSON objects like {..}{..} if needed.
-    Returns list of parsed dicts."""
+    Returns list of parsed dicts.
+
+    DSML markers can leak into the arguments string too (upstream #846-B), e.g.
+    '{"path": "/a.txt"}</||DSML|| parameter>'. Strip them first; the markers only
+    ever contain 'DSML', so ordinary scripts with '<' are untouched.
+    """
     if not raw: return [{}]
+    raw = _strip_dsml_tags(raw)
     try: return [json.loads(raw)]
     except: pass
     parts = re.split(r'(?<=\})(?=\{)', raw)
@@ -284,6 +282,7 @@ def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
     content_block: {type:'text', text:str} | {type:'tool_use', id:str, name:str, input:dict}
     """
     content_text = ""
+    _dsml = DsmlStreamFilter()   # 流式剥离 DSML 标记（跨 chunk 也能剥，见 _DsmlStreamFilter）
     if api_mode == "responses":
         seen_delta = False; fc_buf = {}; current_fc_idx = None; reasoning_text = ""
         for line in resp_lines:
@@ -297,9 +296,12 @@ def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
             etype = evt.get("type", "")
             if etype == "response.output_text.delta":
                 delta = evt.get("delta", "")
-                if delta: seen_delta = True; content_text += delta; yield delta
+                if delta:
+                    seen_delta = True
+                    clean = _dsml.feed(delta)
+                    if clean: content_text += clean; yield clean
             elif etype == "response.output_text.done" and not seen_delta:
-                text = evt.get("text", "")
+                text = _strip_dsml_tags(evt.get("text", ""))
                 if text: content_text += text; yield text
             elif etype == "response.reasoning_text.delta":
                 delta = evt.get("delta", "")
@@ -347,6 +349,8 @@ def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
                 _raise_if_retryable_overload(emsg)
                 if emsg: content_text += f"!!!Error: {emsg}"; yield f"!!!Error: {emsg}"
                 break
+        tail = _dsml.flush()
+        if tail: content_text += tail; yield tail
         blocks = []
         if reasoning_text: blocks.append({"type": "thinking", "thinking": reasoning_text})
         if content_text: blocks.append({"type": "text", "text": content_text})
@@ -374,7 +378,8 @@ def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
             if rc := delta.get("reasoning_content") or delta.get("reasoning", ""):
                 reasoning_text += rc; yield rc
             if delta.get("content"):
-                text = delta["content"]; content_text += text; yield text
+                text = _dsml.feed(delta["content"])
+                if text: content_text += text; yield text
             for tc in (delta.get("tool_calls") or []):
                 idx = tc.get("index", 0)
                 has_name = bool(tc.get("function", {}).get("name"))
@@ -386,6 +391,8 @@ def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
                 if tc.get("id") and not tc_buf[idx]["id"]: tc_buf[idx]["id"] = tc["id"]
             usage = evt.get("usage")
             if usage: _record_usage(usage, api_mode)
+        tail = _dsml.flush()
+        if tail: content_text += tail; yield tail
         blocks = []
         if reasoning_text: blocks.append({"type": "thinking", "thinking": reasoning_text})
         if content_text: blocks.append({"type": "text", "text": content_text})
@@ -437,8 +444,9 @@ def _parse_openai_json(data, api_mode="chat_completions"):
                     if p.get("type") in ("reasoning_text", "summary_text") and p.get("text"):
                         blocks.append({"type": "thinking", "thinking": p["text"]})
             elif item.get("type") == "function_call":
-                try: args = json.loads(item.get("arguments", "")) if item.get("arguments") else {}
-                except: args = {"_raw": item.get("arguments", "")}
+                _a = _strip_dsml_tags(item.get("arguments", ""))
+                try: args = json.loads(_a) if _a else {}
+                except: args = {"_raw": _a}
                 blocks.append({"type": "tool_use", "id": item.get("call_id", item.get("id", "")),
                                "name": item.get("name", ""), "input": args})
         status = (data.get("status") or "").lower()
@@ -457,13 +465,14 @@ def _parse_openai_json(data, api_mode="chat_completions"):
         reasoning = msg.get("reasoning_content") or msg.get("reasoning", "")
         if reasoning:
             blocks.append({"type": "thinking", "thinking": reasoning})
-        content = msg.get("content", "")
+        content = _strip_dsml_tags(msg.get("content", ""))
         if content:
             blocks.append({"type": "text", "text": content}); yield content
         for tc in (msg.get("tool_calls") or []):
             fn = tc.get("function", {})
-            try: args = json.loads(fn.get("arguments", "")) if fn.get("arguments") else {}
-            except: args = {"_raw": fn.get("arguments", "")}
+            _a = _strip_dsml_tags(fn.get("arguments", ""))
+            try: args = json.loads(_a) if _a else {}
+            except: args = {"_raw": _a}
             blocks.append({"type": "tool_use", "id": tc.get("id", ""), "name": fn.get("name", ""), "input": args})
     return blocks
 
@@ -557,7 +566,6 @@ def _openai_stream(sess, messages):
     elif 'minimax' in ml: temperature = max(0.01, min(temperature, 1.0))  # MiniMax requires temp in (0, 1]
     headers = {"Authorization": f"Bearer {sess.api_key}", "Content-Type": "application/json", "Accept": "text/event-stream", 'originator': 'codex_exec'}
     headers["User-Agent"] = sess.user_agent
-    headers.update(_oc_headers(sess, sess.api_base))
     if api_mode == "responses":
         url = auto_make_url(sess.api_base, "responses")
         payload = {"model": model, "input": _to_responses_input(messages), "stream": sess.stream, 
@@ -742,7 +750,14 @@ class BaseSession:
                 if block.get('type', '') == 'tool_use':
                     tu = {'name': block.get('name', ''), 'arguments': block.get('input', {})}
                     yield f'<tool_use>{json.dumps(tu, ensure_ascii=False)}</tool_use>'
-            if content.strip() and not content.startswith("!!!Error:"): self.history.append({"role": "assistant", "content": [{"type": "text", "text": content}]})
+            if content.strip() and not content.startswith("!!!Error:"):
+                _hist = content
+                if leaked_markup_kind(_hist):
+                    _calls, _rest = salvage_leaked_tool_calls(_hist)
+                    _txt = _rest.strip()
+                    if not _txt: _txt = ''
+                    self.history.append({"role": "assistant", "content": [{"type": "text", "text": _txt}]}) if _txt else None
+                else: self.history.append({"role": "assistant", "content": [{"type": "text", "text": _hist}]})
         return _ask_gen()
 
 def _keep_claude_block(b): return not isinstance(b, dict) or b.get("type") != "thinking" or b.get("signature")
@@ -847,7 +862,6 @@ class NativeClaudeSession(BaseSession):
             "anthropic-beta": ",".join(beta_parts), "anthropic-dangerous-direct-browser-access": "true",
             "user-agent": self.user_agent, "x-app": "cli"}
         headers.update({"Accept": "application/json", "X-Claude-Code-Session-Id": self._session_id, "X-Stainless-Arch": "x64", "X-Stainless-Lang": "js", "X-Stainless-OS": "Windows", "X-Stainless-Package-Version": "0.94.0", "X-Stainless-Retry-Count": "0", "X-Stainless-Runtime": "node", "X-Stainless-Runtime-Version": "v24.3.0", "X-Stainless-Timeout": "600"})
-        headers.update(_oc_headers(self, getattr(self, 'api_base', '')))
         if self.api_key_header == 'x-api-key': headers["x-api-key"] = self.api_key
         elif self.api_key_header == 'bearer': headers["authorization"] = f"Bearer {self.api_key}"
         elif self.api_key.startswith("sk-ant-"): headers["x-api-key"] = self.api_key
@@ -894,11 +908,20 @@ class NativeClaudeSession(BaseSession):
         if content_blocks and not (len(content_blocks) == 1 and content_blocks[0].get("text", "").startswith("!!!Error:")):
             history_blocks = content_blocks
             if self.omit_thinking: history_blocks = [b for b in content_blocks if b.get("type") != "thinking"]
+            # 净化：把泄漏进正文的协议标记从历史里剥掉，避免模型照抄/自我强化
+            _h2 = []
+            for b in history_blocks:
+                if b.get("type") == "text" and leaked_markup_kind(b.get("text", "")):
+                    _txt = salvage_leaked_tool_calls(b.get("text", ""))[1].strip()
+                    if not _txt: continue
+                    b = dict(b, text=_txt)
+                _h2.append(b)
+            history_blocks = _h2
             self.history.append({"role": "assistant", "content": history_blocks})
         text_parts = [b["text"] for b in content_blocks if b.get("type") == "text"]
         content = "\n".join(text_parts).strip()
         tool_calls = [MockToolCall(b["name"], b.get("input", {}), id=b.get("id", "")) for b in content_blocks if b.get("type") == "tool_use"]
-        if not tool_calls: tool_calls, content = _parse_text_tool_calls(content, _tool_names(getattr(self, 'tools', None)))
+        if not tool_calls: tool_calls, content = _parse_text_tool_calls(content)
         thinking_parts = [b["thinking"] for b in content_blocks if b.get("type") == "thinking"]
         thinking = "\n".join(thinking_parts).strip()
         if not thinking:
@@ -942,6 +965,434 @@ class MockResponse:
         self.stop_reason = 'tool_use' if tool_calls else stop_reason
     def __repr__(self):    
         return f"<MockResponse thinking={bool(self.thinking)}, content='{self.content}', tools={bool(self.tool_calls)}>"
+
+_DSML_B = chr(0xFF5C)  # 全角竖线，DSML 标记的分隔符
+_CODE_TAGS = ('code_run', 'code_exec', 'bash', 'shell', 'run')
+
+# 行首的 code 标签；容忍 "<\n\ncode_run>"（模型把标签拆行）与属性写法
+_CODE_OPEN = re.compile(r'(?m)^[ \t]*<[ \t\r\n]*(code_run|code_exec|bash|shell|run)\b([^<>]*)>', re.I)
+_REG_OPEN = re.compile(r'(?m)^[ \t]*<[ \t\r\n]*(code|execute|exec|terminal)\b([^<>]*)>', re.I)
+# 任意位置的 code 标签（是否算真调用由 _code_candidates 的证据规则判定）
+_CODE_ANY = re.compile(r'<[ \t\r\n]*(code_run|code_exec|bash|shell|run)\b([^<>]*)>', re.I)
+
+
+
+def _strip_code_spans(text):
+    """去掉代码块/行内代码，避免把正常讲解里的示例标记当成泄漏。"""
+    t = re.sub(r'```[\s\S]*?```', ' ', text)
+    t = re.sub(r'`[^`\n]*`', ' ', t)
+    return t
+
+
+def _canon_dsml(text):
+    """把 DSML 的各种畸形变体统一成 <dsml_xxx>，交给同一个解析器处理：
+    <|DSML| invoke> / <｜DSML｜ ...> / <｜｜DSML｜｜ ...> / antml:invoke / 裸 <invoke>/<parameter>。"""
+    t = text
+    # 1) 分隔符变体 → |DSML|（单/双/三、全角/半角、混排、带空格）
+    t = re.sub('[' + _DSML_B + r'|]{1,3}\s*DSML\s*[' + _DSML_B + r'|]{1,3}', '|DSML|', t, flags=re.I)
+
+    def _tag(m):
+        closing, name, attrs = m.group(1), m.group(2).lower(), m.group(3) or ''
+        name = 'calls' if name == 'function_calls' else name
+        return ('</dsml_%s>' % name) if closing else ('<dsml_%s%s>' % (name, attrs))
+
+    t = re.sub(r'<\s*(/?)\s*\|DSML\|\s*(function_calls|calls|invoke|parameter|args?|value)\b([^<>]*)>', _tag, t, flags=re.I)
+    # 2) antml:invoke / antml:parameter（Claude 官方文本协议）
+    t = re.sub(r'<\s*(/?)\s*antml\s*:\s*(function_calls|calls|invoke|parameter)\b([^<>]*)>', _tag, t, flags=re.I)
+
+    # 3) 裸标签（无前缀的 <function_calls> / <invoke name=...> / <parameter name=...>）
+    def _bare(m):
+        closing, name, attrs = m.group(1), m.group(2).lower(), m.group(3) or ''
+        if not closing and not re.search(r'\bname\s*=', attrs): return m.group(0)  # 没 name 的多半是正文
+        name = 'calls' if name == 'function_calls' else name
+        return ('</dsml_%s>' % name) if closing else ('<dsml_%s%s>' % (name, attrs))
+
+    t = re.sub(r'<\s*(/?)\s*(function_calls|invoke|parameter)\b([^<>]*)>', _bare, t, flags=re.I)
+    return t
+
+
+def _attrs(s):
+    """解析标签属性：支持 name="x" / name='x' / name=x。"""
+    d = {}
+    for m in re.finditer(r'([A-Za-z_][\w-]*)\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|([^\s"\'>]+))', s or ''):
+        d[m.group(1).lower()] = next((g for g in m.groups()[1:] if g is not None), '')
+    return d
+
+
+def _maybe_unescape(s):
+    """模型把脚本整体转义成一行时，救回真实换行/引号。"""
+    if not isinstance(s, str) or '\\' not in s: return s
+    if '\n' in s: return s
+    for a, b in (('\\r\\n', '\n'), ('\\n', '\n'), ('\\t', '\t'), ('\\r', '\r'), ('\\"', '"'), ("\\'", "'")):
+        s = s.replace(a, b)
+    return s
+
+
+def _jsonish(v):
+    if not isinstance(v, str): return v
+    v = (v or '').strip()
+    try: return json.loads(v)
+    except Exception: pass
+    low = v.lower()
+    if low in ('true', 'false', 'null', 'none'): return {'true': True, 'false': False}.get(low, None)
+    if re.fullmatch(r'-?\d+', v): return int(v)
+    if re.fullmatch(r'-?\d*\.\d+', v): return float(v)
+    return v
+
+
+def _clean_value(v):
+    v = v if isinstance(v, str) else str(v)
+    if v.startswith('\n'): v = v[1:]
+    if v.endswith('\n'): v = v[:-1]
+    return _maybe_unescape(v)
+
+
+def _dsml_params(body, spans=None):
+    """取出全部 <dsml_parameter>；最后一个即使未闭合也收（截断场景）。"""
+    args = {}
+    for m in re.finditer(r'<dsml_parameter\b([^<>]*)>([\s\S]*?)(?=</dsml_parameter>|<dsml_parameter\b|</dsml_invoke>|</dsml_calls>|\Z)', body):
+        kv, val = _attrs(m.group(1)), m.group(2)
+        name = (kv.get('name') or '').strip()
+        if not name: continue
+        args[name] = _jsonish(val) if str(kv.get('string', '')).strip().lower() == 'false' else _clean_value(val)
+    return args
+
+
+def _strip_fence(code):
+    """去掉模型在标签体内又套的一层 ```lang 围栏，并返回它声明的语言。"""
+    lang = ''
+    m = re.match(r'[ \t]*```([A-Za-z0-9_+-]*)[ \t]*\n([\s\S]*?)(?:\n[ \t]*```[ \t]*)?$', code)
+    if m:
+        lang, code = (m.group(1) or '').lower(), m.group(2)
+    else:
+        code = re.sub(r'(?m)^[ \t]*```[A-Za-z0-9_+-]*[ \t]*$', '', code)
+    return code, lang
+
+def _split_code_block(body, tag):
+    """把 code 标签的体内内容切成 (code_体, 尾巴)。尾巴 = 闭合标签之后到下一个块之前。"""
+    cm = re.search(r'<[ \t\r\n]*/[ \t\r\n]*' + tag + r'[ \t\r\n]*>', body, re.I)
+    if cm: return body[:cm.start()], body[cm.end():]
+    cut = re.search(r'(?m)^[ \t]*<[ \t\r\n]*/?[ \t\r\n]*(?:dsml_|(?:%s)\b)' % '|'.join(_CODE_TAGS), body, re.I)
+    return (body[:cut.start()], body[cut.start():]) if cut else (body, '')
+
+
+_DSML_PIPES = chr(124) + _DSML_B + chr(0x2016)   # | ｜ ‖
+# 一次覆盖：单/双/三竖线、开/闭标签、带空格、截断到 > 之前的长属性（最多 200 字）
+_DSML_TAG_RE = re.compile(
+    '<' + '[ \t]*/?' + '[ \t]*' + '[' + _DSML_PIPES + ']{1,3}' + '[ \t]*DSML[ \t]*'
+    + '[' + _DSML_PIPES + ']{1,3}' + '[^<>]{0,200}?>', re.I)
+
+
+def _strip_dsml_tags(s):
+    if not s or 'dsml' not in s.lower(): return s
+    s = re.sub(r'</?dsml_[a-z_]+[^<>]*>', '', s)
+    return _DSML_TAG_RE.sub('', s)
+
+
+class DsmlStreamFilter:
+    """分块安全地剥掉 DSML 标记：把一个还没等到 '>' 的尾部 '<...' 扣住，
+    这样被 SSE chunk 切开的标记也能整段删除（单块正则做不到）。"""
+    HOLD_MAX = 64
+    def __init__(self): self.buf = ''
+    def feed(self, chunk):
+        if not chunk: return ''
+        self.buf += chunk
+        cut = self.buf.rfind('<')
+        hold = ''
+        if cut >= 0 and '>' not in self.buf[cut:] and len(self.buf) - cut <= self.HOLD_MAX:
+            hold, self.buf = self.buf[cut:], self.buf[:cut]
+        out = _strip_dsml_tags(self.buf)
+        self.buf = hold
+        return out
+    def flush(self):
+        out = _strip_dsml_tags(self.buf); self.buf = ''
+        return out
+
+
+_CODE_SIGNAL = re.compile(
+    r'(?:^|[\s:(=;&|])(?:import|from|def|class|print|echo|ls|cd|cat|grep|curl|pip|npm|git|'
+    r'python|bash|sh|sudo|rm|cp|mv|mkdir|export|for|if|while|return|await|async)\b'
+    r'|[=(){}\[\]$#`\\;|&<>]', re.I)
+
+
+def _looks_like_prose(body):
+    """体内是"讲解文字"而不是代码 → True。用于否决正文里被讨论的标签。
+
+    真实误判样本：`引擎不会输出 <code_run cwd="/tmp"> 这种标记…`
+    （带 cwd 属性，但体内全是中文，绝不能当脚本执行）。真实代码很少出现大段中文散文。
+    """
+    s = (body or '').strip()
+    if not s: return False
+    cjk = sum(1 for ch in s if '\u4e00' <= ch <= '\u9fff')
+    nonspace = sum(1 for ch in s if not ch.isspace())
+    if not nonspace or cjk / nonspace <= 0.5: return False
+    # 有代码信号（括号/赋值/命令词）就不算散文
+    return not _CODE_SIGNAL.search(s)
+
+
+def _code_span_ranges(text):
+    """行内代码 / 围栏代码块的区间。这些区域里的标签是"被引用的示例"，不是调用。"""
+    spans = []
+    for m in re.finditer(r'```[\s\S]*?```', text): spans.append((m.start(), m.end()))
+    for m in re.finditer(r'`[^`\n]*`', text): spans.append((m.start(), m.end()))
+    return spans
+
+
+def _in_spans(pos, spans):
+    return any(s <= pos < e for s, e in spans)
+
+
+def _code_candidates(t):
+    """找出所有"像真调用"的 code 标签候选。
+
+    不能只认行首：真实日志里既有行首的，也有 "...先跑一段 <code_run script=...>" 这种
+    跟在正文后面的；也不能全认：正文里"你可以用 <code_run> 来跑脚本"这种讲解必须放过。
+    判定证据（任一即可）：行首 / 带 script|type|cwd|lang 属性 / 体内有 <parameter name= /
+    体内以 "script:" 开头 / 有闭合标签且体内是多行代码。
+    排除两类误判：① 落在行内代码/围栏里的示例（如 `` `<code_run>` ``）；② 体内大段中文散文。
+    """
+    out = []
+    spans = _code_span_ranges(t)
+    for m in _CODE_ANY.finditer(t):
+        if _in_spans(m.start(), spans): continue       # 被引用的示例，不执行
+        tag = m.group(1).lower()
+        attrs = _attrs(m.group(2) or '')
+        line_start = not t[t.rfind('\n', 0, m.start()) + 1:m.start()].strip()
+        body_end = _CODE_ANY.search(t, m.end())
+        body_all = t[m.end():body_end.start() if body_end else len(t)]
+        body, _tail = _split_code_block(body_all, tag)
+        closed = bool(re.search(r'<[ \t\r\n]*/[ \t\r\n]*' + tag + r'[ \t\r\n]*>', body_all, re.I))
+        evid = line_start or any(k in attrs for k in ('script', 'type', 'lang', 'language', 'cwd'))
+        if not evid and re.search(r'<[ \t\r\n]*parameter\b[^<>]*name\s*=', body, re.I): evid = True
+        if not evid and re.match(r'[ \t\r\n]*(?:script|python|bash|shell)\s*[:：]', body, re.I): evid = True
+        if not evid and closed and '\n' in body.strip(): evid = True
+        # 行内且未闭合、也没有 <parameter>：这是正文里"被讨论的标签"（`… 不会输出 <code_run cwd="/x"> 这种`）
+        if evid and not line_start and not closed and '<parameter' not in body.lower(): evid = False
+        if evid and _looks_like_prose(body): evid = False   # 正文里被讨论/引用的标签
+        if evid: out.append({'start': m.start(), 'end': m.end(), 'tag': tag, 'attrs': attrs,
+                             'body_end': (body_end.start() if body_end else len(t))})
+    return out
+
+
+def _guess_lang(code):
+    if re.match(r'^\s*(ls|cd|pwd|echo|cat|git|pip|pip3|npm|curl|wget|ssh|scp|rsync|mkdir|rm|cp|mv|chmod|chown|defaults|launchctl|osascript|brew|python3?|bash|sh|zsh)\b', code): return 'shell'
+    return 'python'
+
+
+def _xml_code_calls(t):
+    """从 code 标签候选里还原真正的工具调用（含属性式 / 体内参数式 / 压平单行式）。"""
+    calls = []
+    for cand in _code_candidates(t):
+        tag, at = cand['tag'], cand['attrs']
+        body, tail = _split_code_block(t[cand['end']:cand['body_end']], tag)
+        args = dict(_dsml_params(body))            # 体内声明的参数
+        args.update(_dsml_params(tail))            # 尾巴上挂的 parameter
+        # 体内就是一个 JSON 对象：<code_run>{"script": "ls -l"}</code_run>
+        # （不能当脚本执行，否则会被二次包装成 {"script": "{\"script\": ...}"}）
+        stripped_body = _strip_dsml_tags(body).strip()
+        if stripped_body.startswith('{') and not args:
+            try:
+                obj = json.loads(stripped_body)
+                if isinstance(obj, dict) and obj:
+                    args = obj
+                    body = ''
+            except Exception: pass
+        raw = _strip_dsml_tags(body)
+        raw = re.sub(r'^[ \t\r\n]*(?:script|python|bash|shell)\s*[:：][ \t]*', '', raw, flags=re.I)
+        inner = re.search(r'<[ \t]*script\b[^<>]*>([\s\S]*?)(?:<[ \t]*/[ \t]*script[ \t]*>|$)', body, re.I)
+        code, fence_lang = _strip_fence(inner.group(1) if inner else raw)
+        code = _maybe_unescape(code).strip('\n')
+        src = args.get('script') or args.get('code')
+        if isinstance(src, str) and src.strip(): code = _maybe_unescape(src).strip('\n')
+        if not code.strip(): continue
+        lang = (at.get('type') or at.get('lang') or at.get('language') or '').strip().lower()
+        if (at.get('script') or '').strip().lower() in ('python', 'py', 'bash', 'shell', 'sh', 'zsh', 'powershell'):
+            lang = at['script'].strip().lower()
+        claimed = str(args.get('type') or '').strip().lower()
+        if claimed in ('python', 'py', 'bash', 'shell', 'sh', 'zsh', 'powershell', 'ps1'): lang = claimed
+        if not lang: lang = fence_lang or _guess_lang(code)
+        out = {'script': code}
+        if lang not in ('python', 'py'):
+            out['type'] = 'bash' if lang in ('bash', 'shell', 'sh', 'zsh') else ('powershell' if lang in ('powershell', 'ps1', 'pwsh') else ('bash' if _guess_lang(code) == 'shell' else lang))
+        for k in ('cwd', 'timeout', 'maxlen'):
+            if args.get(k) not in (None, ''): out[k] = _jsonish(args[k]) if k != 'cwd' else args[k]
+        if at.get('cwd'): out['cwd'] = at['cwd']
+        if str(at.get('timeout', '')).strip().isdigit() and 'timeout' not in out: out['timeout'] = int(at['timeout'])
+        calls.append(MockToolCall('code_run', out))
+    return calls
+
+
+_BARE_TAG_RE = re.compile(r'<([A-Za-z_][\w-]*)\b[^<>]*?(?:/>|>([\s\S]*?)</\1\s*>)')
+
+
+def _bare_child_args(body):
+    """把"裸子标签"形态的参数体转成 dict（上游 #837 第5种形态）。
+
+    <ask_user>
+      <question>which?</question>
+      <candidates><item>a</item><item>b</item></candidates>
+    </ask_user>
+    → {'question': 'which?', 'candidates': ['a', 'b']}
+
+    只认"整体就是标签对"的体：去掉所有标签后不应有非空白文本，
+    否则（例如裸 Python 脚本里恰好有 <...>）直接放弃，避免把代码当参数。
+    """
+    if not body or not body.lstrip().startswith('<'): return {}
+    if '<parameter' in body.lower(): return {}      # 有标准 parameter 时不走这条路
+    out, seen = {}, False
+    pos = 0
+    for m in _BARE_TAG_RE.finditer(body):
+        if body[pos:m.start()].strip(): return {}   # 标签之间夹了散文本 → 不是参数体
+        pos = m.end(); seen = True
+        key, val = m.group(1), m.group(2) or ''
+        inner = _BARE_TAG_RE.findall(val)
+        if inner:
+            sub = _bare_child_args(val)
+            if not sub: continue
+            if len(sub) == 1:
+                val = next(iter(sub.values()))          # <item>a</item><item>b</item> → ['a','b']
+            else:
+                val = sub
+        if key in out:
+            out[key] = (out[key] if isinstance(out[key], list) else [out[key]]) + [val]
+        else:
+            out[key] = val
+    if not seen or body[pos:].strip(): return {}
+    return out
+
+
+_DEFAULT_TOOL_NAMES = frozenset({
+    'code_run', 'code_exec', 'ask_user', 'web_scan', 'web_execute_js',
+    'file_read', 'file_write', 'file_patch', 'update_working_checkpoint',
+    'start_long_term_update',
+})
+
+
+def _bare_tag_calls(t, names):
+    """扫"工具名 + 裸子标签参数"的调用（<ask_user><question>..</question></ask_user>）。
+
+    只认已知工具名，且参数体必须是纯净的标签对结构（见 _bare_child_args），
+    这样正文里出现的 HTML 片段、裸脚本都不会被误判。容忍标签名后的多余引号
+    （<ask_user"> 这种真实泄漏形态）。
+    """
+    calls = []
+    for name in names:
+        pat = re.compile(r'<[ \t]*' + re.escape(name) + r'[ \t]*["\']?[ \t]*>([\s\S]*?)<[ \t]*/[ \t]*'
+                         + re.escape(name) + r'[ \t]*>', re.I)
+        for m in pat.finditer(t):
+            body = m.group(1)
+            args = _bare_child_args(body)
+            if args: calls.append((m.start(), m.end(), MockToolCall(name, args)))
+    return calls
+
+
+def _strip_xml_code(t):
+    """删掉已被抢救的 code 块（从开标签到闭合标签/块尾，连带尾巴上挂的 dsml 参数）。"""
+    spans = [(c['start'], c['body_end']) for c in _code_candidates(t)]
+    for s, e in reversed(spans): t = t[:s] + t[e:]
+    return t
+
+
+def salvage_leaked_tool_calls(text, names=None):
+    """从泄漏进正文的工具标记里抢救真正的工具调用。返回 (calls, 清理后的正文)。
+
+    names: 已知工具名集合（可选）。给了才能识别"工具名 + 裸子标签参数"这种形态。
+    """
+    if not text or len(text) < 8: return [], text
+    if not leaked_markup_kind(text, names): return [], text  # 标记只在代码块/行内代码里 → 保留原样
+    calls, t = [], text
+    try:
+        c = _canon_dsml(t)
+        if '<dsml_invoke' in c:
+            for m in re.finditer(r'<dsml_invoke\b([^<>]*)>([\s\S]*?)(?=<dsml_invoke\b|\Z)', c):
+                name = (_attrs(m.group(1)).get('name') or '').strip()
+                if name: calls.append(MockToolCall(name, _dsml_params(m.group(2))))
+            t = re.sub(r'<dsml_invoke\b[^<>]*>[\s\S]*?(?=<dsml_invoke\b|\Z)', '', c)
+            t = _strip_dsml_tags(t)
+        else:
+            t = c
+        if _CODE_ANY.search(t):
+            calls += _xml_code_calls(t)
+            t = _strip_xml_code(t)
+        # 工具名 + 裸子标签参数（上游 #837 第5形态）：<ask_user><question>..</question></ask_user>
+        bare = _bare_tag_calls(t, names or _DEFAULT_TOOL_NAMES)
+        if bare:
+            before = len(calls)
+            for s, e, call in sorted(bare, key=lambda x: x[0], reverse=True):
+                calls.append(call)
+                t = t[:s] + t[e:]
+            if len(calls) > before:
+                t = _strip_dsml_tags(t)
+        t = _strip_dsml_tags(t)
+        if calls:
+            t = re.sub(r'(?m)^[ \t]*[{}][ \t]*$', '', t)      # 残留的 JSON 花括号
+            t = re.sub(r'(?m)^[ \t]*(?:```|~~~)[ \t]*$', '', t)
+            t = re.sub(r'\n{3,}', '\n\n', t).strip()
+    except Exception:
+        return [], text
+    return calls, t
+
+
+def leaked_markup_incomplete(text):
+    """参数是否被截断（max_tokens / 流中断）。只有"最后一个参数体没有闭合"才算，
+    因为缺 </invoke> 只要能取到完整 parameter 就不影响执行。"""
+    if not text: return True
+    t = _canon_dsml(text)
+    opens = list(re.finditer(r'<dsml_parameter\b[^<>]*>', t))
+    if opens:
+        return '</dsml_parameter>' not in t[opens[-1].end():]
+    cands = _code_candidates(t)     # 已排除行内/围栏引用与中文散文
+    if cands:
+        found = cands[-1]
+        body = t[found['end']:found['body_end']]
+        if re.search(r'<[ \t\r\n]*/[ \t\r\n]*' + found['tag'] + r'[ \t\r\n]*>', body, re.I):
+            return False
+        return not re.search(r'<[ \t\r\n]*/[ \t\r\n]*' + found['tag'] + r'[ \t\r\n]*>',
+                             t[found['body_end']:], re.I)
+    return False
+
+
+def leaked_markup_kind(text, names=None):
+    """正文里是否残留工具调用标记（代码块/行内代码内不算）。返回类别字符串，无泄漏返回 ''。"""
+    if not text: return ''
+    body = _strip_code_spans(text)
+    if re.search('[' + _DSML_B + r'|]{1,3}\s*DSML\s*[' + _DSML_B + r'|]{1,3}', body, re.I): return 'DSML'
+    if re.search(r'antml\s*:\s*(?:invoke|parameter|function_calls)\b', body, re.I): return 'antml'
+    if _bare_tag_calls(body, names or _DEFAULT_TOOL_NAMES): return '<%s>' % next(
+        iter(n for n in (names or _DEFAULT_TOOL_NAMES)
+             if re.search(r'<' + re.escape(n) + r'[ \t]*["\']?[ \t]*>', body, re.I)), 'tool')
+    m = _CODE_OPEN.search(body) or _REG_OPEN.search(body)
+    if m:
+        tag = m.group(1).lower()
+        if re.search(r'<[ \t\r\n]*/[ \t\r\n]*' + tag + r'[ \t\r\n]*>', body, re.I): return '<%s>' % tag
+        if len(body[m.end():].strip()) > 20: return '<%s> (unclosed)' % tag
+    # 行内真泄漏（"先跑一段 <code_run script=...>ls</code_run>"）：仅当存在可执行候选时才算泄漏，
+    # 否则正文里被讨论/引用的标签会引发假重试。
+    if _code_candidates(body): return '<code_run>'
+    if re.search(r'<[ \t\r\n]*(function_calls|tool_calls)\b', body, re.I): return '<function_calls>'
+    if re.search(r'<[ \t\r\n]*invoke\b[^<>]*name\s*=', body, re.I): return '<invoke>'
+    if re.search(r'<[ \t\r\n]*parameter\b[^<>]*name\s*=', body, re.I): return '<parameter>'
+    return ''
+
+
+def salvaged_call_problem(call):
+    """抢救出的调用是否可安全执行。返回错误描述，'' 表示没问题。
+    宁可让模型重发，也不能把压平成一行/半截的脚本直接跑起来。"""
+    name = getattr(getattr(call, 'function', None), 'name', '') or ''
+    if not name: return '工具名为空'
+    try: args = json.loads(call.function.arguments or '{}')
+    except Exception as e: return '参数不是合法 JSON: %s' % e
+    if not isinstance(args, dict): return '参数不是对象'
+    if name in ('code_run', 'code_exec'):
+        code = args.get('script') or args.get('code') or ''
+        if not str(code).strip(): return 'script 为空'
+        if (args.get('type') or 'python') in ('python', 'py'):
+            try: ast.parse(code)
+            except SyntaxError as e: return 'python 语法错误（第 %s 行: %s）' % (e.lineno, e.msg)
+    elif name == 'file_read':
+        if not args.get('path'): return 'path 为空'
+    return ''
+
 
 class ToolClient:
     def __init__(self, backend, auto_save_tokens=True):
@@ -1023,7 +1474,7 @@ Follow these steps to think and act:
         if think_match:
             thinking = think_match.group(1).strip()
             remaining_text = re.sub(r"<think(?:ing)?>(.*?)</think(?:ing)?>", "", remaining_text, flags=re.DOTALL)
-        tool_calls, remaining_text = _parse_text_tool_calls(remaining_text, _tool_names(getattr(self, 'tools', None)))
+        tool_calls, remaining_text = _parse_text_tool_calls(remaining_text)
         if not tool_calls:
             json_strs = []; errors = []
             if '<tool_use>' in remaining_text:
@@ -1054,142 +1505,8 @@ Follow these steps to think and act:
                     print(f"[Warn] {e}"); tool_calls.append(MockToolCall('bad_json', {'msg': e}))
         return MockResponse(thinking, remaining_text.strip(), tool_calls, text)
 
-_DEFAULT_TOOL_NAMES = ('code_run', 'file_read', 'file_write', 'file_patch', 'web_scan',
-                       'web_execute_js', 'ask_user', 'update_working_checkpoint',
-                       'start_long_term_update')
-_TOOL_PRIMARY_ARG = {'code_run': 'script', 'web_execute_js': 'script', 'file_read': 'path',
-                     'file_write': 'content', 'file_patch': 'new_content',
-                     'ask_user': 'question', 'update_working_checkpoint': 'key_info'}
-_VIRTUAL_TOOL_TAGS = ('tool_use', 'tool_call', 'invoke', 'parameter', 'function_call',
-                      'function_results', 'tool_calls')
-_DSML_TAG_RE = re.compile(r"<(/?)\s*(?:[｜|]+\s*)?DSML(?:\s*[｜|]+)?\s*", re.I)
-
-def _normalize_dsml(text):
-    """`<|DSML|invoke ...>` variants -> `<invoke ...>` so one regex handles both dialects."""
-    if not text or 'DSML' not in text: return text or ''
-    return _DSML_TAG_RE.sub(lambda m: '<' + (m.group(1) or ''), text)
-
-def _code_spans(text):
-    """Spans of fenced/inline code: never auto-execute tool markup that is only being shown."""
-    spans = [m.span() for m in re.finditer(r"```[\s\S]*?```", text)]
-    spans += [m.span() for m in re.finditer(r"`[^`\n]+`", text)]
-    return spans
-
-def _in_spans(pos, spans):
-    return any(s <= pos < e for s, e in spans)
-
-def _tool_names(tools):
-    out = []
-    for t in tools or []:
-        if not isinstance(t, dict): continue
-        n = t.get('name') or (t.get('function') or {}).get('name')
-        if n and n not in out: out.append(n)
-    return out
-
-def _coerce(v):
-    v = (v or '').strip(); low = v.lower()
-    if low in ('true', 'false'): return low == 'true'
-    if re.fullmatch(r'-?\d{1,12}', v): return int(v)
-    if re.fullmatch(r'-?\d+\.\d+', v): return float(v)
-    if v[:1] in '[{':
-        try: return json.loads(v)
-        except Exception: pass
-    return v
-
-def _attrs_to_args(attrs):
-    args = {}
-    for m in re.finditer(r"""([\w-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))""", attrs or ''):
-        val = next((g for g in m.groups()[1:] if g is not None), '')
-        args[m.group(1)] = _coerce(val)
-    return args
-
-def _body_to_args(name, body):
-    body = (body or '').strip()
-    if not body: return None
-    if body[0] in '[{':
-        try:
-            d = json.loads(body)
-            if isinstance(d, dict):
-                args = d.get('arguments') or d.get('args') or d.get('input') or d.get('params')
-                if isinstance(args, dict): return args
-                if not any(k in d for k in ('name', 'type', 'function')): return d
-        except Exception: pass
-    if name in ('code_run', 'web_execute_js'):
-        m = re.search(r"<(?:script|code)>\s*([\s\S]*?)\s*</(?:script|code)>", body, re.I)
-        if m: body = m.group(1)
-        body = re.sub(r'^(?:script|code|js|python|bash)\s*:\s*', '', body, count=1, flags=re.I)
-        return {'script': body} if body.strip() else None
-    if name == 'file_write': return {'content': body}
-    if name == 'file_patch':
-        parts = {k: v.strip() for k, v in re.findall(r"<(old_content|new_content)>([\s\S]*?)</\1>", body)}
-        return parts or None
-    if name == 'ask_user':
-        q = re.search(r"<question>([\s\S]*?)</question>", body, re.I)
-        cs = re.findall(r"<candidate>([\s\S]*?)</candidate>", body, re.I)
-        if q or cs:
-            out = {'question': (q.group(1).strip() if q else body)}
-            if cs: out['candidates'] = [c.strip() for c in cs]
-            return out
-        return {'question': body}
-    key = _TOOL_PRIMARY_ARG.get(name)
-    return {key: body} if key else None
-
-def _markup_search_region(text):
-    """Salvage only markup *after* the summary line: legit answers can mention tags earlier."""
-    m = re.search(r"</summary>\s*", text)
-    off = m.end() if m else 0
-    tail = text[off:]
-    # If the tail still reads like natural prose (long lines, no tags), don't salvage anything.
-    return off, tail
-
-def _parse_markup_invocations(text, tool_names=None):
-    """Salvage tool calls written as reply text: <invoke name=..><parameter ..>, <code_run>..</code_run>, etc.
-    Only well-formed markup outside code fences is executed; truncated/ambiguous ones are left for detection."""
-    names = [n for n in dict.fromkeys(list(tool_names or []) + list(_DEFAULT_TOOL_NAMES)) if n]
-    alt = '|'.join(re.escape(n) for n in sorted(names, key=len, reverse=True))
-    spans = _code_spans(text)
-    found, used = [], []
-    for m in re.finditer(r"<invoke\b([^<>]*)>([\s\S]*?)</invoke\s*>", text, re.I):
-        if _in_spans(m.start(), spans): continue
-        nm = re.search(r"""name\s*=\s*["']([^"']+)["']""", m.group(1))
-        if not nm or nm.group(1) not in names: continue
-        args = {}
-        for pm in re.finditer(r"<parameter\b([^<>]*)>([\s\S]*?)</parameter\s*>", m.group(2), re.I):
-            pn = re.search(r"""name\s*=\s*["']([^"']+)["']""", pm.group(1))
-            if pn: args[pn.group(1)] = _coerce(pm.group(2))
-        found.append(MockToolCall(nm.group(1), args)); used.append(m.span())
-    for m in re.finditer(r"<(%s)\b([^<>]*)>([\s\S]*?)</\1\s*>" % alt, text, re.I):
-        if _in_spans(m.start(), spans): continue
-        name, attrs, body = m.group(1), m.group(2), m.group(3)
-        args = _attrs_to_args(attrs) or _body_to_args(name, body)
-        if args: found.append(MockToolCall(name, args)); used.append(m.span())
-    for m in re.finditer(r"<(%s)\b([^<>]*?)/>" % alt, text, re.I):
-        if _in_spans(m.start(), spans): continue
-        args = _attrs_to_args(m.group(2))
-        if args: found.append(MockToolCall(m.group(1), args)); used.append(m.span())
-    if not found: return [], text
-    for s, e in sorted(used, reverse=True): text = text[:s] + text[e:]
-    return found, text.strip()
-
-def find_phantom_tool_markup(content, tool_names=None):
-    """Return a snippet when the reply *text* still contains a fake/unexecuted tool invocation."""
-    if not content or not isinstance(content, str): return None
-    text = _normalize_dsml(content)
-    if re.search(r"<\s*[｜|]*DSML[｜|]*", text, re.I): return '残留 DSML 标记'
-    names = [n for n in dict.fromkeys(list(tool_names or []) + list(_DEFAULT_TOOL_NAMES)) if n]
-    alt = '|'.join(re.escape(n) for n in sorted(names, key=len, reverse=True))
-    pat = re.compile(r"<\s*/?\s*(?:%s|%s)\b" % (alt, '|'.join(_VIRTUAL_TOOL_TAGS)), re.I)
-    spans = _code_spans(text)
-    window_start = max(0, len(text) - 600)
-    for m in pat.finditer(text):
-        if m.start() < window_start or _in_spans(m.start(), spans): continue
-        return text[m.start():m.start() + 100]
-    return None
-
-def _parse_text_tool_calls(content, tool_names=None):
+def _parse_text_tool_calls(content):
     """Fallback: extract tool calls from text when model doesn't use native tool_use blocks."""
-    if not content or not isinstance(content, str): return [], content or ''
-    content = _normalize_dsml(content)
     tcs = []
     # try JSON array: [{"type":"tool_use", "name":..., "input":...}]
     _jp = next((p for p in ['[{"type":"tool_use"', '[{"type": "tool_use"'] if p in content), None)
@@ -1208,11 +1525,9 @@ def _parse_text_tool_calls(content, tool_names=None):
             if name: tcs.append(MockToolCall(name, args))
         except: pass
     if tcs: content = re.sub(_xp, "", content, flags=re.DOTALL).strip()
-    if not tcs:
-        _off, _tail = _markup_search_region(content)
-        if _tail:
-            tcs, _rest = _parse_markup_invocations(_tail, tool_names)
-            if tcs: content = (content[:_off] + _rest).rstrip()
+    # 最后一道：救回泄漏成正文的 DSML / <code_run> 标记
+    _salv, _rest = salvage_leaked_tool_calls(content)
+    if _salv: tcs.extend(_salv); content = _rest
     return tcs, content
 
 def _ensure_text_block(blocks):

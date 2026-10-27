@@ -478,8 +478,46 @@ class GenericAgentHandler(BaseHandler):
         if '[!!! 流异常中断' in content[-100:] or '!!!Error:' in content[50:][-100:] or (content.endswith('</summary>') and len(content) < 100):
             return self._retry_or_exit("[ERROR] Incomplete response. Regenerate and tooluse.")
         tail = content.rstrip()[-50:]
-        if 'DSML' in tail and '｜' in tail and tail.endswith('>'):
-            return self._retry_or_exit("[ERROR] Tool call format invalid; no tool was called. Regenerate using proper tool calls.")
+        # 1. 工具调用协议泄漏（DSML / <code_run> 等）：全文级检测，不只尾部 50 字。
+        #    能被完整解析 → 直接执行（不浪费一轮）；被截断/残缺 → 要求重生成。
+        from llmcore import leaked_markup_kind, salvage_leaked_tool_calls, leaked_markup_incomplete, salvaged_call_problem
+        _names = {m[3:] for m in dir(self) if m.startswith('do_')} - {'no_tool'}
+        kind = leaked_markup_kind(content, _names)
+        if kind:
+            calls, cleaned = salvage_leaked_tool_calls(content, _names)
+            calls = [c for c in calls if getattr(c.function, 'name', '') and c.function.name != 'no_tool']
+            problems = [p for p in (salvaged_call_problem(c) for c in calls) if p]
+            if calls and not leaked_markup_incomplete(content) and not problems:
+                yield f"[Warn] Tool-call markup leaked into text ({kind}); salvaged {len(calls)} call(s) and executing them.\n"
+                data, prompts, result_lines = [], [], []
+                for c in calls:
+                    try: c_args = json.loads(c.function.arguments or '{}')
+                    except Exception: c_args = {}
+                    if not isinstance(c_args, dict): c_args = {}
+                    gen = self.dispatch(c.function.name, c_args, response)
+                    try:
+                        v = next(gen)
+                        if v: yield v
+                        outcome = yield from gen
+                    except StopIteration as e:
+                        outcome = e.value or StepOutcome(None)
+                    if outcome.data is not None:
+                        data.append(outcome.data)
+                        try: _ds = json.dumps(outcome.data, ensure_ascii=False, default=str)
+                        except Exception: _ds = str(outcome.data)
+                        result_lines.append(f'<tool_result name="{c.function.name}">\n{_ds}\n</tool_result>')
+                    if outcome.next_prompt: prompts.append(outcome.next_prompt)
+                    if outcome.should_exit: return StepOutcome(data, should_exit=True)
+                # no_tool 支线的结果不会被 agent_loop 回灌（它跳过 no_tool 的 data），必须自带上
+                head = "[System] 上一轮你的工具调用协议标记泄漏进了正文，已自动救回并执行，结果如下：\n" + "\n".join(result_lines) + "\n请据此继续。\n"
+                return StepOutcome(data or {"result": "salvaged"}, next_prompt=head + ('\n'.join(prompts) or self._get_anchor_prompt()))
+            # 残缺/无法还原：绝不执行半截脚本，要求整条重发
+            why = ('; '.join(problems)) if problems else ('内容被截断' if calls else '无法解析出任何调用')
+            yield f"[Warn] Tool-call markup leaked into text ({kind}) and could not be recovered: {why}\n"
+            return self._retry_or_exit(
+                "[ERROR] 上一轮没有产生有效的工具调用：正文里混入了残缺的工具调用协议标记（DSML / <code_run> 等），"
+                "或其中内容被截断。请重新生成，直接使用正常工具调用通道（不要输出任何 DSML/invoke/parameter 标记；"
+                "脚本较长时拆成多个小步骤，避免被 max_tokens 截断）。")
         if 'max_tokens !!!]' in content[-100:]:
             return self._retry_or_exit("[ERROR] max_tokens limit reached. Use multi small steps to do it.")
         

@@ -53,7 +53,7 @@ def agent_runner_loop(client, system_prompt, user_input, handler, tools_schema,
         if verbose: turnstr = f'**{turnstr}**'
         if yield_info: yield {'turn': turn}
         yield f"\n{turnstr}\n\n"
-        if turn%10 == 0: client.last_tools = ''  # 每10轮重置一次工具描述
+        if turn%10 == 0: client.last_tools = ''  # 每10轮重置一次工具描述 / Reset the tool description every 10 rounds
         _hook('turn_before', locals())
         _hook('llm_before', locals())
         response_gen = client.chat(messages=messages, tools=tools_schema)

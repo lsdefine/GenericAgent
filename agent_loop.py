@@ -34,6 +34,13 @@ def exhaust(g):
         while True: next(g)
     except StopIteration as e: return e.value
 
+def parse_tool_call(tc):
+    name, raw = tc.function.name, tc.function.arguments
+    try: args = json.loads(raw)
+    except (TypeError, ValueError): args = None
+    if not isinstance(args, dict): name, args = 'bad_json', {'msg': f'{name}: arguments must be a JSON object, got: {str(raw)[:200]}'}
+    return {'tool_name': name, 'args': args, 'id': tc.id}
+
 def get_pretty_json(data):
     if isinstance(data, dict) and "script" in data:
         data = data.copy(); data["script"] = data["script"].replace("; ", ";\n  ")
@@ -67,8 +74,7 @@ def agent_runner_loop(client, system_prompt, user_input, handler, tools_schema,
         _hook('llm_after', locals())
 
         if not response.tool_calls: tool_calls = [{'tool_name': 'no_tool', 'args': {}}]
-        else: tool_calls = [{'tool_name': tc.function.name, 'args': json.loads(tc.function.arguments), 'id': tc.id}
-                          for tc in response.tool_calls]
+        else: tool_calls = [parse_tool_call(tc) for tc in response.tool_calls]
        
         tool_results = []; next_prompts = set(); exit_reason = {}
         for ii, tc in enumerate(tool_calls):

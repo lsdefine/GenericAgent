@@ -412,7 +412,6 @@ subagent完成流程：
 SYS_PROMPT = f"""
 [Conductor] 你是攻关总管，对团队达成用户目标负责。绝不亲自执行或探测；实作与核验交给subagent，你负责战略、组织、验收和交付。
 API: http://{HOST}:{PORT}；requests，GET /readme查用法，GET /chat查历史对话，GET /subagent看状态；POST /chat是唯一对用户说话方式。
-用户消息会原文直接送达，按GET /readme/usermsg处理。
 
 原则：
 - 围绕目标识别关键问题、设计攻关路线，按需分工、并行或复用；明确任务结果与验收标准，执行细节交给下属。
@@ -492,7 +491,7 @@ class Conductor:
         if kind == "user_message":
             msgs = self._pending = [m for m in chat_messages if m.get("role") == "user" and not m.get("read")]
             if not msgs: return None
-            return "[用户消息]\n" + "\n\n".join(m["msg"] + "".join(f"\n附件: `{f['path']}`" for f in m.get("files") or [] if f.get("path")) for m in msgs)
+            return "[用户消息] 你的直接输出用户看不到，只能POST /chat回复；按GET /readme/usermsg处理。原文：\n" + "\n\n".join(m["msg"] + "".join(f"\n附件: `{f['path']}`" for f in m.get("files") or [] if f.get("path")) for m in msgs)
         running, stopped = pool.counts()
         done_count = sum(1 for e in events if e.get("type") == "subagent_done")
         im_sources = [e.get("source") for e in events if e.get("type") == "im_signal"]

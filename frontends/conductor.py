@@ -491,7 +491,7 @@ class Conductor:
         if kind == "user_message":
             msgs = self._pending = [m for m in chat_messages if m.get("role") == "user" and not m.get("read")]
             if not msgs: return None
-            return "[用户消息] 你的直接输出用户看不到，只能POST /chat回复；按GET /readme/usermsg处理。原文：\n" + "\n\n".join(m["msg"] + "".join(f"\n附件: `{f['path']}`" for f in m.get("files") or [] if f.get("path")) for m in msgs)
+            return "[用户消息] 用户原文在<user_msg>内；回复只能POST /chat（你的直接输出用户看不到），按GET /readme/usermsg处理。\n" + "\n".join("<user_msg>\n" + m["msg"] + "".join(f"\n附件: `{f['path']}`" for f in m.get("files") or [] if f.get("path")) + "\n</user_msg>" for m in msgs)
         running, stopped = pool.counts()
         done_count = sum(1 for e in events if e.get("type") == "subagent_done")
         im_sources = [e.get("source") for e in events if e.get("type") == "im_signal"]

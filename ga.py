@@ -399,6 +399,8 @@ class GenericAgentHandler(BaseHandler):
         mode = args.get("mode", "overwrite")  # overwrite/append/prepend
         action_str = {"prepend": "Prepending to", "append": "Appending to"}.get(mode, "Overwriting")
         yield f"[Action] {action_str} file: {os.path.basename(path)}\n"
+        if 'global_mem_insight.txt' in path:
+            return StepOutcome({"status": "error", "msg": "L1 must be patched carefully, no whole write! See template in assets/, the patch should be **short**, **literal** index, **general** enough to reuse next time in different context!"}, next_prompt="\n")
 
         def extract_robust_content(text):
             tags = re.findall(r"<file_content[^>]*>(.*?)</file_content>", text, re.DOTALL)

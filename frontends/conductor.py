@@ -409,9 +409,8 @@ subagent完成流程：
    ② 用户同意后该执行的完整任务指令（approval通过会直接作为subagent的prompt派发，必须具体到可直接执行）。""",
 }
 
-SYS_PROMPT = f"""
-[Conductor] 你是攻关总管，对团队达成用户目标负责。绝不亲自执行或探测；实作与核验交给subagent，你负责战略、组织、验收和交付。
-API: http://{HOST}:{PORT}；requests，GET /readme查用法，GET /chat查历史对话，GET /subagent看状态；POST /chat是唯一对用户说话方式。
+HEADER = f"""你是攻关总管，对团队达成用户目标负责。绝不亲自执行或探测；实作与核验交给subagent，你负责战略、组织、验收和交付。
+API: http://{HOST}:{PORT}；requests，GET /readme查用法，GET /chat读未读对话，GET /subagent看状态；POST /chat是唯一对用户说话方式。
 
 原则：
 - 围绕目标识别关键问题、设计攻关路线，按需分工、并行或复用；明确任务结果与验收标准，执行细节交给下属。
@@ -420,6 +419,8 @@ API: http://{HOST}:{PORT}；requests，GET /readme查用法，GET /chat查历史
 - 根据反馈判断进展与瓶颈，调整路线、分工和资源，组织各项结果形成整体交付。
 - 达标前提下降低总成本，合并反馈；本轮必要派遣/纠偏完成即结束回复，等下次事件，禁止轮询或原地等结果；整体达标才交付。
 - 仅为用户独有信息或必要授权提问；文件路径用反引号包裹。
+
+需要处理：
 """
 
 class Conductor:
@@ -491,13 +492,15 @@ class Conductor:
         if kind == "user_message":
             msgs = self._pending = [m for m in chat_messages if m.get("role") == "user" and not m.get("read")]
             if not msgs: return None
-            return "[用户消息] 用户原文在<user_msg>内；回复只能POST /chat（你的直接输出用户看不到），按GET /readme/usermsg处理。\n" + "\n".join("<user_msg>\n" + m["msg"] + "".join(f"\n附件: `{f['path']}`" for f in m.get("files") or [] if f.get("path")) + "\n</user_msg>" for m in msgs)
+            m = msgs[-1]
+            return f"[用户消息] {len(msgs)}条未读" + ("，GET /chat 读取" if len(msgs) > 1 else "") + "；按GET /readme/usermsg处理。\n<user_last_msg>\n" + m["msg"] + "".join(f"\n附件: `{f['path']}`" for f in m.get("files") or [] if f.get("path")) + "\n</user_last_msg>"
         running, stopped = pool.counts()
         done_count = sum(1 for e in events if e.get("type") == "subagent_done")
         im_sources = [e.get("source") for e in events if e.get("type") == "im_signal"]
         if kind == "subagent_done": return f"[subagent完成] {done_count}个完成报告；GET /subagent 查看并验收；IM subagent完成报告按GET /readme/im处理，其他subagent完成报告按GET /readme/subagent处理。"
         if kind == "im_signal": return f"[IM信号] {', '.join(im_sources)} 有新消息；" + "；".join(f"GET /im_prompt/{s}取采集prompt" for s in im_sources) + "；尽量复用已有subagent。"
-        return f"[唤醒] subagents: {running} running, {stopped} stopped | {done_count}个subagent完成报告"
+        unread = sum(1 for m in chat_messages if m.get("role") == "user" and not m.get("read"))
+        return f"[唤醒] subagents: {running} running, {stopped} stopped | {unread}条用户未读消息, {done_count}个subagent完成报告"
 
     def _drain(self, dq: "queue.Queue", events: list) -> str:
         event_label = ",".join(e.get("type", "") for e in events) or "wake"
@@ -568,7 +571,7 @@ class Conductor:
                         self.inbox.put(event)
                     prompt = self._build_prompt(events)
                     if prompt is None: continue
-                    dq = self.agent.put_task(prompt, source="conductor")
+                    dq = self.agent.put_task(HEADER + prompt, source="conductor")
                     self._publish_model_state(model_state, running=True)
                 try:
                     self._drain(dq, events)
@@ -580,7 +583,6 @@ class Conductor:
 
     def start(self):
         self.agent = GenericAgent()
-        self.agent.extra_sys_prompts.append(SYS_PROMPT)
         self._publish_model_state(_runtime_model_state(self.agent), running=False)
         threading.Thread(target=self._run, name="conductor-loop", daemon=True).start()
 
@@ -709,7 +711,7 @@ def api_subagent_action(sid: str, body: SubagentActionIn):
     return JSONResponse({"error": f"unknown action: {body.action}"}, status_code=400)
 
 @app.get("/chat")
-def api_get_chat(last: int = 20, mark_read: bool = False):
+def api_get_chat(last: int = 20, mark_read: bool = True):
     items = [m.copy() for m in chat_messages[-last:]]
     if mark_read:
         for m in chat_messages:

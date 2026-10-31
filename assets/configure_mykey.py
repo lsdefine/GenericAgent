@@ -1109,7 +1109,7 @@ def generate_mykey(llm_cfgs, platform_configs):
 def _write_config_fields(lines, cfg):
     """写入配置字典的键值对（缩进的 'key': value, 格式）"""
     for key in ['name', 'type', 'apikey', 'apibase', 'model', 'api_mode',
-                'fake_cc_system_prompt', 'thinking_type', 'thinking_budget_tokens',
+                'fake_cc_system_prompt', 'claude_compat', 'thinking_type', 'thinking_budget_tokens',
                 'reasoning_effort', 'max_tokens', 'max_retries', 'connect_timeout',
                 'read_timeout', 'temperature', 'context_win',
                 'proxy', 'user_agent', 'stream']:

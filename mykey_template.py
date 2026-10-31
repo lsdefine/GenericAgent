@@ -8,7 +8,7 @@
 #     'apikey': '填你的 API Key',
 #     'model': '填服务商提供的模型名',
 # }
-# Claude Code 透传渠道：在上面字典里加 'fake_cc_system_prompt': True,
+# Claude Code 透传渠道：在上面字典里加 'claude_compat': 'simple'（旧写法 'fake_cc_system_prompt': True 等价）；
 
 # ── OpenAI 兼容接口（GPT、Gemini 等，取决于服务商）──
 # native_oai_config = {
@@ -34,7 +34,7 @@
 #     'reasoning_effort': 'high',       # 推理强度，取值依模型而定
 #     'thinking_type': 'adaptive',      # Claude 思考：adaptive / enabled / disabled
 #     'thinking_budget_tokens': 32768,  # thinking_type='enabled' 时需要
-#     'fake_cc_system_prompt': True,    # 需要 Claude Code 请求格式的透传渠道
+#     'claude_compat': 'half',          # 需要 Claude Code 请求格式/指纹校验的透传渠道（simple=仅身份行，half=含 CC 主提示）
 #     'api_key_header': 'x-api-key',    # Claude 鉴权头不匹配时指定；也支持 bearer
 #     'api_mode': 'responses',          # OAI：默认 chat_completions，按渠道要求修改
 # 运行中也可临时调整，例如：/session.reasoning_effort=high

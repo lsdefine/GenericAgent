@@ -791,11 +791,17 @@ def _fix_messages(messages):
     for m in merged: m['content'] = [b for b in m['content'] if not (isinstance(b, dict) and b.get('type') == 'text' and not (b.get('text') or '').strip())] or [{"type": "text", "text": "."}]
     return merged
 
+def _cc_system(system, compat='off'):  # off | simple | half(未来 full)
+    b = [{"type": "text", "text": "You are Claude Code, Anthropic's official CLI for Claude.", "cache_control": {"type": "ephemeral"}}] if compat != 'off' or not system else []
+    if compat in ('half', 'full'): b.append({"type": "text", "text": open(os.path.join(_ROOT, 'assets', 'cc_system_template.txt'), encoding='utf-8').read()})
+    return b + ([{"type": "text", "text": system}] if system else [])
+
 class NativeClaudeSession(BaseSession):
     native_ua = "claude-cli/2.1.280 (native, cli)"
     def __init__(self, cfg):
         super().__init__(cfg)
-        self.fake_cc_system_prompt = cfg.get("fake_cc_system_prompt", False)
+        self.claude_compat = cfg.get("claude_compat") or ("simple" if cfg.get("fake_cc_system_prompt") else "off")
+        self.fake_cc_system_prompt = self.claude_compat != "off"
         self._session_id = str(uuid.uuid4())
         self._account_uuid = str(uuid.uuid4())
         self._device_id = uuid.uuid4().hex + uuid.uuid4().hex[:32]
@@ -833,11 +839,7 @@ class NativeClaudeSession(BaseSession):
             tools = [dict(t) for t in claude_tools]; tools[-1]["cache_control"] = {"type": "ephemeral"}
             payload["tools"] = tools
         else: print("[ERROR] No tools provided for this session.")
-        payload['system'] = [{"type": "text", "text": "You are Claude Code, Anthropic's official CLI for Claude.", "cache_control": {"type": "ephemeral"}}]
-        #payload['system'][0]['text'] += f"\nPlatform: {sys.platform}"
-        if self.system:
-            if self.fake_cc_system_prompt: payload["system"].append({"type": "text", "text": self.system})
-            else: payload["system"] = [{"type": "text", "text": self.system}]
+        payload['system'] = _cc_system(self.system, self.claude_compat)
         user_idxs = [i for i, m in enumerate(messages) if m['role'] == 'user']
         for idx in user_idxs[-2:]:
             messages[idx] = {**messages[idx], "content": list(messages[idx]["content"])}

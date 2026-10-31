@@ -8,7 +8,7 @@
 #     'apikey': 'YOUR_API_KEY',
 #     'model': 'YOUR_PROVIDER_MODEL_ID',
 # }
-# For Claude Code relays, add 'fake_cc_system_prompt': True, inside the dict above.
+# For Claude Code relays, add 'claude_compat': 'simple' (legacy 'fake_cc_system_prompt': True maps to simple).
 
 # ── OpenAI-compatible API (GPT, Gemini, etc., depending on the provider) ──
 # native_oai_config = {
@@ -34,7 +34,7 @@
 #     'reasoning_effort': 'high',       # Reasoning level; supported values vary by model
 #     'thinking_type': 'adaptive',      # Claude thinking: adaptive / enabled / disabled
 #     'thinking_budget_tokens': 32768,  # Required when thinking_type='enabled'
-#     'fake_cc_system_prompt': True,    # Relays requiring Claude Code request format
+#     'claude_compat': 'half',          # Relays requiring CC request format/fingerprint (simple=identity only, half=+CC main prompt)
 #     'api_key_header': 'x-api-key',    # Override Claude auth header; also supports bearer
 #     'api_mode': 'responses',          # OAI: default is chat_completions; follow provider docs
 # Temporary runtime overrides also work, e.g. /session.reasoning_effort=high

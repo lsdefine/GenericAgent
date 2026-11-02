@@ -22,7 +22,7 @@ _DIR = os.path.dirname(os.path.abspath(__file__))
 for _p in [os.path.join(_DIR, '..'), os.path.join(_DIR, '../..')]:
     if _p not in sys.path: sys.path.insert(0, _p)
 
-def ask_vision(image_input, prompt="详细描述这张图片的内容", timeout=60, max_pixels=1440000, backend=DEFAULT_BACKEND):
+def ask_vision(image_input, prompt="详细描述这张图片的内容", timeout=60, max_pixels=None, backend=DEFAULT_BACKEND):
     try:
         b64 = _prepare_image(image_input, max_pixels)
     except Exception as e:
@@ -52,8 +52,8 @@ def ask_vision(image_input, prompt="详细描述这张图片的内容", timeout=
 
 # ===================== 以下为内部实现 =====================
 
-def _prepare_image(image_input, max_pixels=1440000):
-    """加载+缩放+base64编码，返回b64字符串"""
+def _prepare_image(image_input, max_pixels=None):
+    """默认保留尺寸；仅显式max_pixels时缩放，再JPEG/base64编码。"""
     from PIL import Image
     if isinstance(image_input, Image.Image):
         img = image_input
@@ -62,7 +62,7 @@ def _prepare_image(image_input, max_pixels=1440000):
     else:
         raise TypeError(f"image_input 必须是文件路径或PIL Image，实际: {type(image_input).__name__}")
     w, h = img.size
-    if w * h > max_pixels:
+    if max_pixels is not None and w * h > max_pixels:
         scale = (max_pixels / (w * h)) ** 0.5
         new_w, new_h = int(w * scale), int(h * scale)
         img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)

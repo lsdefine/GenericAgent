@@ -10,7 +10,9 @@
 
 ```python
 from vision_api import ask_vision
-result = ask_vision(image, prompt="描述图片内容", timeout=60, max_pixels=1_440_000)
+result = ask_vision(image, prompt="描述图片内容", timeout=60)
+# 默认 max_pixels=None，保留原尺寸；仅显式 max_pixels=1_440_000 才限制像素数。
+# 仍使用 JPEG quality=80，并非无损编码；安卓适配保持同样默认值。
 # image: 文件路径(str/Path) 或 PIL Image
 # backend: 'openai'(默认) | 'claude' | 'modelscope' | 'auto'
 # 默认配置: native_oai_config_dsv4f_11 (mydsv41f / deepseek-v41-flash)

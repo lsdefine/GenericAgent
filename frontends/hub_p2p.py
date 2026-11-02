@@ -2,6 +2,7 @@
 import asyncio
 import os
 import socket
+import time
 from pathlib import Path
 
 from fastapi import Response
@@ -16,11 +17,10 @@ def install(app, *, web_port, token, here):
     signal = os.environ.get("GA_P2P_SIGNAL", "ws://47.101.182.29:49157/ws")
     name = os.environ.get("GA_P2P_NAME", "ga-hub-phone")
     rooms = Path(os.environ.get("GA_P2P_ROOMS", "~/.p2p_ws/rooms.json")).expanduser()
-    # 多人组成员名带角色前缀：hub: 导出本机 API，cust: 代理对方 API。一条 P2PSocket
-    # 只能有一个 HTTP 消费者，故同一进程以两个成员身份入组，每对连接角色唯一。
+    # 组内每个 hub 一个成员名；连接按需建立：主叫代理对方 API，被叫导出本机 API。
     member = os.environ.get("GA_P2P_MEMBER", f"{socket.gethostname()}-{web_port}")
     state = {"task": None, "invite": None, "status": "idle", "error": None,
-             "started": False, "group": None, "hubs": {}}
+             "started": False, "group": None, "proxies": {}}
     app.state.p2p_pair_open = True
 
     async def export(ws):
@@ -60,24 +60,29 @@ def install(app, *, web_port, token, here):
 
     async def use_hub(ws, peer):
         proxy = await HTTPLocalProxy(ws).start()
-        state["hubs"][peer[4:]] = proxy.url
+        state["proxies"][peer] = proxy
         try:
             await proxy.wait_closed()
         finally:
-            if state["hubs"].get(peer[4:]) == proxy.url:
-                del state["hubs"][peer[4:]]
+            if state["proxies"].get(peer) is proxy:
+                del state["proxies"][peer]
             await proxy.close()
+
+    async def reap_idle(group):
+        while True:  # 10 分钟没请求的代理断开，下次 /p2p/open 再按需重连
+            await asyncio.sleep(60)
+            for peer, proxy in list(state["proxies"].items()):
+                if time.monotonic() - proxy.last_used > 600:
+                    group.close(peer)
 
     def start_group():
         if state["group"]:
             return
         room = load_room(name, path=rooms)
-        hub, cust = f"hub:{member}", f"cust:{member}"
-        roles = ((hub, serve_customer, "cust:"), (cust, use_hub, "hub:"))
-        state["group"] = [asyncio.create_task(Group(
-            room["signal_url"], room["room"], me, serve,
-            want=lambda p, other=other: p.startswith(other) and p[len(other):] != member,
-        ).run()) for me, serve, other in roles]
+        group = state["group"] = Group(
+            room["signal_url"], room["room"], member, serve_customer, use_hub,
+        )
+        state["group_tasks"] = [asyncio.create_task(group.run()), asyncio.create_task(reap_idle(group))]
 
     async def new_pair():
         try:
@@ -119,8 +124,24 @@ poll();</script>''', media_type="text/html")
 
     @app.get("/p2p/hubs")
     async def p2p_hubs():
-        """同组其他 hub 的本地代理地址 {成员名: http://127.0.0.1:端口}，按原 /api/ 访问。"""
-        return JSONResponse(state["hubs"])
+        """同组在线 hub {成员名: 本地代理地址，未连接为 null}。"""
+        group, proxies = state["group"], state["proxies"]
+        members = sorted(group.members) if group else []
+        return JSONResponse({m: getattr(proxies.get(m), "url", None) for m in members})
+
+    @app.get("/p2p/open")
+    async def p2p_open(hub: str):
+        """按需连接 hub，返回本地代理地址，之后按原 /api/ 访问。"""
+        group = state["group"]
+        if not group or hub not in group.members:
+            return JSONResponse({"error": "hub offline"}, status_code=404)
+        group.open(hub)
+        for _ in range(200):
+            if proxy := state["proxies"].get(hub):
+                proxy.last_used = time.monotonic()
+                return JSONResponse({"url": proxy.url})
+            await asyncio.sleep(0.1)
+        return JSONResponse({"error": "connect timeout"}, status_code=504)
 
     @app.get("/pair/status")
     async def pair_status():

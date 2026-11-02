@@ -2,6 +2,7 @@
 import asyncio
 import os
 import random
+from collections import deque
 from pathlib import Path
 
 from fastapi import Response
@@ -29,14 +30,27 @@ def install(app, *, web_port, token, here):
             await exporter.close()
 
     async def reconnect():
-        delay = 1
+        # 重连节奏三层:
+        # 1) 本轮尝试活过 STABLE 秒(正常会话被掉线/被顶号, 或已久候后信令断) -> 0.2s 秒级重连;
+        # 2) 秒断/连不上 -> 抖动指数退避 1,2,4..60s, 防"配对即断"空转;
+        # 3) 兜底硬上限: 任意 WINDOW 秒内最多 BUDGET 次建连, 远低于信令服务器
+        #    每 IP 2/s、突发 20 的限速, 免得把同出口 IP 的手机一起 429 掉。
+        STABLE, WINDOW, BUDGET = 30, 60, 8
+        loop = asyncio.get_running_loop()
+        delay, recent = 0, deque()
         while True:
-            connected = False
+            now = loop.time()
+            while recent and now - recent[0] >= WINDOW:
+                recent.popleft()
+            if len(recent) >= BUDGET:
+                await asyncio.sleep(recent[0] + WINDOW - now)
+                continue
+            recent.append(now)
+            t0 = now
             try:
                 state["status"], state["error"] = "reconnecting", None
                 # 已配对候房不超时；信令断开仍立即失败并走退避。
                 ws = await connect_saved(name, path=rooms, direct_timeout=15, peer_timeout=None)
-                connected = True
                 try:
                     await export(ws)
                 finally:
@@ -45,10 +59,9 @@ def install(app, *, web_port, token, here):
                 raise
             except Exception as exc:
                 state["status"], state["error"] = "error", str(exc)
-            # 连上过就立刻重连(对端掉线/被顶号)；连不上则指数退避+抖动，
-            # 避免服务端重启时上千个 hub 同一秒齐涌。
-            delay = 1 if connected else min(delay * 2, 60)
-            await asyncio.sleep(0.2 if connected else delay * random.uniform(0.5, 1.5))
+            # 抖动也避免服务端重启时上千个 hub 同一秒齐涌。
+            delay = 0 if loop.time() - t0 >= STABLE else min(max(delay * 2, 1), 60)
+            await asyncio.sleep(0.2 if delay == 0 else delay * random.uniform(0.5, 1.5))
 
     async def new_pair():
         try:

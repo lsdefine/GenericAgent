@@ -9,7 +9,7 @@ HTTP (errors = {'error','code'} + status: offline/gone 404, busy 409, timeout 50
 """
 import os, re, sys, json, time, asyncio, threading, random, hmac, hashlib
 PORT = int(os.environ.get('GA_HUB_PORT', 19736))
-WEB_PORT = int(os.environ.get('GA_HUB_WEB_PORT', PORT + 1))   # the only face fit to be tunnelled out (frp this one)
+WEB_PORT = int(os.environ.get('GA_HUB_WEB_PORT', PORT + 1))   # localhost only; remote access goes via hub_p2p, never port-forward this
 TOKEN = os.environ.get('GA_HUB_TOKEN') or ''.join(random.choices('abcdefghijkmnpqrstuvwxyz23456789', k=6))
 URL = os.environ.get('GA_HUB', f'ws://127.0.0.1:{PORT}/ws')
 TITLE_MIN = 12                    # a too short last input gets the previous one prepended

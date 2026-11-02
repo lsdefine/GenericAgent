@@ -1,21 +1,26 @@
 """Optional P2P phone pairing plug-in for hub.py."""
 import asyncio
 import os
-import random
-from collections import deque
+import socket
 from pathlib import Path
 
 from fastapi import Response
 from fastapi.responses import JSONResponse
-from p2p_ws_client import HTTPExporter, connect_saved, create_code, load_room, save_room
+from p2p_ws_client import (
+    Group, HTTPExporter, HTTPLocalProxy, connect_saved, create_code, load_room,
+    retry_forever, save_room,
+)
 
 
 def install(app, *, web_port, token, here):
     signal = os.environ.get("GA_P2P_SIGNAL", "ws://47.101.182.29:49157/ws")
     name = os.environ.get("GA_P2P_NAME", "ga-hub-phone")
     rooms = Path(os.environ.get("GA_P2P_ROOMS", "~/.p2p_ws/rooms.json")).expanduser()
+    # 多人组成员名带角色前缀：hub: 导出本机 API，cust: 代理对方 API。一条 P2PSocket
+    # 只能有一个 HTTP 消费者，故同一进程以两个成员身份入组，每对连接角色唯一。
+    member = os.environ.get("GA_P2P_MEMBER", f"{socket.gethostname()}-{web_port}")
     state = {"task": None, "invite": None, "status": "idle", "error": None,
-             "started": False}
+             "started": False, "group": None, "hubs": {}}
     app.state.p2p_pair_open = True
 
     async def export(ws):
@@ -30,38 +35,49 @@ def install(app, *, web_port, token, here):
             await exporter.close()
 
     async def reconnect():
-        # 重连节奏三层:
-        # 1) 本轮尝试活过 STABLE 秒(正常会话被掉线/被顶号, 或已久候后信令断) -> 0.2s 秒级重连;
-        # 2) 秒断/连不上 -> 抖动指数退避 1,2,4..60s, 防"配对即断"空转;
-        # 3) 兜底硬上限: 任意 WINDOW 秒内最多 BUDGET 次建连, 远低于信令服务器
-        #    每 IP 2/s、突发 20 的限速, 免得把同出口 IP 的手机一起 429 掉。
-        STABLE, WINDOW, BUDGET = 30, 60, 8
-        loop = asyncio.get_running_loop()
-        delay, recent = 0, deque()
-        while True:
-            now = loop.time()
-            while recent and now - recent[0] >= WINDOW:
-                recent.popleft()
-            if len(recent) >= BUDGET:
-                await asyncio.sleep(recent[0] + WINDOW - now)
-                continue
-            recent.append(now)
-            t0 = now
+        async def once():
+            state["status"], state["error"] = "reconnecting", None
+            # 已配对候房不超时；信令断开仍立即失败并走退避。
+            ws = await connect_saved(name, path=rooms, direct_timeout=15, peer_timeout=None)
             try:
-                state["status"], state["error"] = "reconnecting", None
-                # 已配对候房不超时；信令断开仍立即失败并走退避。
-                ws = await connect_saved(name, path=rooms, direct_timeout=15, peer_timeout=None)
-                try:
-                    await export(ws)
-                finally:
-                    await ws.close()  # 不关会泄漏信令连接: 旧连接与新连接自配对占满房间
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                state["status"], state["error"] = "error", str(exc)
-            # 抖动也避免服务端重启时上千个 hub 同一秒齐涌。
-            delay = 0 if loop.time() - t0 >= STABLE else min(max(delay * 2, 1), 60)
-            await asyncio.sleep(0.2 if delay == 0 else delay * random.uniform(0.5, 1.5))
+                await export(ws)
+            finally:
+                await ws.close()  # 不关会泄漏信令连接: 旧连接与新连接自配对占满房间
+
+        def failed(exc):
+            state["status"], state["error"] = "error", str(exc)
+
+        await retry_forever(once, failed)
+
+    async def serve_customer(ws, peer):
+        exporter = await HTTPExporter(
+            ws, f"http://127.0.0.1:{web_port}", allow=("/api/",), query={"t": token},
+        ).start()
+        try:
+            await exporter.wait_closed()
+        finally:
+            await exporter.close()
+
+    async def use_hub(ws, peer):
+        proxy = await HTTPLocalProxy(ws).start()
+        state["hubs"][peer[4:]] = proxy.url
+        try:
+            await proxy.wait_closed()
+        finally:
+            if state["hubs"].get(peer[4:]) == proxy.url:
+                del state["hubs"][peer[4:]]
+            await proxy.close()
+
+    def start_group():
+        if state["group"]:
+            return
+        room = load_room(name, path=rooms)
+        hub, cust = f"hub:{member}", f"cust:{member}"
+        roles = ((hub, serve_customer, "cust:"), (cust, use_hub, "hub:"))
+        state["group"] = [asyncio.create_task(Group(
+            room["signal_url"], room["room"], me, serve,
+            want=lambda p, other=other: p.startswith(other) and p[len(other):] != member,
+        ).run()) for me, serve, other in roles]
 
     async def new_pair():
         try:
@@ -71,6 +87,7 @@ def install(app, *, web_port, token, here):
             state["status"], state["error"] = "waiting", None
             ws = await invite.connect(direct_timeout=15)
             save_room(signal, invite.room, name=name, path=rooms)
+            start_group()
             try:
                 await export(ws)
             finally:
@@ -100,6 +117,11 @@ document.querySelector('#state').textContent=s.status+(s.error?' : '+s.error:'')
 if(s.status!=='connected')setTimeout(poll,1000)}catch(e){document.querySelector('#state').textContent=e}}
 poll();</script>''', media_type="text/html")
 
+    @app.get("/p2p/hubs")
+    async def p2p_hubs():
+        """同组其他 hub 的本地代理地址 {成员名: http://127.0.0.1:端口}，按原 /api/ 访问。"""
+        return JSONResponse(state["hubs"])
+
     @app.get("/pair/status")
     async def pair_status():
         invite = state["invite"]
@@ -119,6 +141,7 @@ poll();</script>''', media_type="text/html")
         except KeyError:
             return
         state["task"] = asyncio.create_task(reconnect())
+        start_group()
 
     app.add_event_handler("startup", startup)
     return state

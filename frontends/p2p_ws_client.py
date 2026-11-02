@@ -8,11 +8,13 @@ import json
 import logging
 import math
 import os
+import random
 import re
 import time
 import urllib.error
 import urllib.request
 import zlib
+from collections import deque
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -1080,12 +1082,104 @@ async def connect_code(
     )
 
 
+# ---- 多人组：同一 UUID 即全部权限；名单走大厅，数据走两两派生的普通 1v1 房间 ----
+
+async def retry_forever(attempt, on_error=None, *, stable=30, window=60, budget=8):
+    """永久重试 attempt()。节奏三层:
+    1) 本轮活过 stable 秒(正常会话被掉线/被顶号) -> 0.2s 秒级重连;
+    2) 秒断/连不上 -> 抖动指数退避 1,2,4..60s, 防"配对即断"空转;
+    3) 兜底: 任意 window 秒内最多 budget 次, 远低于信令服务器每 IP 限速。
+    抖动也避免服务端重启时大量客户端同一秒齐涌。"""
+    loop = asyncio.get_running_loop()
+    delay, recent = 0, deque()
+    while True:
+        now = loop.time()
+        while recent and now - recent[0] >= window:
+            recent.popleft()
+        if len(recent) >= budget:
+            await asyncio.sleep(recent[0] + window - now)
+            continue
+        recent.append(now)
+        try:
+            await attempt()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            if on_error:
+                on_error(exc)
+        delay = 0 if loop.time() - now >= stable else min(max(delay * 2, 1), 60)
+        await asyncio.sleep(0.2 if delay == 0 else delay * random.uniform(0.5, 1.5))
+
+
+def pair_room(room: str, a: str, b: str) -> str:
+    """两成员的专属房间：双方独立算出同一值，且不同于原 1v1 房间。"""
+    x, y = sorted((a, b))
+    return hashlib.sha256(f"{room}\n{x}\n{y}".encode()).hexdigest()
+
+
+class Group:
+    """以成员名 me 加入 UUID room 的多人组。
+
+    大厅连接只收在线名单(成员名列表，变化时推送，无轮询)；对每个在线且 want(peer)
+    的成员各维护一条普通 P2PSocket，并交给 serve(socket, peer) 处理直到断开。
+    成员离开才取消其连接；大厅自身断线不影响已建立的两两连接。
+    同名重入会顶掉旧连接，因此每个进程须用唯一成员名。
+    """
+
+    def __init__(self, signal_url, room, me, serve, *, want=lambda peer: True,
+                 access_key=DEFAULT_ACCESS_KEY):
+        self.signal_url, self.room, self.me = signal_url, room, me
+        self.serve, self.want, self.access_key = serve, want, access_key
+        self.members: set[str] = set()
+        self._pairs: dict[str, asyncio.Task] = {}
+
+    async def run(self):
+        try:
+            await retry_forever(self._lobby)
+        finally:
+            for task in self._pairs.values():
+                task.cancel()
+
+    async def _lobby(self):
+        room = hashlib.sha256(f"{self.room}:lobby".encode()).hexdigest()
+        sep = "&" if "?" in self.signal_url else "?"
+        url = f"{self.signal_url}{sep}{urlencode({'room': room, 'member': self.me})}"
+        seq = 0  # 服务端广播在锁外发送可能乱序，只认更大的 seq
+        async with websockets.connect(
+            signed_url(url, "ws", room, self.access_key), ping_interval=15, ping_timeout=10,
+        ) as ws:
+            async for raw in ws:
+                msg = json.loads(raw)
+                if msg.get("type") == "members" and msg["seq"] > seq:
+                    seq = msg["seq"]
+                    self._sync(set(msg["members"]) - {self.me})
+
+    def _sync(self, members):
+        self.members = members
+        for peer in set(self._pairs) - members:
+            self._pairs.pop(peer).cancel()
+        for peer in members - set(self._pairs):
+            if self.want(peer):
+                self._pairs[peer] = asyncio.create_task(
+                    retry_forever(lambda peer=peer: self._pair(peer)))
+
+    async def _pair(self, peer):
+        socket = await P2PSocket.connect(
+            self.signal_url, pair_room(self.room, self.me, peer),
+            access_key=self.access_key, direct_timeout=15, peer_timeout=None,
+        )
+        try:
+            await self.serve(socket, peer)
+        finally:
+            await socket.close()
+
+
 connect = P2PSocket.connect
 
 __all__ = [
     "DEFAULT_ACCESS_KEY", "ROOMS_FILE", "Invite", "P2PSocket", "Signal",
     "HTTPExporter", "HTTPLocalProxy", "export_http", "mount_http",
     "connect", "connect_code", "connect_saved", "create_code", "load_room",
-    "save_room", "signed_url",
+    "save_room", "signed_url", "Group", "pair_room", "retry_forever",
 ]
 

@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager, suppress
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException
 from fastapi.responses import FileResponse, PlainTextResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import BaseModel
 
 FRONTENDS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -133,7 +134,11 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Conductor", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+# 只放行本机页面（conductor.html 同源 / 桌面端 Tauri / vite dev），防恶意网页跨站调用
+LOCAL_ORIGIN = re.compile(r"^(https?://(127\.0\.0\.1|localhost|\[::1\])(:\d+)?|tauri://localhost|https?://tauri\.localhost)$")
+app.add_middleware(CORSMiddleware, allow_origin_regex=LOCAL_ORIGIN.pattern, allow_methods=["*"], allow_headers=["*"])
+# 防 DNS rebinding；--key 远程模式或 ::1 监听时不启用
+if not args.key and args.host != "::1": app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost"])
 
 class RemoteAuth:
     def __init__(self, app): self.app = app
@@ -732,6 +737,8 @@ def api_approval(body: ApprovalIn):
 
 @app.websocket("/ws")
 async def websocket(ws: WebSocket):
+    # WebSocket 不受 CORS 约束，需自行校验 Origin（非浏览器客户端不带 Origin，放行；--key 远程模式由 RemoteAuth 的 Basic 鉴权把关）
+    if (origin := ws.headers.get("origin")) and not args.key and not LOCAL_ORIGIN.match(origin): return await ws.close(code=1008)
     await ws.accept()
     ws_clients.add(ws)
     try:

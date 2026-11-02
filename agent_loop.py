@@ -16,6 +16,7 @@ def try_call_generator(func, *args, **kwargs):
 class BaseHandler:
     def turn_end_callback(self, response, tool_calls, tool_results, turn, next_prompt, exit_reason): return next_prompt
     def dispatch(self, tool_name, args, response, index=0, tool_num=1):
+        if tool_name in ('Bash', 'PowerShell'): tool_name, args = 'code_run', {**args, 'type': tool_name.lower(), 'script': args.get('command') or args.get('cmd') or args.get('script') or ''}
         method_name = f"do_{tool_name}"
         if hasattr(self, method_name):
             args['_index'] = index; args['_tool_num'] = tool_num

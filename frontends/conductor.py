@@ -143,10 +143,9 @@ if not args.key and args.host != "::1": app.add_middleware(TrustedHostMiddleware
 class RemoteAuth:
     def __init__(self, app): self.app = app
     async def __call__(self, scope, receive, send):
-        remote = (scope.get("client") or ("",))[0]
         got = dict(scope.get("headers", [])).get(b"authorization", b"")
         want = b"Basic " + base64.b64encode(f"conductor:{args.key}".encode())
-        if args.key and remote not in ("127.0.0.1", "::1") and not secrets.compare_digest(got, want):
+        if args.key and not secrets.compare_digest(got, want):
             if scope["type"] == "websocket": return await send({"type": "websocket.close", "code": 1008})
             return await PlainTextResponse("Unauthorized", 401, {"WWW-Authenticate": 'Basic realm="Conductor"'})(scope, receive, send)
         await self.app(scope, receive, send)

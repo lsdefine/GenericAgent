@@ -19,7 +19,7 @@ from collections import deque
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, quote, unquote, urlencode, urlsplit, urlunsplit
 
 import websockets
 try:
@@ -1332,8 +1332,9 @@ class HubUnion:
         if parts.path == "/api/peers":
             return await self._peers(dict(parse_qsl(parts.query, keep_blank_values=True)).get("psig"))
         hub = None
-        if len(path) > 3 and path[1] == "api" and "@" in path[2]:
-            path[2], _, hub = path[2].rpartition("@")
+        if len(path) > 3 and path[1] == "api" and "@" in unquote(path[2]):  # webui 的 encodeURIComponent 把 @ 编成 %40
+            name, _, hub = unquote(path[2]).rpartition("@")
+            path[2] = quote(name, safe="")
             target = urlunsplit(("", "", "/".join(path), parts.query, ""))
         elif body:
             with suppress(ValueError, AttributeError):

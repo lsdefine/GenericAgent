@@ -552,7 +552,10 @@ def _describe_media(msg_type, file_path, filename):
     return f"[{msg_type}]\n[File: source: {file_path}]"
 
 
-def _send_local_file(receive_id, file_path, receive_id_type="open_id"):
+def _send_local_file(receive_id, file_path, receive_id_type="open_id", cwd=None):
+    if cwd and not os.path.isabs(file_path):
+        candidate = os.path.join(cwd, file_path)
+        if os.path.isfile(candidate): file_path = candidate
     if not os.path.isfile(file_path):
         send_message(receive_id, f"⚠️ 文件不存在: {file_path}", receive_id_type=receive_id_type)
         return False
@@ -572,9 +575,9 @@ def _send_local_file(receive_id, file_path, receive_id_type="open_id"):
     return False
 
 
-def _send_generated_files(receive_id, raw_text, receive_id_type="open_id"):
+def _send_generated_files(receive_id, raw_text, receive_id_type="open_id", cwd=None):
     for file_path in _extract_files(raw_text):
-        _send_local_file(receive_id, file_path, receive_id_type)
+        _send_local_file(receive_id, file_path, receive_id_type, cwd)
 
 
 def _build_user_message(message):
@@ -733,7 +736,8 @@ class FeishuApp(AgentChatMixin):
         rid = receive_id or chat_id
         text = _display_text(raw_text)
         await asyncio.to_thread(send_message, rid, text, "text", False, receive_id_type)
-        await asyncio.to_thread(_send_generated_files, rid, raw_text, receive_id_type)
+        cwd = getattr(getattr(self.agent, "handler", None), "cwd", None)
+        await asyncio.to_thread(_send_generated_files, rid, raw_text, receive_id_type, cwd)
 
     async def run_agent(self, chat_id, text, *, receive_id=None, receive_id_type="open_id", images=None, **_):
         if self.user_tasks:
@@ -755,7 +759,8 @@ class FeishuApp(AgentChatMixin):
                 result["raw"] = raw
                 result["sent"] = True
             card.done(_display_text(raw))
-            _send_generated_files(rid, raw, receive_id_type=receive_id_type)
+            cwd = getattr(getattr(self.agent, "handler", None), "cwd", None)
+            _send_generated_files(rid, raw, receive_id_type=receive_id_type, cwd=cwd)
 
         try:
             await asyncio.to_thread(card.start)

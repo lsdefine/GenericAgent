@@ -301,6 +301,7 @@ if __name__ == '__main__':
         spec = importlib.util.spec_from_file_location('reflect_script', args.reflect)
         mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
         if hasattr(mod, 'init'): mod.init(_extra_args)
+        if (_ln := getattr(mod, 'LLM', None)): agent.next_llm(next((i for i, b in enumerate(agent.llmclients) if not isinstance(b, dict) and b.backend.name == _ln), agent.llm_no))
         _mt = os.path.getmtime(args.reflect)
         print(f'[Reflect] loaded {args.reflect}' + (f' args={_extra_args}' if _extra_args else ''))
         try:
@@ -323,7 +324,6 @@ if __name__ == '__main__':
             if task and task == '/exit': break
             if task:
                 print(f'[Reflect] triggered: {task[:80]}')
-                if (_ln := getattr(mod, 'LLM', None)): agent.next_llm(next((i for i, b in enumerate(agent.llmclients) if not isinstance(b, dict) and b.backend.name == _ln), agent.llm_no))
                 dq = agent.put_task(task, source='reflect')
                 try:
                     while 'done' not in (item := dq.get(timeout=2200)): pass

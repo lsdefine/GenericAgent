@@ -1,4 +1,4 @@
-import sys, os, re, json, time, threading, importlib, webbrowser
+import sys, os, re, json, time, threading, importlib, webbrowser, signal
 from datetime import datetime
 from pathlib import Path
 import tempfile, traceback, subprocess, itertools, collections, difflib, shutil
@@ -12,6 +12,57 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 def safe_print(*args, **kwargs):
     try: print(*args, **kwargs)
     except: pass
+
+def _windows_job(process):
+    if os.name != 'nt': return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+        k32 = ctypes.WinDLL('kernel32', use_last_error=True)
+        k32.CreateJobObjectW.restype = wintypes.HANDLE
+        k32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+        k32.AssignProcessToJobObject.restype = wintypes.BOOL
+        k32.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
+        k32.TerminateJobObject.restype = wintypes.BOOL
+        k32.CloseHandle.argtypes = [wintypes.HANDLE]
+        handle = k32.CreateJobObjectW(None, None)
+        if not handle: return None
+        if not k32.AssignProcessToJobObject(handle, process._handle):
+            k32.CloseHandle(handle); return None
+        return k32, handle
+    except OSError:
+        return None
+
+def _close_windows_job(job, kill=False):
+    if not job: return False
+    k32, handle = job
+    stopped = bool(k32.TerminateJobObject(handle, 1)) if kill else True
+    k32.CloseHandle(handle)
+    return stopped
+
+def _stop_process_tree(process, job=None):
+    if os.name == 'nt':
+        stopped = _close_windows_job(job, kill=True) if job else False
+        if not stopped and process.poll() is None:
+            subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=0x08000000)
+    else:
+        try: os.killpg(process.pid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError): pass
+        deadline = time.monotonic() + 1
+        while time.monotonic() < deadline:
+            try: os.killpg(process.pid, 0)
+            except ProcessLookupError: break
+            except PermissionError: pass
+            time.sleep(0.05)
+        else:
+            try: os.killpg(process.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError): pass
+    if process.poll() is None:
+        try: process.kill()
+        except ProcessLookupError: pass
+    try: process.wait(timeout=1)
+    except subprocess.TimeoutExpired: pass
 
 def code_run(code, code_type="python", timeout=60, cwd=None, code_cwd=None, stop_signal=None, maxlen=10000, myprint=safe_print):
     """代码执行器
@@ -59,8 +110,10 @@ def code_run(code, code_type="python", timeout=60, cwd=None, code_cwd=None, stop
             cmd, stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             bufsize=0, cwd=cwd, startupinfo=startupinfo,
-            creationflags=0x08000000 if os.name == 'nt' else 0
+            creationflags=0x08000000 if os.name == 'nt' else 0,
+            start_new_session=os.name != 'nt'
         )
+        process_job = _windows_job(process)
         start_t = time.time()
         t = threading.Thread(target=stream_reader, args=(process, full_stdout), daemon=True)
         t.start()
@@ -68,8 +121,9 @@ def code_run(code, code_type="python", timeout=60, cwd=None, code_cwd=None, stop
         while t.is_alive():
             istimeout = time.time() - start_t > timeout
             if istimeout or stop_signal:
-                process.kill()
-                myprint("[Debug] Process killed due to timeout or stop signal.")
+                _stop_process_tree(process, process_job)
+                process_job = None
+                myprint("[Debug] Process tree stopped due to timeout or stop signal.")
                 if istimeout: full_stdout.append("\n[Timeout Error] 超时强制终止")
                 else: full_stdout.append("\n[Stopped] 用户强制终止")
                 break
@@ -92,9 +146,11 @@ def code_run(code, code_type="python", timeout=60, cwd=None, code_cwd=None, stop
             "exit_code": exit_code
         }
     except Exception as e:
-        if 'process' in locals(): process.kill()
+        if 'process' in locals():
+            _stop_process_tree(process, locals().get('process_job'))
         return {"status": "error", "msg": str(e)}
     finally:
+        if 'process_job' in locals() and process_job: _close_windows_job(process_job)
         if code_type == "python" and tmp_path and os.path.exists(tmp_path): os.remove(tmp_path)
 
 

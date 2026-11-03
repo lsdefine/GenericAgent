@@ -300,7 +300,7 @@ def list_reflect_tasks() -> list[dict]:
     return out
 
 
-# ----- hub.pyw parity: every launchable service ---------------------------
+# ----- service_manager.pyw parity: every launchable service ---------------------------
 
 _HUB_EXCLUDES = {"goal_mode.py", "chatapp_common.py", "tuiapp.py"}
 
@@ -324,10 +324,10 @@ def _sniff_doc(p) -> str:
 
 
 def list_launchable_services() -> list[dict]:
-    """Mirror hub.pyw's discover_services() so `/scheduler` shows the *same*
+    """Mirror service_manager.pyw's discover_services() so `/scheduler` shows the *same*
     set of launchable services as the GUI launcher.
 
-    Sources (hub.pyw EXCLUDES = goal_mode.py / chatapp_common.py / tuiapp.py):
+    Sources (service_manager.pyw EXCLUDES = goal_mode.py / chatapp_common.py / tuiapp.py):
       • reflect/*.py   (not '_'-prefixed, not excluded)
           → cmd = [python, agentmain.py, --reflect, reflect/<f>]
       • frontends/*app*.py (not excluded)
@@ -412,7 +412,7 @@ def start_service(name: str) -> tuple[bool, str]:
 
 # ----- running-state introspection (bug#4) --------------------------------
 # Why psutil cmdline-scan instead of a launched-by-us pid registry?
-#   • Services launched by a previous TUI run, or by hub.pyw, must also be
+#   • Services launched by a previous TUI run, or by service_manager.pyw, must also be
 #     recognised — otherwise /scheduler would happily start a duplicate.
 #   • A registry tied to this process dies when the TUI restarts, but the
 #     services keep running (CREATE_NEW_PROCESS_GROUP).  Cmdline scan is the

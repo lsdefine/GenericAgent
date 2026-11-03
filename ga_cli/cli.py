@@ -56,9 +56,9 @@ COMMANDS = {
         "cmd": ["python", "{PROJECT_DIR}/assets/configure_mykey.py"],
     },
     "hub": {
-        "help": "启动 Hub 管理器 (launcher)",
-        "desc": "启动 hub 前端管理面板（系统托盘 + 浏览器界面）",
-        "cmd": ["python", "{PROJECT_DIR}/hub.pyw"],
+        "help": "启动本机服务管理器 (service_manager)",
+        "desc": "启动本机服务管理窗口（Tkinter）",
+        "cmd": ["python", "{PROJECT_DIR}/service_manager.pyw"],
     },
     "tui": {
         "help": "启动终端 TUI (tuiapp)",

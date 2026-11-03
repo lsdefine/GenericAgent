@@ -4714,7 +4714,7 @@ class SB:
                         lines.append(('✅ ' if ok else '❌ ') + msg)
                     self.commit(lines)
             else:
-                # Mirror hub.pyw discover_services(): reflect tasks + frontend
+                # Mirror service_manager.pyw discover_services(): reflect tasks + frontend
                 # apps, so the picker shows the same set as the GUI launcher.
                 services = slash_cmds.list_launchable_services()
                 if not services:

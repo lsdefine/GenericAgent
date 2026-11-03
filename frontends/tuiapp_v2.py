@@ -6362,7 +6362,7 @@ class GenericAgentTUI(App[None]):
             running = slash_cmds.running_services()  # {name: pid}
         except Exception:
             running = {}
-        # Mirror hub.pyw: reflect tasks + frontend apps, grouped by kind so the
+        # Mirror service_manager.pyw: reflect tasks + frontend apps, grouped by kind so the
         # picker reads like the GUI launcher.  Picker value = hub-style path.
         choices = []
         preselected = []   # indices into `choices` that are running right now
@@ -6384,7 +6384,7 @@ class GenericAgentTUI(App[None]):
                 else:
                     choices.append((label, s["name"]))
         sess = self.current
-        hint = ("选择要启动的服务（与 hub.pyw 一致：reflect 任务 + frontend 应用）"
+        hint = ("选择要启动的服务（与 service_manager.pyw 一致：reflect 任务 + frontend 应用）"
                 "    Space 勾选 · Enter 提交 · Esc 取消 — 提交后还需二次确认")
         if running:
             hint += f"\n   绿色 = 正在运行（已勾选）；取消勾选即停止该服务（共 {len(running)} 个在运行）"

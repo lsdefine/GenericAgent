@@ -1472,7 +1472,7 @@ hub = WsHub()
 
 
 # ---------------------------------------------------------------------------
-# Service management (hub.pyw core + WS notify)
+# Service management (service_manager.pyw core + WS notify)
 # ---------------------------------------------------------------------------
 
 _SKIP = frozenset({"goal_mode.py", "chatapp_common.py", "tuiapp.py", "qtapp.py"})
@@ -1624,7 +1624,7 @@ def _classify_log_error(line: str) -> tuple[str, str] | None:
 
 
 class ServiceManager:
-    """hub.pyw ServiceManager + HTTP/WS glue."""
+    """service_manager.pyw ServiceManager + HTTP/WS glue."""
 
     def __init__(self, ga_root: str, emit_fn):
         self.lock = threading.RLock()

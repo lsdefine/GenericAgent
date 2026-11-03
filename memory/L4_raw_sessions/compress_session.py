@@ -138,7 +138,7 @@ def extract_history(src, session_name=None):
     all_blocks = [parsed for m in _RE_HISTORY.finditer(text)
                   if (parsed := _parse_history_block(m.group(1)))]
     if all_blocks:
-        return _merge_history_blocks(all_blocks)
+        return list(dict.fromkeys(_merge_history_blocks(all_blocks)))
     return []
 
 def format_history_block(session_name, history_lines):

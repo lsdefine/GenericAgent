@@ -103,13 +103,14 @@ def keypair():
     sk = X25519PrivateKey.generate()
     return sk, _pub_raw(sk.public_key())
 
-def session_key(sk, peer_pub: bytes) -> bytes:
+def session_key(sk, peer_pub: bytes, psk: bytes = b"") -> bytes:
     """ECDH + HKDF 派生 32 字节会话密钥。
 
     salt 取两个公钥排序后拼接，双方算出同一个值，且把密钥绑定到本次配对。
+    psk(共享秘密)也并入 salt：不知 psk 的信令方换公钥做中间人也解不开；空 psk 与旧版完全一致。
     """
     mine = _pub_raw(sk.public_key())
-    salt = b"".join(sorted([mine, peer_pub]))
+    salt = b"".join(sorted([mine, peer_pub])) + psk
     shared = sk.exchange(X25519PublicKey.from_public_bytes(peer_pub))
     return HKDF(
         algorithm=hashes.SHA256(), length=32, salt=salt, info=b"p2p-ws/v1"
@@ -329,7 +330,7 @@ class P2PSocket:
     @classmethod
     async def connect(
         cls, signal_url: str, room: str, *, direct_timeout=15, peer_timeout=120,
-        retries=6, stun=True, access_key=DEFAULT_ACCESS_KEY,
+        retries=6, stun=True, access_key=DEFAULT_ACCESS_KEY, psk=b"",
     ):
         """连接同一 UUID 的另一个客户端，直连失败自动回退中继。"""
         self = cls(
@@ -337,6 +338,7 @@ class P2PSocket:
             peer_timeout=peer_timeout, retries=retries, stun=stun,
             access_key=access_key,
         )
+        self._psk = psk
         try:
             await self._connect()
         except BaseException:
@@ -356,7 +358,7 @@ class P2PSocket:
             {"type": "key", "key": base64.b64encode(public).decode()}
         )
         key_msg = await self.signal.expect("key")
-        self._key = session_key(private, base64.b64decode(key_msg["key"]))
+        self._key = session_key(private, base64.b64decode(key_msg["key"]), getattr(self, "_psk", b""))
         self.signal.on_data = self._on_relay_data
         self._relay_ready.set()
         self.mode = "relay"
@@ -1273,6 +1275,7 @@ class Group:
         socket = await P2PSocket.connect(
             self.signal_url, room, access_key=self.access_key,
             direct_timeout=15, peer_timeout=15,
+            psk=hashlib.sha256(f"{self.room}:psk".encode()).digest(),  # 组 UUID 绑进密钥, 防信令中间人
         )
         try:
             await handler(socket, peer)

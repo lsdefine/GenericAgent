@@ -59,6 +59,11 @@ def compress_session(src, dst_dir=None):
     if len(compressed.encode('utf-8')) < 4500:
         return None, f'too small after compress ({len(compressed)}B)'
     dst = os.path.join(dst_dir, name)
+    stem, suffix = os.path.splitext(name)[0], 1
+    while os.path.exists(dst):
+        suffix += 1
+        name = f'{stem}_{suffix}.txt'
+        dst = os.path.join(dst_dir, name)
     with open(dst, 'w', encoding='utf-8', newline='') as f:
         f.write(compressed)
     orig_kb, new_kb = os.path.getsize(src) // 1024, os.path.getsize(dst) // 1024

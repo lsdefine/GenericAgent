@@ -517,7 +517,7 @@ class GenericAgentHandler(BaseHandler):
 禁止：临时状态、推理过程、未验证信息、通用常识、易重建细节；不得将模型推测或建议记作用户要求。
 记忆整理仅是内部收尾；完成或跳过后，仍须向用户报告原任务结果。'''
         yield "[Info] Start distilling good memory for long-term storage.\n"
-        path = './memory/memory_management_sop.md'
+        path = os.path.join(script_dir, 'memory', 'memory_management_sop.md')
         if os.path.exists(path): result = 'This is L0:\n' + file_read(path, show_linenos=False)
         else: result = "Memory Management SOP not found. Do not update memory."
         if (l1 := load_L1()) and len(l1) > 6000: result += 'L1 (insight or index) is too large, follow L0 and cleanup sop to fix it!'

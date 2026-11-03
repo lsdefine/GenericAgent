@@ -4,6 +4,7 @@ import asyncio
 import base64
 import hashlib
 import hmac
+import inspect
 import json
 import logging
 import math
@@ -41,6 +42,25 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 # 仅用于过滤不知道本项目的扫描和噪声，不是安全秘密。
 # 即使该值公开，握手访问安全仍由不可猜测、不得泄露的 UUID 保证。
 DEFAULT_ACCESS_KEY = "ljq-p2p-ws-default-access-key-v1-7f3c9a2e"
+DEFAULT_STUN_URL = "stun:47.101.182.29:49157"
+
+
+STANDARD_SIGNAL_URL = "ws://47.101.182.29:49157/ws"
+
+
+def secure_signal_url(url: str) -> str:
+    """信令统一走 47 VPS 明文 ws(无 TLS)。
+
+    传输层自带 X25519+HKDF 端到端加密, 信令只转发密文, TLS 不增加机密性,
+    反而多一跳 jump1 反代(且不转 UDP STUN)。2.33.4 曾把旧配对改写成
+    wss://p2p.gaagent.ai, 这里把这类已保存配对原房间迁回 47, 房间号不变。
+    """
+    parts = urlsplit(url)
+    if parts.hostname == "p2p.gaagent.ai":
+        std = urlsplit(STANDARD_SIGNAL_URL)
+        return urlunsplit((std.scheme, std.netloc, parts.path or std.path, parts.query, parts.fragment))
+    return url
+
 
 def signed_url(url: str, action: str, target: str, key: str = DEFAULT_ACCESS_KEY) -> str:
     """为一次请求添加短时有效、不可重放的 HMAC 查询参数。"""
@@ -55,7 +75,7 @@ def signed_url(url: str, action: str, target: str, key: str = DEFAULT_ACCESS_KEY
 
 def code_url(signal_url: str, endpoint: str) -> str:
     """把 ws(s)://host/[prefix/]ws 转成 http(s)://host/[prefix/]code/...。"""
-    parts = urlsplit(signal_url)
+    parts = urlsplit(secure_signal_url(signal_url))
     scheme = {"ws": "http", "wss": "https"}.get(parts.scheme)
     if not scheme:
         raise ValueError("signal_url must use ws:// or wss://")
@@ -119,11 +139,33 @@ def open_(key: bytes, frame: bytes):
 # ---- merged from signal.py ----
 log = logging.getLogger("p2p_ws.signal")
 
+def _ws_connect_kw():
+    """websockets.connect 的固定实参。
+
+    信令必须直连。websockets ≥14 的 connect() 默认读 HTTPS_PROXY/ALL_PROXY, 而 GA 会把给 LLM
+    配的翻墙代理写进这些变量(android_entry._apply_proxy) —— 于是短码换房(urlopen 已显式清代理,
+    见文末 _direct_opener)与信令 WS 分走两条路: 换码直连、信令走代理。代理多半不支持非标端口
+    49157, 且 socks5 还需 python_socks(未打包 → ImportError), 结果是配了代理的用户必然连不上,
+    报的还是与网络无关的错。这里显式声明不走代理, 与「两步必须同路」的不变量对齐。
+    proxy= 在 <14 不存在, 故按签名探测而非 try/except —— 后者会把真实的连接错误一并吞掉。"""
+    kw = {"max_size": 1 << 21}
+    try:
+        if "proxy" in inspect.signature(websockets.connect).parameters:
+            kw["proxy"] = None
+    except (TypeError, ValueError):
+        pass
+    return kw
+
+
+_WS_CONNECT_KW = _ws_connect_kw()
+
+
 class Signal:
     def __init__(
         self, url: str, room: str, retries: int = 6,
         access_key: str = DEFAULT_ACCESS_KEY,
     ):
+        url = secure_signal_url(url)
         separator = "&" if "?" in url else "?"
         self.url = f"{url}{separator}room={room}"
         self.room = room
@@ -144,18 +186,19 @@ class Signal:
     async def start(self):
         # 半开连接(切网/熄屏)靠 ping 在 ~25s 内暴露，默认 20+20s 太慢
         self._ws = await websockets.connect(
-            self._signed_url(), max_size=1 << 21, ping_interval=15, ping_timeout=10,
-        )
+            self._signed_url(), ping_interval=15, ping_timeout=10, **_WS_CONNECT_KW)
         self._ready.set()
         self._task = asyncio.create_task(self._loop())
         return self
 
     async def close(self):
         self._closing = True
+        self._ready.clear()
         if self._task:
             self._task.cancel()
         if self._ws:
-            await self._ws.close()
+            # 失效会话不等对端关闭握手，先中止本地传输以释放房间。
+            self._ws.transport.abort()
 
     @property
     def alive(self) -> bool:
@@ -185,7 +228,11 @@ class Signal:
 
     async def send(self, obj: dict, timeout: float = 15):
         """等连接就绪后发送；重连期间会阻塞而不是直接失败。"""
+        if self._closing:
+            raise ConnectionError("signal is closed")
         await asyncio.wait_for(self._ready.wait(), timeout)
+        if self._closing:
+            raise ConnectionError("signal is closed")
         await self._ws.send(json.dumps(obj))
 
     async def _loop(self):
@@ -273,6 +320,7 @@ class P2PSocket:
         self._direct_open = asyncio.Event()
         self._peer_watch = None
         self._direct_task = None
+        self._close_task = None
         self._upgrade_prepare = asyncio.Event()
         self._upgrade_ack = asyncio.Event()
         self._upgrade_commit = asyncio.Event()
@@ -391,17 +439,23 @@ class P2PSocket:
         return item
 
     async def close(self):
-        if self.closed:
-            return
-        self.closed = True
-        if self._peer_watch is not None and self._peer_watch is not asyncio.current_task():
-            self._peer_watch.cancel()
-        if self._direct_task is not None and self._direct_task is not asyncio.current_task():
-            self._direct_task.cancel()
-        await self._drop_direct()
-        await self.signal.close()
-        self._inbox.put_nowait(_Closed("socket is closed"))
-        self.mode = "closed"
+        if self._close_task is None:
+            self.closed = True
+            for task in (self._peer_watch, self._direct_task):
+                if task is not None and task is not asyncio.current_task():
+                    task.cancel()
+            self._inbox.put_nowait(_Closed("socket is closed"))
+            self.mode = "closed"
+            self._close_task = asyncio.create_task(self._finish_close())
+        await asyncio.shield(self._close_task)
+
+    async def _finish_close(self):
+        await self.signal.close()  # 先撤销信令，不能让 RTC 清理阻塞房间释放。
+        cleanup = asyncio.create_task(self._drop_direct())
+        _, pending = await asyncio.wait({cleanup}, timeout=1)
+        if pending:
+            cleanup.cancel()  # wait_for 会等取消完成，遇到慢清理仍可能无界等待。
+            log.warning("direct cleanup exceeded 1s; reconnect may proceed")
 
     async def __aenter__(self):
         return self
@@ -588,10 +642,18 @@ class _Closed:
 # ---- merged from invite.py ----
 _CODE = re.compile(r"^[0-9]{9}$")
 
+# 短码换房与随后的 WS 信令必须走同一条路: websockets 从不读环境代理, 而 urlopen 默认读
+# (GA 给 LLM 配的翻墙代理会写进 HTTP_PROXY/http_proxy)。两步分道时, 换码走代理、信令直连,
+# 代理不支持非标端口(如 49157)就只在换码这步炸, 报出与网络无关的 RemoteDisconnected。
+# 信令服务器是直连服务, 这里显式清空代理与之对齐。
+_direct_opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
 async def _post_json(url: str, timeout: float = 15):
     def request():
-        req = urllib.request.Request(url, data=b"", method="POST")
-        with urllib.request.urlopen(req, timeout=timeout) as response:
+        req = urllib.request.Request(url, data=b"", method="POST",
+                                     headers={"User-Agent": "GenericAgent-P2P/1.0"})
+        with _direct_opener.open(req, timeout=timeout) as response:
             return json.load(response)
 
     try:
@@ -599,6 +661,8 @@ async def _post_json(url: str, timeout: float = 15):
     except urllib.error.HTTPError as exc:
         reason = exc.read().decode(errors="replace").strip()
         raise ConnectionError(f"short-code server rejected request: {exc.code} {reason}") from exc
+    except Exception as exc:                     # 网络层失败带上 URL 与异常类型: 原来只剩一句 RemoteDisconnected, 无从判断死在哪一步
+        raise ConnectionError(f"short-code server unreachable ({type(exc).__name__}: {exc}) url={url}") from exc
 
 # ---- optional HTTP-over-P2P tunnel ----
 _HTTP_REQ, _HTTP_RES = "p2p-http.req", "p2p-http.res"
@@ -1004,7 +1068,7 @@ def save_room(signal_url: str, room: str, *, name: str = "default", path=ROOMS_F
     path.parent.mkdir(parents=True, exist_ok=True)
     rooms = _load_rooms(path)
     rooms[name] = {
-        "signal_url": signal_url,
+        "signal_url": secure_signal_url(signal_url),
         "room": room,
         "saved_at": int(time.time()),
     }
@@ -1021,7 +1085,10 @@ def save_room(signal_url: str, room: str, *, name: str = "default", path=ROOMS_F
 def load_room(name: str = "default", *, path=ROOMS_FILE):
     """读取命名配对，返回包含 signal_url/room/saved_at 的字典。"""
     try:
-        return _load_rooms(path)[name].copy()
+        saved = _load_rooms(path)[name].copy()
+        if "signal_url" in saved:
+            saved["signal_url"] = secure_signal_url(saved["signal_url"])
+        return saved
     except KeyError as exc:
         raise KeyError(f"saved room not found: {name}") from exc
 
@@ -1128,9 +1195,10 @@ class Group:
     同名重入会顶掉旧连接，因此每个进程须用唯一成员名。
     """
 
-    def __init__(self, signal_url, room, me, serve, use, *, access_key=DEFAULT_ACCESS_KEY):
-        self.signal_url, self.room, self.me = signal_url, room, me
+    def __init__(self, signal_url, room, me, serve, use, *, access_key=DEFAULT_ACCESS_KEY, auto=()):
+        self.signal_url, self.room, self.me = secure_signal_url(signal_url), room, me
         self.serve, self.use, self.access_key = serve, use, access_key
+        self.auto = tuple(auto)  # 名字以这些前缀开头的成员一上线就自动 open
         self.members: set[str] = set()
         self._ws = None
         self._wanted: set[str] = set()
@@ -1160,13 +1228,14 @@ class Group:
         seq = 0  # 服务端广播在锁外发送可能乱序，只认更大的 seq
         async with websockets.connect(
             signed_url(url, "ws", room, self.access_key), ping_interval=15, ping_timeout=10,
+            **_WS_CONNECT_KW,
         ) as ws:
-            self._ws = ws
             try:
                 async for raw in ws:
                     msg = json.loads(raw)
                     if msg.get("type") == "members" and msg["seq"] > seq:
                         seq = msg["seq"]
+                        self._ws = ws  # 收到名单才算在线：members 与 _ws 同时有效
                         self._sync(set(msg["members"]) - {self.me})
                     elif msg.get("type") == "call":
                         self._answer(msg["from"])
@@ -1178,7 +1247,8 @@ class Group:
         for tasks in (self._out, self._in):
             for peer in set(tasks) - members:
                 tasks.pop(peer).cancel()
-        for peer in (self._wanted & members) - set(self._out):
+        wanted = (self._wanted & members) | {p for p in members if p.startswith(self.auto)}
+        for peer in wanted - set(self._out):
             self._out[peer] = asyncio.create_task(retry_forever(lambda peer=peer: self._call(peer)))
 
     async def _call(self, peer):
@@ -1210,12 +1280,98 @@ class Group:
             await socket.close()
 
 
+class HubUnion:
+    """customer 侧把组内所有 hub 合成一个 hub API；hub 本身不改。
+
+    作 Group(auto=("hub:",)) 的 use 回调，每台 hub 一条 socket。会话名对外为
+    name@hub(不同 PC 的 GA 常同名)；/api/peers 逐台带各自 psig 增量拉取再合并；
+    GET /api/hubs 列在线 hub；POST /api/sessions 按 body 的 "hub" 选机，缺省取名字最小者。
+    """
+
+    def __init__(self, timeout=22):
+        self.hubs, self.rows, self.timeout = {}, {}, timeout  # rows: hub -> (psig, rows)
+        self._pending, self._seq = {}, 0
+
+    async def use(self, socket, peer):
+        hub = peer.split(":", 1)[-1]
+        _claim_receiver(socket, self)
+        self.hubs[hub] = socket
+        try:
+            while True:
+                with suppress(TypeError, ValueError, AttributeError):
+                    message = json.loads(await socket.recv())
+                    future = self._pending.get(message.get("id"))
+                    if future is not None and not future.done():
+                        future.set_result(message)
+        finally:
+            if self.hubs.get(hub) is socket:
+                del self.hubs[hub]
+                self.rows.pop(hub, None)
+            _release_receiver(socket, self)
+
+    async def _one(self, hub, method, target, body=b""):
+        self._seq += 1
+        rid = f"u{self._seq}"
+        future = self._pending[rid] = asyncio.get_running_loop().create_future()
+        try:
+            await self.hubs[hub].send(json.dumps({
+                "v": 1, "type": _HTTP_REQ, "id": rid, "method": method, "target": target,
+                "headers": [["Content-Type", "application/json"]] if body else [],
+                "body": base64.b64encode(body).decode("ascii")}, separators=(",", ":")))
+            res = await asyncio.wait_for(future, self.timeout)
+        finally:
+            self._pending.pop(rid, None)
+        return int(res.get("status") or 502), base64.b64decode(res.get("body") or "")
+
+    async def request(self, method, target, body=b""):
+        """返回 (status, body bytes)。"""
+        parts = urlsplit(target)
+        path = parts.path.split("/")
+        if parts.path == "/api/hubs":
+            return 200, json.dumps(sorted(self.hubs)).encode()
+        if parts.path == "/api/peers":
+            return await self._peers(dict(parse_qsl(parts.query, keep_blank_values=True)).get("psig"))
+        hub = None
+        if len(path) > 3 and path[1] == "api" and "@" in path[2]:
+            path[2], _, hub = path[2].rpartition("@")
+            target = urlunsplit(("", "", "/".join(path), parts.query, ""))
+        elif body:
+            with suppress(ValueError, AttributeError):
+                hub = json.loads(body).get("hub")
+        hub = hub if hub in self.hubs else min(self.hubs, default=None)
+        if hub is None:
+            return 503, b'{"error":"no hub online","code":503}'
+        status, data = await self._one(hub, method, target, body)
+        if parts.path == "/api/sessions" and status == 200:
+            with suppress(ValueError, TypeError):
+                data = json.loads(data)
+                data = json.dumps({**data, "name": f"{data['name']}@{hub}", "hub": hub}).encode()
+        return status, data
+
+    async def _peers(self, psig):
+        async def pull(hub):
+            target = "/api/peers?" + urlencode({"psig": self.rows.get(hub, ("",))[0]})
+            status, data = await self._one(hub, "GET", target)
+            reply = json.loads(data) if status == 200 else {}
+            if "rows" in reply and hub in self.hubs:
+                self.rows[hub] = (reply["psig"], [
+                    {**row, "name": f"{row['name']}@{hub}", "hub": hub} for row in reply["rows"]])
+
+        hubs = sorted(self.hubs)
+        await asyncio.gather(*map(pull, hubs), return_exceptions=True)  # 某台超时沿用它上次的行
+        rows = [row for hub in hubs for row in self.rows.get(hub, ("", []))[1]]
+        if psig is None:
+            return 200, json.dumps(rows).encode()
+        sig = hashlib.md5(json.dumps(rows, sort_keys=True).encode()).hexdigest()[:12]
+        return 200, json.dumps({"same": 1} if psig == sig else {"rows": rows, "psig": sig}).encode()
+
+
 connect = P2PSocket.connect
 
 __all__ = [
     "DEFAULT_ACCESS_KEY", "ROOMS_FILE", "Invite", "P2PSocket", "Signal",
     "HTTPExporter", "HTTPLocalProxy", "export_http", "mount_http",
     "connect", "connect_code", "connect_saved", "create_code", "load_room",
-    "save_room", "signed_url", "Group", "pair_room", "retry_forever",
+    "save_room", "signed_url", "Group", "HubUnion", "pair_room", "retry_forever",
 ]
 

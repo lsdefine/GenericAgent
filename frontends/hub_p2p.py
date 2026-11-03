@@ -2,13 +2,12 @@
 import asyncio
 import os
 import socket
-import time
 from pathlib import Path
 
-from fastapi import Response
+from fastapi import Request, Response
 from fastapi.responses import JSONResponse
 from p2p_ws_client import (
-    Group, HTTPExporter, HTTPLocalProxy, connect_saved, create_code, load_room,
+    Group, HTTPExporter, HubUnion, connect_saved, create_code, load_room,
     retry_forever, save_room,
 )
 
@@ -17,10 +16,11 @@ def install(app, *, web_port, token, here):
     signal = os.environ.get("GA_P2P_SIGNAL", "ws://47.101.182.29:49157/ws")
     name = os.environ.get("GA_P2P_NAME", "ga-hub-phone")
     rooms = Path(os.environ.get("GA_P2P_ROOMS", "~/.p2p_ws/rooms.json")).expanduser()
-    # 组内每个 hub 一个成员名；连接按需建立：主叫代理对方 API，被叫导出本机 API。
-    member = os.environ.get("GA_P2P_MEMBER", f"{socket.gethostname()}-{web_port}")
+    # 组内每个 hub 一个成员名(hub: 前缀供 customer 自动连接)；被叫导出本机 API。
+    member = "hub:" + os.environ.get("GA_P2P_MEMBER", f"{socket.gethostname()}-{web_port}")
     state = {"task": None, "invite": None, "status": "idle", "error": None,
-             "started": False, "group": None, "proxies": {}}
+             "started": False, "group": None, "legacy": None}
+    union = HubUnion()  # 本机兼作 customer：/p2p/api/ 即组内其他 hub 的并集
     app.state.p2p_pair_open = True
 
     async def export(ws):
@@ -58,31 +58,28 @@ def install(app, *, web_port, token, here):
         finally:
             await exporter.close()
 
-    async def use_hub(ws, peer):
-        proxy = await HTTPLocalProxy(ws).start()
-        state["proxies"][peer] = proxy
-        try:
-            await proxy.wait_closed()
-        finally:
-            if state["proxies"].get(peer) is proxy:
-                del state["proxies"][peer]
-            await proxy.close()
-
-    async def reap_idle(group):
-        while True:  # 10 分钟没请求的代理断开，下次 /p2p/open 再按需重连
-            await asyncio.sleep(60)
-            for peer, proxy in list(state["proxies"].items()):
-                if time.monotonic() - proxy.last_used > 600:
-                    group.close(peer)
+    # ---- 旧 1 对 1 兼容(旧版手机直连 UUID 房)：只由在线 hub 中名字最小者进房。手机全升级后删本段 ----
+    async def legacy(group):
+        while True:
+            hubs = [m for m in group.members if m.startswith("hub:")]
+            lead = group._ws is not None and member < min(hubs, default="hub:\U0010ffff")
+            task, pairing = state["legacy"], state["task"] and not state["task"].done()
+            if lead and not pairing and (task is None or task.done()):
+                state["legacy"] = asyncio.create_task(reconnect())
+            elif not lead and group._ws is not None and task and not task.done():
+                task.cancel()
+                state["status"] = "standby"
+            await asyncio.sleep(0.5)
+    # ---- 旧 1 对 1 兼容 end ----
 
     def start_group():
         if state["group"]:
             return
         room = load_room(name, path=rooms)
         group = state["group"] = Group(
-            room["signal_url"], room["room"], member, serve_customer, use_hub,
+            room["signal_url"], room["room"], member, serve_customer, union.use,
         )
-        state["group_tasks"] = [asyncio.create_task(group.run()), asyncio.create_task(reap_idle(group))]
+        state["group_tasks"] = [asyncio.create_task(group.run()), asyncio.create_task(legacy(group))]
 
     async def new_pair():
         try:
@@ -96,8 +93,7 @@ def install(app, *, web_port, token, here):
             try:
                 await export(ws)
             finally:
-                await ws.close()
-                await reconnect()
+                await ws.close()  # 之后由 legacy() 接管重连
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -112,7 +108,7 @@ def install(app, *, web_port, token, here):
             except KeyError:
                 state["task"] = asyncio.create_task(new_pair())
             else:
-                state["task"] = asyncio.create_task(reconnect())
+                start_group()
         return Response(content='''<!doctype html><meta charset="utf-8"><title>PC pairing</title>
 <h2>Phone pairing</h2><p>Enter this code on the phone:</p><pre id="code">waiting...</pre>
 <p id="state">starting...</p><script>
@@ -122,26 +118,23 @@ document.querySelector('#state').textContent=s.status+(s.error?' : '+s.error:'')
 if(s.status!=='connected')setTimeout(poll,1000)}catch(e){document.querySelector('#state').textContent=e}}
 poll();</script>''', media_type="text/html")
 
-    @app.get("/p2p/hubs")
-    async def p2p_hubs():
-        """同组在线 hub {成员名: 本地代理地址，未连接为 null}。"""
-        group, proxies = state["group"], state["proxies"]
-        members = sorted(group.members) if group else []
-        return JSONResponse({m: getattr(proxies.get(m), "url", None) for m in members})
-
-    @app.get("/p2p/open")
-    async def p2p_open(hub: str):
-        """按需连接 hub，返回本地代理地址，之后按原 /api/ 访问。"""
+    @app.api_route("/p2p/api/{path:path}", methods=["GET", "POST"])
+    async def p2p_api(request: Request, path: str):
+        """组内其他 hub 的并集 API(会话名 name@hub)，用法同 /api/。首次调用才连接。"""
         group = state["group"]
-        if not group or hub not in group.members:
-            return JSONResponse({"error": "hub offline"}, status_code=404)
-        group.open(hub)
-        for _ in range(200):
-            if proxy := state["proxies"].get(hub):
-                proxy.last_used = time.monotonic()
-                return JSONResponse({"url": proxy.url})
-            await asyncio.sleep(0.1)
-        return JSONResponse({"error": "connect timeout"}, status_code=504)
+        if not group:
+            return JSONResponse({"error": "not paired"}, status_code=404)
+        if not group.auto:
+            group.auto = ("hub:",)
+            group._sync(group.members)
+            for _ in range(100):
+                if union.hubs or not group.members:
+                    break
+                await asyncio.sleep(0.1)
+        query = request.url.query
+        status, body = await union.request(
+            request.method, f"/api/{path}" + (f"?{query}" if query else ""), await request.body())
+        return Response(body, status_code=status, media_type="application/json")
 
     @app.get("/pair/status")
     async def pair_status():
@@ -161,7 +154,6 @@ poll();</script>''', media_type="text/html")
             load_room(name, path=rooms)
         except KeyError:
             return
-        state["task"] = asyncio.create_task(reconnect())
         start_group()
 
     app.add_event_handler("startup", startup)

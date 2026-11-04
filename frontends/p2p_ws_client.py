@@ -1293,12 +1293,14 @@ class HubUnion:
 
     def __init__(self, timeout=22):
         self.hubs, self.rows, self.timeout = {}, {}, timeout  # rows: hub -> (psig, rows)
+        self.lost = {}  # 刚断线的 hub -> 时刻: 宽限期内保留它的会话行, 重连时界面不闪
         self._pending, self._seq = {}, 0
 
     async def use(self, socket, peer):
         hub = peer.split(":", 1)[-1]
         _claim_receiver(socket, self)
         self.hubs[hub] = socket
+        self.lost.pop(hub, None)
         try:
             while True:
                 with suppress(TypeError, ValueError, AttributeError):
@@ -1309,8 +1311,16 @@ class HubUnion:
         finally:
             if self.hubs.get(hub) is socket:
                 del self.hubs[hub]
-                self.rows.pop(hub, None)
+                self.lost[hub] = time.monotonic()
             _release_receiver(socket, self)
+
+    def live(self, grace=20):
+        """在线 hub + 宽限期内断线的 hub; 超期才清掉会话行。"""
+        for hub, at in list(self.lost.items()):
+            if time.monotonic() - at > grace:
+                del self.lost[hub]
+                self.rows.pop(hub, None)
+        return set(self.hubs) | set(self.lost)
 
     async def _one(self, hub, method, target, body=b""):
         self._seq += 1
@@ -1342,8 +1352,8 @@ class HubUnion:
         elif body:
             with suppress(ValueError, AttributeError):
                 hub = json.loads(body).get("hub")
-        hub = hub if hub in self.hubs else min(self.hubs, default=None)
-        if hub is None:
+        hub = hub if hub in self.hubs or hub in self.lost else min(self.hubs, default=None)
+        if hub not in self.hubs:  # 指名的 hub 正在重连: 回 503, 不改投别台
             return 503, b'{"error":"no hub online","code":503}'
         status, data = await self._one(hub, method, target, body)
         if parts.path == "/api/sessions" and status == 200:
@@ -1361,8 +1371,8 @@ class HubUnion:
                 self.rows[hub] = (reply["psig"], [
                     {**row, "name": f"{row['name']}@{hub}", "hub": hub} for row in reply["rows"]])
 
-        hubs = sorted(self.hubs)
-        await asyncio.gather(*map(pull, hubs), return_exceptions=True)  # 某台超时沿用它上次的行
+        hubs = sorted(self.live())
+        await asyncio.gather(*map(pull, sorted(self.hubs)), return_exceptions=True)  # 超时/重连中沿用上次的行
         rows = [row for hub in hubs for row in self.rows.get(hub, ("", []))[1]]
         if psig is None:
             return 200, json.dumps(rows).encode()

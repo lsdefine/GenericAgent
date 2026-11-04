@@ -171,6 +171,8 @@ def phone_session():
 
 # ------------------------------- server (python hub.py) -------------------------------
 if __name__ == '__main__':
+    import logging
+    from contextlib import asynccontextmanager
     from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Response
     from fastapi.responses import FileResponse, JSONResponse; import uvicorn
     HERE, OK_ORIGIN = os.path.dirname(os.path.abspath(__file__)), ('', f'http://127.0.0.1:{PORT}', f'http://localhost:{PORT}')
@@ -183,7 +185,16 @@ if __name__ == '__main__':
         with open(TOKEN_FILE, 'w', encoding='utf-8') as f: f.write(TOKEN)
     except OSError: pass
     STATUS = {'offline': 404, 'gone': 404, 'timeout': 504, 'nosupport': 501, 'badop': 400, 'busy': 409, 'idle': 409}
-    app, peers, meta, waits, seq, pcache, pdead = FastAPI(), {}, {}, {}, [0], {}, {}  # ws / hello / futures / row / probe
+    p2p = None
+    @asynccontextmanager
+    async def lifespan(app):
+        if p2p is None:
+            yield
+        else:
+            async with p2p["lifespan"](app):
+                yield
+
+    app, peers, meta, waits, seq, pcache, pdead = FastAPI(lifespan=lifespan), {}, {}, {}, [0], {}, {}  # ws / hello / futures / row / probe
     @app.middleware('http')
     async def guard(req: Request, call_next):
         if req.scope['server'][1] == PORT: return Response(status_code=404)   # bus port speaks WebSocket only
@@ -278,9 +289,10 @@ if __name__ == '__main__':
     # ---- optional P2P pairing; delete this block to remove it completely ----
     try:
         from hub_p2p import install as _install_p2p
-        _install_p2p(app, web_port=WEB_PORT, token=TOKEN, here=HERE)
-    except Exception:
-        pass  # missing plug-in/client/dependency must not affect the hub
+    except ImportError:
+        logging.getLogger(__name__).warning("P2P unavailable; local Hub only", exc_info=True)
+    else:
+        p2p = _install_p2p(app, web_port=WEB_PORT, token=TOKEN, here=HERE)
 
     @app.get('/')
     async def index(): return FileResponse(os.path.join(HERE, 'hub.html'))
@@ -288,9 +300,16 @@ if __name__ == '__main__':
     async def vendor(f: str):
         p = os.path.join(HERE, 'desktop', 'static', 'vendor', os.path.basename(f))
         return FileResponse(p) if os.path.exists(p) else Response(status_code=404)
-    def serve(p):
-        uvicorn.Server(uvicorn.Config(app, host='127.0.0.1', port=p, log_level='warning')).run()
+    # Only the web loop owns P2P startup/shutdown; the bus shares routes, not lifespan.
+    web = uvicorn.Server(uvicorn.Config(app, host='127.0.0.1', port=WEB_PORT,
+                                      log_level='warning', lifespan='on'))
+    bus = uvicorn.Server(uvicorn.Config(app, host='127.0.0.1', port=PORT,
+                                      log_level='warning', lifespan='off'))
     print(f'[hub] bus ws://127.0.0.1:{PORT}/ws (no HTTP)  |  panel http://127.0.0.1:{WEB_PORT}/?t={TOKEN}')
-    threading.Thread(target=serve, args=(WEB_PORT,), daemon=True).start()
-    try: serve(PORT)
+    thread = threading.Thread(target=web.run, daemon=True)
+    thread.start()
+    try: bus.run()
     except OSError: sys.exit(f'hub already running on {PORT}')
+    finally:
+        web.should_exit = True
+        thread.join(timeout=10)

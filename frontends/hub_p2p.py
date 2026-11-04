@@ -2,6 +2,7 @@
 import asyncio
 import os
 import socket
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Request, Response
@@ -146,15 +147,33 @@ poll();</script>''', media_type="text/html")
             "error": state["error"],
         })
 
-    async def startup():
+    @asynccontextmanager
+    async def lifespan(app):
         if state["started"]:
-            return
+            raise RuntimeError("P2P lifespan is already running")
         state["started"] = True
         try:
-            load_room(name, path=rooms)
-        except KeyError:
-            return
-        start_group()
+            try:
+                load_room(name, path=rooms)
+            except KeyError:
+                pass  # Unpaired hubs remain available for /pair.
+            else:
+                start_group()
+            yield
+        finally:
+            group = state["group"]
+            links = [*group._out.values(), *group._in.values()] if group else []
+            tasks = [t for t in [state["task"], state["legacy"],
+                                 *state.get("group_tasks", [])] if t is not None]
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            for task in links:
+                if not task.done() and not task.cancelling():
+                    task.cancel()
+            await asyncio.gather(*links, return_exceptions=True)
+            state.update(task=None, legacy=None, group=None, group_tasks=[],
+                         invite=None, started=False, status="idle", error=None)
 
-    app.add_event_handler("startup", startup)
+    state["lifespan"] = lifespan
     return state

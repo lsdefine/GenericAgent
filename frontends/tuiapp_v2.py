@@ -93,6 +93,14 @@ def _hint_terminal_capabilities() -> None:
 _hint_terminal_capabilities()
 
 
+# Streaming paint coalescing window (seconds). Every token chunk used to be
+# painted on a 50ms timer; each paint re-arranged the whole transcript because
+# `Static.update()` defaults to `layout=True`. The layout cost is now avoided
+# (`_update_text`), and 100ms halves the remaining repaint traffic without a
+# visible difference in typing feel. Override: GA_TUI_PAINT_MS.
+STREAM_PAINT_INTERVAL = max(0.02, float(os.environ.get("GA_TUI_PAINT_MS", "100")) / 1000.0)
+
+
 # Strip terminal control sequences from subprocess stdout but keep SGR color codes,
 # otherwise Text.from_ansi loses color downstream.
 _ANSI_CONTROL_RE = re.compile(
@@ -6986,7 +6994,8 @@ class GenericAgentTUI(App[None]):
             # Keep data current for stop/copy/session switching; coalesce only paint.
             self._pending_stream_renders[(agent_id, task_id)] = found
             if self._stream_render_timer is None:
-                self._stream_render_timer = self.set_timer(0.05, self._flush_stream_renders)
+                self._stream_render_timer = self.set_timer(
+                    STREAM_PAINT_INTERVAL, self._flush_stream_renders)
             return
         self._pending_stream_renders.pop((agent_id, task_id), None)
         self._render_assistant_update(found)
@@ -7814,7 +7823,7 @@ class GenericAgentTUI(App[None]):
             if m.role == "assistant" and not m.done:
                 self._capture_stop_summary(m)
                 if m._spinner_widget is not None:
-                    try: m._spinner_widget.update(self._stopping_annotation(m))
+                    try: self._update_text(m._spinner_widget, self._stopping_annotation(m))
                     except Exception: pass
 
     def _has_streaming(self) -> bool:
@@ -7841,7 +7850,7 @@ class GenericAgentTUI(App[None]):
             if m.role == "assistant" and not m.done and m._spinner_widget is not None:
                 if m._stream_started_at is None:
                     self._mark_stream_start(m)
-                try: m._spinner_widget.update(self._spinner_annotation(m))
+                try: self._update_text(m._spinner_widget, self._spinner_annotation(m))
                 except Exception: pass
         if not self._has_streaming():
             self._ensure_spinner()
@@ -8010,7 +8019,7 @@ class GenericAgentTUI(App[None]):
                 else:               container.mount(w, after=anchor)
                 m._spinner_widget = w
             else:
-                try: m._spinner_widget.update(self._done_annotation(m))
+                try: self._update_text(m._spinner_widget, self._done_annotation(m))
                 except Exception: pass
             return
         if m._spinner_widget is None:
@@ -8022,6 +8031,42 @@ class GenericAgentTUI(App[None]):
             else:
                 container.mount(w, after=anchor)
             m._spinner_widget = w
+
+    @staticmethod
+    def _rendered_height(widget, rendered, width: int):
+        """Height `rendered` would occupy in `widget` at `width`, or None if unknown."""
+        try:
+            from textual.visual import visualize
+            visual = visualize(widget, rendered,
+                               markup=getattr(widget, "_render_markup", True))
+            return visual.get_height(widget.styles, width)
+        except Exception:
+            return None
+
+    def _update_text(self, widget, rendered, *, width: int | None = None) -> None:
+        """`Static.update()` that only asks for a layout pass when the rendered
+        height actually changes.
+
+        Why: `Static.update()` defaults to `layout=True`, which marks the whole
+        screen layout-dirty.  Textual then re-arranges the entire transcript on
+        the next frame — measured at 5-15ms for a 30-turn session and ~430ms on
+        long ones.  Streaming calls this 20x/s, so the TUI burned ~25% of the
+        main thread just recomputing positions for text that grew by three
+        characters on the same line.
+
+        `refresh(repaint=True)` (what `update()` does) already invalidates the
+        cached content height, so a skipped layout pass can never keep a stale
+        height: the very next real layout re-measures from the new visual.
+        """
+        if widget is None:
+            return
+        if width is None:
+            width = getattr(widget.size, "width", 0) or self._messages_width()
+        new_h = self._rendered_height(widget, rendered, width)
+        old_h = getattr(widget, "_ga_last_height", None)
+        widget._ga_last_height = new_h
+        widget.update(rendered, layout=(old_h is None or new_h is None
+                                        or new_h != old_h))
 
     def _stream_update_assistant(self, m: ChatMessage) -> None:
         """Cheap path for per-chunk streaming: if the fold topology is unchanged, only
@@ -8047,9 +8092,9 @@ class GenericAgentTUI(App[None]):
                 rendered = self._render_md(last_text, width)
                 if isinstance(rendered, _MdRender):
                     last_widget._ga_render = rendered
-                    last_widget.update(rendered.text)
+                    self._update_text(last_widget, rendered.text, width=width)
                 else:
-                    last_widget.update(rendered)
+                    self._update_text(last_widget, rendered, width=width)
             else:
                 last_widget._ga_render = None
                 # Normalise CRLF → LF before from_ansi. On Windows child stdout
@@ -8061,15 +8106,13 @@ class GenericAgentTUI(App[None]):
                 # Markdown to fold on completion. Lone `\r` (no `\n`) is kept so
                 # progress-bar overwrites still work.
                 display = last_text.replace("\r\n", "\n")
-                last_widget.update(Text.from_ansi(display, style=C_FG))
-            try:
-                self.query_one("#messages", VerticalScroll).refresh()
-            except Exception:
-                pass
+                self._update_text(last_widget,
+                                  Text.from_ansi(display, style=C_FG),
+                                  width=width)
             if m.done and m._spinner_widget is not None:
                 # Convert the live spinner into the post-turn ⠿ card in place.
                 self._capture_done_summary(m)
-                try: m._spinner_widget.update(self._done_annotation(m))
+                try: self._update_text(m._spinner_widget, self._done_annotation(m))
                 except Exception: pass
             return
         self._remount_assistant_message(m)

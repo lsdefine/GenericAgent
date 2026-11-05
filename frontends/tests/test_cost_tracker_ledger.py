@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import json
 import sys
 import threading
@@ -186,6 +187,40 @@ def test_concurrent_appends_are_serialized(tmp_path, monkeypatch):
 
     assert detector.overlapped is False
     assert len(cost_tracker.read_ledger()) == 12
+
+
+def test_append_during_compaction_is_not_dropped(tmp_path, monkeypatch):
+    cost_tracker.init_ledger(str(tmp_path))
+    cost_tracker._append_ledger("GA-existing", 1, 2, 3, 4)
+    attempted = threading.Event()
+    observed = []
+    real_replace = os.replace
+
+    def clock():
+        attempted.set()
+        return 1_700_000_000.0
+
+    def append():
+        cost_tracker._append_ledger("GA-concurrent", 5, 6, 7, 8)
+
+    writer = threading.Thread(target=append)
+
+    def replace(source, target):
+        observed.append(cost_tracker._ledger_fd is None)
+        writer.start()
+        observed.append(attempted.wait(5))
+        real_replace(source, target)
+
+    monkeypatch.setattr(cost_tracker, "time", types.SimpleNamespace(time=clock))
+    monkeypatch.setattr(os, "replace", replace)
+    cost_tracker._compact_ledger()
+    writer.join(5)
+
+    assert observed == [True, True] and not writer.is_alive()
+    assert cost_tracker.aggregate_ledger()["snap"] == {
+        "GA-existing": {"input": 1, "output": 2, "cacheCreate": 3, "cacheRead": 4},
+        "GA-concurrent": {"input": 5, "output": 6, "cacheCreate": 7, "cacheRead": 8},
+    }
 
 
 def test_threshold_compaction_runs_during_process_lifetime(tmp_path, monkeypatch):

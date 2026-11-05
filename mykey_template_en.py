@@ -35,6 +35,7 @@
 #     'thinking_type': 'adaptive',      # Claude thinking: adaptive / enabled / disabled
 #     'thinking_budget_tokens': 32768,  # Required when thinking_type='enabled'
 #     'claude_compat': 'half',          # Relays requiring CC request format/fingerprint (simple=identity only, half=+CC main prompt)
+#     'show_thinking': True,            # Claude: stream thinking text (hidden by default, as in Claude Code)
 #     'api_key_header': 'x-api-key',    # Override Claude auth header; also supports bearer
 #     'api_mode': 'responses',          # OAI: default is chat_completions; follow provider docs
 # Temporary runtime overrides also work, e.g. /session.reasoning_effort=high

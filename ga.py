@@ -477,12 +477,22 @@ class GenericAgentHandler(BaseHandler):
         if not response or (not content.strip() and not thinking.strip()):
             yield "[Warn] LLM returned an empty response. Retrying...\n"
             return self._retry_or_exit("[ERROR] Blank response, regenerate and tooluse")
-        if '[!!! 流异常中断' in content[-100:] or '!!!Error:' in content[50:][-100:] or (content.endswith('</summary>') and len(content) < 100):
+        # 2026-11-06: 原判据是「响应末尾窗口内**包含** marker」。
+        # 模型在正文中引用这些标记时(排查该 bug / 写文档 / 写测试), 会被误判为真中断 ->
+        # 整条回复被丢弃并插入 [ERROR] 重试, 用户观感为「回复写到一半停住不动」;
+        # 连续 3 次还会触发 _retry_or_exit 的任务中止。
+        # llmcore 追加 marker 时一定在响应最末尾, 故改为**结尾精确匹配**;
+        # 同时补齐 llmcore 实际会产出的另外两类截断标记(原代码只认「流异常中断」)。
+        _tail = content.rstrip()
+        _MARK_TAIL = re.compile(r'\[!!!\s*(?:流异常中断|Response truncated|output truncated).*?!!!\]\s*$')
+        if (_MARK_TAIL.search(_tail)
+                or _tail.endswith('!!!Error:') or _tail.startswith('!!!Error:')
+                or (_tail.endswith('</summary>') and len(_tail) < 100)):
             return self._retry_or_exit("[ERROR] Incomplete response. Regenerate and tooluse.")
         tail = content.rstrip()[-50:]
         if 'DSML' in tail and '｜' in tail and tail.endswith('>'):
             return self._retry_or_exit("[ERROR] Tool call format invalid; no tool was called. Regenerate using proper tool calls.")
-        if 'max_tokens !!!]' in content[-100:]:
+        if _tail.endswith('max_tokens !!!]'):
             return self._retry_or_exit("[ERROR] max_tokens limit reached. Use multi small steps to do it.")
         
         # 2. 检测"包含较大代码块但未调用工具"的情况

@@ -169,23 +169,23 @@ LLM_PROVIDERS = [
     },
     {
         'id': 'minimax',
-        'name': 'MiniMax M3 (双协议)',
-        'desc': 'MiniMax M3，支持 Anthropic 和 OpenAI 双协议',
+        'name': 'MiniMax M3.1 Flash / M3',
+        'desc': 'MiniMax M3.1 Flash and M3 with Messages or Chat Completions',
         'type': 'native_claude',
         'template': {
             'name': 'minimax', 'apikey': 'eyJh...<your-minimax-key>',
             'apibase': 'https://api.minimaxi.com/anthropic',
-            'model': 'MiniMax-M3', 'max_retries': 3,
+            'model': 'MiniMax-M3.1-Flash', 'max_retries': 3, 'type': 'native_claude',
         },
         'key_hint': '在 https://platform.minimaxi.com/user-center/basic-information 获取',
-        'model_choices': ['MiniMax-M3', 'MiniMax-M2.7', 'MiniMax-M2.7-highspeed'],
+        'model_choices': ['MiniMax-M3.1-Flash', 'MiniMax-M3'],
         'extra_fields': [
             {
                 'key': '_protocol', 'label': '选择 API 协议',
                 'type': 'choice',
                 'options': [
-                    {'id': 'native_claude', 'name': 'Anthropic 协议 (推荐)', 'desc': '无 <think> 标签，原生 Claude 兼容', 'apibase': 'https://api.minimaxi.com/anthropic'},
-                    {'id': 'native_oai', 'name': 'OpenAI 协议', 'desc': '走 /v1/chat/completions', 'apibase': 'https://api.minimaxi.com/v1', 'context_win': 50000},
+                    {'id': 'native_claude', 'type': 'native_claude', 'name': 'Messages (recommended)', 'desc': '/anthropic/v1/messages', 'apibase': 'https://api.minimaxi.com/anthropic'},
+                    {'id': 'native_oai', 'type': 'native_oai', 'name': 'Chat Completions', 'desc': '/v1/chat/completions', 'apibase': 'https://api.minimaxi.com/v1', 'context_win': 50000},
                 ],
             },
         ],
@@ -699,6 +699,8 @@ def probe_models(provider, apikey, apibase=None):
                 data = json.loads(resp.read().decode())
                 models = data.get('data', [])
                 ids = sorted(set(m['id'] for m in models if isinstance(m, dict) and m.get('id')))
+                if provider['id'] == 'minimax':
+                    ids = [m for m in provider['model_choices'] if m in ids]
                 if ids:
                     print(f" {C['green']}✓ 发现 {len(ids)} 个模型{C['reset']}")
                     return ids
@@ -786,7 +788,8 @@ def configure_llm(provider):
 
     # 模型选择
     manual_choice = {'id': '__manual__', 'name': '✏️ 手动输入模型名', 'desc': '自定义模型 ID，不依赖探测结果'}
-    model_list = probe_models(provider, cfg['apikey'], cfg.get('apibase'))
+    probe_provider = dict(provider, type=cfg.get('type', provider['type']))
+    model_list = probe_models(probe_provider, cfg['apikey'], cfg.get('apibase'))
     if model_list:
         refresh_choice = {'id': '__refresh__', 'name': '🔄 重新探测'}
         choices = [refresh_choice, manual_choice] + [{'id': m, 'name': m} for m in model_list]
@@ -794,7 +797,7 @@ def configure_llm(provider):
             picked = ask_choice("API 探测到以下可用模型（或手动输入）:", choices)
             if picked == '__refresh__':
                 print(f"  {C['dim']}再次探测...{C['reset']}")
-                model_list = probe_models(provider, cfg['apikey'], cfg.get('apibase'))
+                model_list = probe_models(probe_provider, cfg['apikey'], cfg.get('apibase'))
                 if not model_list:
                     print(f"  {C['yellow']}⚠ 再次探测失败{C['reset']}")
                     picked = _fallback_model(provider, manual_choice)

@@ -1,18 +1,11 @@
 // background.js - Cookie + CDP Bridge
 chrome.runtime.onInstalled.addListener(() => {
   console.log('CDP Bridge installed');
-  // Strip CSP headers to allow eval/inline scripts
-  chrome.declarativeNetRequest.updateDynamicRules({
-    removeRuleIds: [9999],
-    addRules: [{
-      id: 9999, priority: 1,
-      action: { type: 'modifyHeaders', responseHeaders: [
-        { header: 'content-security-policy', operation: 'remove' },
-        { header: 'content-security-policy-report-only', operation: 'remove' }
-      ]},
-      condition: { urlFilter: '*', resourceTypes: ['main_frame', 'sub_frame'] }
-    }]
-  });
+  // 不再移除页面的 CSP 响应头（会破坏依赖 CSP 初始化的站点）；仅清理旧版本遗留的规则
+  chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: [9999] });
+});
+chrome.runtime.onStartup.addListener(() => {
+  chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: [9999] });
 });
 
 async function handleExtMessage(msg, sender) {

@@ -174,7 +174,7 @@ def _parse_claude_json(data):
     _record_usage(data.get("usage", {}), "messages")
     for b in content_blocks:
         if b.get("type") == "text": yield b.get("text", "")
-        elif b.get("type") == "thinking": yield ""
+        elif b.get("type") == "thinking": yield f"<thinking>{b['thinking']}</thinking>" if b.get("thinking") else ""
     return content_blocks
 
 def _raise_if_retryable_overload(emsg):
@@ -185,7 +185,7 @@ def _raise_if_retryable_overload(emsg):
 def _parse_claude_sse(resp_lines):
     """Parse Anthropic SSE stream. Yields text chunks, returns list[content_block]."""
     content_blocks = []; current_block = None; tool_json_buf = ""
-    stop_reason = None; got_message_stop = False; warn = None
+    stop_reason = None; got_message_stop = False; warn = None; in_thinking = False
     for line in resp_lines:
         if not line: continue
         line = line.decode('utf-8') if isinstance(line, bytes) else line
@@ -201,6 +201,7 @@ def _parse_claude_sse(resp_lines):
             usage = evt.get("message", {}).get("usage", {})
             _record_usage(usage, "messages")
         elif evt_type == "content_block_start":
+            if in_thinking: yield "</thinking>"; in_thinking = False
             block = evt.get("content_block", {})
             if block.get("type") == "text": current_block = {"type": "text", "text": ""}
             elif block.get("type") == "thinking": current_block = {"type": "thinking", "thinking": "", "signature": ""}
@@ -212,16 +213,21 @@ def _parse_claude_sse(resp_lines):
             if delta.get("type") == "text_delta":
                 text = delta.get("text", "")
                 if current_block and current_block.get("type") == "text": current_block["text"] += text
-                if text: yield text
+                if text:
+                    if in_thinking: yield "</thinking>"; in_thinking = False
+                    yield text
             elif delta.get("type") == "thinking_delta":
                 thinking = delta.get("thinking", "")
                 if current_block and current_block.get("type") == "thinking": current_block["thinking"] += thinking
-                if thinking: yield thinking
+                if thinking:
+                    yield f"<thinking>{thinking}" if not in_thinking else thinking
+                    in_thinking = True
             elif delta.get("type") == "signature_delta":
                 if current_block and current_block.get("type") == "thinking":
                     current_block["signature"] = current_block.get("signature", "") + delta.get("signature", "")
             elif delta.get("type") == "input_json_delta": tool_json_buf += delta.get("partial_json", "")
         elif evt_type == "content_block_stop":
+            if in_thinking: yield "</thinking>"; in_thinking = False
             if current_block:
                 if current_block["type"] == "tool_use":
                     try: current_block["input"] = json.loads(tool_json_buf) if tool_json_buf else {}
@@ -240,6 +246,7 @@ def _parse_claude_sse(resp_lines):
             emsg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
             _raise_if_retryable_overload(emsg)  # 走 _stream_with_retry，避免落到 ga 应用层
             warn = f"\n\n!!!Error: SSE {emsg}"; break
+    if in_thinking: yield "</thinking>"
     if not warn:
         if not got_message_stop and not stop_reason: warn = "\n\n[!!! 流异常中断，未收到完整响应 !!!]"
         elif stop_reason == "max_tokens": warn = "\n\n[!!! Response truncated: max_tokens !!!]"
@@ -277,7 +284,7 @@ def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
     """
     content_text = ""
     if api_mode == "responses":
-        seen_delta = False; fc_buf = {}; current_fc_idx = None; reasoning_text = ""
+        seen_delta = False; seen_reasoning_delta = False; in_thinking = False; fc_buf = {}; current_fc_idx = None; reasoning_text = ""
         for line in resp_lines:
             if not line: continue
             line = line.decode('utf-8', errors='replace') if isinstance(line, bytes) else line
@@ -289,22 +296,38 @@ def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
             etype = evt.get("type", "")
             if etype == "response.output_text.delta":
                 delta = evt.get("delta", "")
-                if delta: seen_delta = True; content_text += delta; yield delta
+                if delta:
+                    if in_thinking: yield "</thinking>"; in_thinking = False
+                    seen_delta = True; content_text += delta; yield delta
             elif etype == "response.output_text.done" and not seen_delta:
                 text = evt.get("text", "")
-                if text: content_text += text; yield text
-            elif etype == "response.reasoning_text.delta":
+                if text:
+                    if in_thinking: yield "</thinking>"; in_thinking = False
+                    content_text += text; yield text
+            elif etype in ("response.reasoning_text.delta", "response.reasoning_summary_text.delta"):
                 delta = evt.get("delta", "")
-                if delta: reasoning_text += delta
-            elif etype == "response.reasoning_text.done":
+                if delta:
+                    sep = "\n" if reasoning_text and not seen_reasoning_delta else ""
+                    yield f"<thinking>{delta}" if not in_thinking else sep + delta
+                    in_thinking = True; seen_reasoning_delta = True; reasoning_text += sep + delta
+            elif etype in ("response.reasoning_text.done", "response.reasoning_summary_text.done"):
                 text = evt.get("text", "")
-                if text: reasoning_text = text
+                if text and not seen_reasoning_delta:
+                    sep = "\n" if reasoning_text else ""
+                    yield f"<thinking>{text}" if not in_thinking else sep + text
+                    in_thinking = True; reasoning_text += sep + text
+                seen_reasoning_delta = False
             elif etype == "response.output_item.added":
                 item = evt.get("item", {})
                 if item.get("type") == "function_call":
                     idx = evt.get("output_index", 0)
                     fc_buf[idx] = {"id": item.get("call_id", item.get("id", "")), "name": item.get("name", ""), "args": ""}
                     current_fc_idx = idx
+            elif etype == "response.output_item.done":
+                item = evt.get("item", {})
+                if item.get("type") == "reasoning" and not reasoning_text:
+                    parts = [p["text"] for p in (item.get("content") or []) + (item.get("summary") or []) if p.get("type") in ("reasoning_text", "summary_text") and p.get("text")]
+                    if parts: reasoning_text = "\n".join(parts); yield f"<thinking>{reasoning_text}</thinking>"
             elif etype == "response.function_call_arguments.delta":
                 idx = evt.get("output_index", current_fc_idx or 0)
                 if idx in fc_buf: fc_buf[idx]["args"] += evt.get("delta", "")
@@ -315,6 +338,7 @@ def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
                 err = evt.get("error", {})
                 emsg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
                 _raise_if_retryable_overload(emsg)
+                if in_thinking: yield "</thinking>"; in_thinking = False
                 if emsg: content_text += f"!!!Error: {emsg}"; yield f"!!!Error: {emsg}"
                 break
             elif etype == "response.completed":
@@ -328,6 +352,7 @@ def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
                 _record_usage(usage, api_mode)
                 reason = ((evt.get("response") or {}).get("incomplete_details") or {}).get("reason", "") or "unknown"
                 if not content_text and not fc_buf:
+                    if in_thinking: yield "</thinking>"; in_thinking = False
                     marker = f"[!!! output truncated: {reason}]"
                     content_text += marker; yield marker
                 break
@@ -337,8 +362,10 @@ def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
                 err = ((evt.get("response") or {}).get("error") or {})
                 emsg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
                 _raise_if_retryable_overload(emsg)
+                if in_thinking: yield "</thinking>"; in_thinking = False
                 if emsg: content_text += f"!!!Error: {emsg}"; yield f"!!!Error: {emsg}"
                 break
+        if in_thinking: yield "</thinking>"
         blocks = []
         if reasoning_text: blocks.append({"type": "thinking", "thinking": reasoning_text})
         if content_text: blocks.append({"type": "text", "text": content_text})
@@ -352,7 +379,7 @@ def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
         return blocks
     else:
         tc_buf = {}  # index -> {id, name, args}
-        reasoning_text = ""
+        reasoning_text = ""; in_thinking = False
         for line in resp_lines:
             if not line: continue
             line = line.decode('utf-8', errors='replace') if isinstance(line, bytes) else line
@@ -364,8 +391,10 @@ def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
             ch = (evt.get("choices") or [{}])[0]
             delta = ch.get("delta") or {}
             if rc := delta.get("reasoning_content") or delta.get("reasoning", ""):
-                reasoning_text += rc; yield rc
+                yield f"<thinking>{rc}" if not in_thinking else rc
+                in_thinking = True; reasoning_text += rc
             if delta.get("content"):
+                if in_thinking: yield "</thinking>"; in_thinking = False
                 text = delta["content"]; content_text += text; yield text
             for tc in (delta.get("tool_calls") or []):
                 idx = tc.get("index", 0)
@@ -378,6 +407,7 @@ def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
                 if tc.get("id") and not tc_buf[idx]["id"]: tc_buf[idx]["id"] = tc["id"]
             usage = evt.get("usage")
             if usage: _record_usage(usage, api_mode)
+        if in_thinking: yield "</thinking>"
         blocks = []
         if reasoning_text: blocks.append({"type": "thinking", "thinking": reasoning_text})
         if content_text: blocks.append({"type": "text", "text": content_text})
@@ -425,9 +455,9 @@ def _parse_openai_json(data, api_mode="chat_completions"):
                     if p.get("type") in ("output_text", "text") and p.get("text"):
                         blocks.append({"type": "text", "text": p["text"]}); yield p["text"]
             elif item.get("type") == "reasoning":
-                for p in (item.get("content") or []):
+                for p in (item.get("content") or []) + (item.get("summary") or []):
                     if p.get("type") in ("reasoning_text", "summary_text") and p.get("text"):
-                        blocks.append({"type": "thinking", "thinking": p["text"]})
+                        blocks.append({"type": "thinking", "thinking": p["text"]}); yield f"<thinking>{p['text']}</thinking>"
             elif item.get("type") == "function_call":
                 try: args = json.loads(item.get("arguments", "")) if item.get("arguments") else {}
                 except: args = {"_raw": item.get("arguments", "")}
@@ -448,7 +478,7 @@ def _parse_openai_json(data, api_mode="chat_completions"):
         msg = (data.get("choices") or [{}])[0].get("message", {})
         reasoning = msg.get("reasoning_content") or msg.get("reasoning", "")
         if reasoning:
-            blocks.append({"type": "thinking", "thinking": reasoning})
+            blocks.append({"type": "thinking", "thinking": reasoning}); yield f"<thinking>{reasoning}</thinking>"
         content = msg.get("content", "")
         if content:
             blocks.append({"type": "text", "text": content}); yield content
@@ -868,16 +898,12 @@ class NativeClaudeSession(BaseSession):
             self.history.append({"role": "assistant", "content": history_blocks})
         text_parts = [b["text"] for b in content_blocks if b.get("type") == "text"]
         content = "\n".join(text_parts).strip()
+        think_pat = r"<think(?:ing)?>(.*?)</think(?:ing)?>"
+        thinking_parts = [b["thinking"] for b in content_blocks if b.get("type") == "thinking"] + re.findall(think_pat, content, re.DOTALL)
+        thinking = "\n".join(p.strip() for p in thinking_parts if p and p.strip())
+        content = re.sub(think_pat, "", content, flags=re.DOTALL).strip()
         tool_calls = [MockToolCall(b["name"], b.get("input", {}), id=b.get("id", "")) for b in content_blocks if b.get("type") == "tool_use"]
         if not tool_calls: tool_calls, content = _parse_text_tool_calls(content)
-        thinking_parts = [b["thinking"] for b in content_blocks if b.get("type") == "thinking"]
-        thinking = "\n".join(thinking_parts).strip()
-        if not thinking:
-            think_pattern = r"<think(?:ing)?>(.*?)</think(?:ing)?>"
-            think_match = re.search(think_pattern, content, re.DOTALL)
-            if think_match:
-                thinking = think_match.group(1).strip()
-                content = re.sub(think_pattern, "", content, flags=re.DOTALL)
         raw = "[" + ",\n".join(repr(b) for b in content_blocks) + "]"
         return MockResponse(thinking, content, tool_calls, raw)
 
@@ -1138,7 +1164,8 @@ def resolve_client(cfg_name, cfg=None):
 def fast_ask(prompt, cfg_name):
     sess = resolve_session(cfg_name)
     if not sess: raise ValueError(f"fast_ask: '{cfg_name}' unsupported")
-    return "".join(sess.raw_ask([{"role": "user", "content": prompt}]))
+    text = "".join(sess.raw_ask([{"role": "user", "content": prompt}]))
+    return re.sub(r"<think(?:ing)?>(.*?)</think(?:ing)?>", "", text, flags=re.DOTALL).strip()
 
 # legacy三件套(待淘汰)已分离至legacy_llmcore.py, 由其尾部回挂名(禁本行前import)
 try: import legacy_llmcore

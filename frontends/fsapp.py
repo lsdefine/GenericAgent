@@ -430,19 +430,29 @@ def _send_raw(receive_id, payload, msg_type, rtype):
     return None
 
 
+_CARD_LIMIT_MARKERS = ("230099", "11310", "element exceeds the limit")
+
+def _is_card_limit_error(code, msg):
+    text = f"{code or ''} {msg or ''}".lower()
+    return any(m in text for m in _CARD_LIMIT_MARKERS)
+
 def _patch_card(message_id, card_json):
+    return _patch_card_result(message_id, card_json)[0]
+
+def _patch_card_result(message_id, card_json):
     try:
         body = PatchMessageRequest.builder().message_id(message_id).request_body(
             PatchMessageRequestBody.builder().content(card_json).build()
         ).build()
         r = client.im.v1.message.patch(body)
-        if not r.success():
-            print(f"[ERROR] patch_card 失败: {r.code}, {r.msg}")
-        return r.success()
+        if r.success():
+            return True, False
+        print(f"[ERROR] patch_card 失败: {r.code}, {r.msg}")
+        return False, _is_card_limit_error(getattr(r, 'code', ''), getattr(r, 'msg', ''))
     except Exception as e:
         print(f"[ERROR] patch_card exception: {e}")
         traceback.print_exc()
-        return False
+        return False, False
 
 
 def send_message(receive_id, content, msg_type="text", use_card=False, receive_id_type="open_id"):
@@ -633,8 +643,10 @@ def _build_step_detail(resp, tool_calls):
 
 
 class _TaskCard:
-    """飞书任务卡片：单卡片持续 patch；每步一个独立折叠面板（header 显示 summary，展开看详情）。"""
+    """飞书任务卡片：单卡片持续 patch；每步一个独立折叠面板（header 显示 summary，展开看详情）。
+    触达飞书卡片尺寸/元素上限时自动 rollover 到新卡片，step 编号跨卡片连续（#814）。"""
     _DETAIL_LIMIT = 8000
+    _PAGE_STEPS = 50            # 主动 rollover 阈值：实测 8000 字符/步时约 58 步触顶，提前翻页
 
     def __init__(self, receive_id, rid_type):
         self.rid, self.rtype = receive_id, rid_type
@@ -644,6 +656,10 @@ class _TaskCard:
         self.msg_id = None
         self.start_fallback_sent = False
         self.final_fallback_sent = False
+        self.page_no = 1
+        self.turn_no = 0
+        self.turn_base = 1
+        self.note = None
 
     def _step_panel(self, idx, summary, detail):
         detail = detail or "_(无输出)_"
@@ -656,8 +672,13 @@ class _TaskCard:
         }
 
     def _build(self):
-        els = [{"tag": "markdown", "content": f"**{self.status}**"}]
-        for i, (s, d) in enumerate(self.steps, 1):
+        header = f"**{self.status}**"
+        if self.page_no > 1:
+            header += f"\n\n📄 工作卡片 {self.page_no}"
+        els = [{"tag": "markdown", "content": header}]
+        if self.note:
+            els.append({"tag": "markdown", "content": self.note})
+        for i, (s, d) in enumerate(self.steps, self.turn_base):
             els.append(self._step_panel(i, s, d))
         if self.final:
             els += [{"tag": "hr"}, {"tag": "markdown", "content": self.final}]
@@ -666,11 +687,18 @@ class _TaskCard:
     def _push(self):
         card = self._build()
         if self.msg_id:
-            ok = _patch_card(self.msg_id, card)
-        else:
-            self.msg_id = _send_raw(self.rid, card, "interactive", self.rtype)
-            ok = bool(self.msg_id)
-        return ok
+            return _patch_card_result(self.msg_id, card)
+        self.msg_id = _send_raw(self.rid, card, "interactive", self.rtype)
+        # create 失败同样按 limit 处理：msg_id 为 None 时后续 push 都会走 create，
+        # 不 rollover 就永远发不出去（#814 缺陷 2）
+        return bool(self.msg_id), not self.msg_id
+
+    def _rollover(self):
+        self.page_no += 1
+        self.msg_id = None
+        self.final = None
+        self.note = "⚠️ 上一张工作卡片达到飞书限制，本页继续展示后续进展。"
+        self.steps = []          # 不清 steps 的话新卡片和旧的一样大，rollover 等于没做（#814 缺陷 1）
 
     def _fallback_text(self, text, *, final=False):
         attr = "final_fallback_sent" if final else "start_fallback_sent"
@@ -682,23 +710,44 @@ class _TaskCard:
     # ── 公开接口 ──
 
     def start(self):
-        if not self._push():
+        ok, _ = self._push()
+        if not ok:
             self._fallback_text("🤔 思考中...")
 
     def step(self, summary, detail=""):
+        self.turn_no += 1
+        self.status = f"⏳ 工作中 · Turn {self.turn_no}"
+        if len(self.steps) >= self._PAGE_STEPS:
+            self._rollover()
+            self.turn_base = self.turn_no
         self.steps.append((summary, detail))
-        self.status = f"⏳ 工作中 · Turn {len(self.steps)}"
-        self._push()
+        ok, limit = self._push()
+        if limit:
+            self._rollover()
+            self.turn_base = self.turn_no
+            self.steps = [(summary, detail)]
+            ok, _ = self._push()
 
     def done(self, text):
         self.status = "✅ 已完成"
         self.final = text or "_(无文本输出)_"
-        if not self._push():
+        ok, limit = self._push()
+        if limit:
+            self._rollover()
+            self.turn_base = self.turn_no + 1
+            self.final = text or "_(无文本输出)_"   # _rollover 清了 final，重设后再推新卡
+            ok, _ = self._push()
+        if not ok:
             self._fallback_text(_display_text(text), final=True)
 
     def fail(self, msg):
         self.status = f"❌ {msg}"
-        if not self._push():
+        ok, limit = self._push()
+        if limit:
+            self._rollover()
+            self.turn_base = self.turn_no + 1
+            ok, _ = self._push()
+        if not ok:
             self._fallback_text(f"❌ {msg}", final=True)
 
 

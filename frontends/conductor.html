@@ -88,9 +88,9 @@
       gap: 12px;
     }
     .cards::-webkit-scrollbar, .messages::-webkit-scrollbar,
-    .console-body::-webkit-scrollbar, .approvals-body::-webkit-scrollbar { width: 8px; }
+    .approvals-body::-webkit-scrollbar { width: 8px; }
     .cards::-webkit-scrollbar-thumb, .messages::-webkit-scrollbar-thumb,
-    .console-body::-webkit-scrollbar-thumb, .approvals-body::-webkit-scrollbar-thumb {
+    .approvals-body::-webkit-scrollbar-thumb {
       background: rgba(31,42,68,.16);
       border-radius: 10px;
     }
@@ -249,46 +249,6 @@
     .file-row:hover { background: #eef2ff; } .file-row span:first-child { flex: 1; } .file-size { color: var(--muted); }
     .file-preview { line-height: 1.55; } .file-preview pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 
-    /* ---------- conductor 输出(横跨底部的独立卡片,默认收起) ---------- */
-    .console {
-      flex-shrink: 0;
-      border: 1px solid var(--border);
-      border-radius: 20px;
-      overflow: hidden;
-      background: linear-gradient(180deg, rgba(255,255,255,.86), rgba(255,255,255,.66));
-      backdrop-filter: blur(18px);
-      box-shadow: var(--shadow);
-    }
-    .console-bar {
-      padding: 13px 20px; cursor: pointer; display: flex; align-items: center; justify-content: space-between;
-      background: rgba(255,255,255,.34); user-select: none;
-    }
-    .console-bar:hover { background: rgba(255,255,255,.6); }
-    .console-bar .t { font-size: 13px; font-weight: 700; color: var(--soft); display: inline-flex; align-items: center; gap: 8px; }
-    .console-bar .chev2 { color: var(--muted); font-size: 12px; transition: transform .2s ease; }
-    .console.open .console-bar .chev2 { transform: rotate(180deg); }
-    .console-body {
-      display: none;
-      max-height: 42vh; overflow-y: auto; overflow-x: hidden;
-      background: #0f1626; color: #cdd6e6;
-      padding: 14px 16px; font-family: "SF Mono", Consolas, monospace; font-size: 12px; line-height: 1.55;
-      white-space: normal; word-break: break-word; overflow-wrap: anywhere;
-    }
-    .console.open .console-body { display: block; }
-    .log-rec { padding: 8px 0; border-bottom: 1px dashed rgba(255,255,255,.08); min-width: 0; }
-    .log-rec:last-child { border-bottom: 0; }
-    .log-rec :is(p, ul, ol, pre, table) { margin: 0 0 .4em 0; max-width: 100%; }
-    .log-rec :is(h1, h2, h3, h4, h5, h6) {
-      font-size: 12px; font-weight: 700; color: #93c5fd;
-      margin: .5em 0 .25em 0; line-height: 1.4; border: 0; padding: 0;
-    }
-    .log-rec pre { white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere;
-                   background: rgba(255,255,255,.05); border-radius: 8px; padding: 8px 10px; overflow-x: auto; }
-    .log-rec code { word-break: break-word; overflow-wrap: anywhere; }
-    .log-rec table { display: block; overflow-x: auto; }
-    .log-evt { color: #7dd3fc; }
-    .log-ts { color: #64748b; }
-
     @media (max-width: 900px) {
       .app { padding: 12px; }
       .app-grid { grid-template-columns: 1fr; grid-template-rows: 38% 1fr; }
@@ -299,9 +259,8 @@
 <body>
   <main class="app">
     <div class="app-grid">
-    <!-- 左列:subagent 卡片 + conductor 输出 -->
+    <!-- 左列:subagent 卡片 -->
     <div class="left-col">
-    <!-- subagent 卡片 -->
     <section class="pane left">
       <div class="head">
         <div class="title">Subagents</div>
@@ -311,15 +270,6 @@
         <div class="empty">暂无 subagent。</div>
       </div>
     </section>
-
-      <!-- conductor 输出:左列底部独立卡片,系统级,默认收起 -->
-      <section class="console" id="console">
-        <div class="console-bar" id="consoleBar">
-          <span class="t">🧠 Conductor 输出 <span class="hint" id="logCount"></span></span>
-          <span class="chev2">▴</span>
-        </div>
-        <div class="console-body" id="consoleBody"></div>
-      </section>
     </div><!-- /left-col -->
 
     <!-- 右:待批任务 + 聊天 -->
@@ -371,10 +321,6 @@
     const apprEl     = document.getElementById('approvals');
     const apprBody   = document.getElementById('approvalsBody');
     const apprBadge  = document.getElementById('apprBadge');
-    const consoleEl  = document.getElementById('console');
-    const consoleBar = document.getElementById('consoleBar');
-    const consoleBody= document.getElementById('consoleBody');
-    const logCount   = document.getElementById('logCount');
     const fileDialog = document.getElementById('fileDialog');
     const fileBody   = document.getElementById('fileBody');
     const filePathEl = document.getElementById('filePath');
@@ -501,7 +447,7 @@
     }
     function flushRender(){
       cancelAnimationFrame(renderFrame); renderFrame = 0;
-      flushCards(); chatFeed.render(); logFeed.render();
+      flushCards(); chatFeed.render();
     }
     document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) scheduleRender(); });
 
@@ -596,22 +542,6 @@
     ['dragleave','drop'].forEach(type=>composer.addEventListener(type,e=>{ e.preventDefault(); composer.classList.remove('dragging'); }));
     composer.addEventListener('drop',e=>{ if(e.dataTransfer.files.length) uploadFiles(e.dataTransfer.files).catch(err=>alert('上传失败：'+err)); });
 
-    /* ---------- conductor 输出 ---------- */
-    function fmtTs(ms){ try{ return new Date(ms).toLocaleTimeString('zh-CN',{hour12:false}); }catch(e){ return ''; } }
-    function logItemHtml(r){
-      return `<div class="log-rec"><span class="log-ts">[${fmtTs(r.ts)}]</span> <span class="log-evt">${esc(r.event)} · t${r.turn}</span>${renderMd(r.text)}</div>`;
-    }
-    const logFeed = createFeed(consoleBody, item=>{
-      const template = document.createElement('template'); template.innerHTML = logItemHtml(item);
-      return template.content.firstElementChild;
-    }, item=>JSON.stringify([item.ts,item.event,item.turn,item.text]),
-    ()=>consoleEl.classList.contains('open'), count=>{ logCount.textContent = count ? `· ${count} 条` : ''; });
-    function renderLog(items){ logFeed.snapshot(items); }
-    function appendLog(item){ logFeed.append(item); }
-    consoleBar.addEventListener('click', ()=>{
-      consoleEl.classList.toggle('open'); logFeed.refresh();
-    });
-
     /* ---------- WS ---------- */
     function connect(){
       const proto = location.protocol==='https:' ? 'wss' : 'ws';
@@ -624,7 +554,6 @@
         if(data.type==='hello'){
           renderCards(data.subagents||[]);
           chatFeed.snapshot(data.chat||[]);
-          renderLog(data.log||[]);
           llmEl.innerHTML=(data.llms||[]).map(x=>`<option value="${x[0]}">${esc(x[1])}</option>`).join(''); llmEl.value=data.llm; llmEl.disabled=!llmEl.options.length;
         } else if(data.type==='model_selected'){ llmEl.value=String(data.llm); }
         else if(data.type==='model_error'){
@@ -634,7 +563,6 @@
         else if(data.type==='subagents'){ renderCards(data.items||[]); }
         else if(data.type==='chat'){ addMsg(data.item); }
         else if(data.type==='chat_read'){ markAllRead(); }
-        else if(data.type==='log'){ appendLog(data.item); }
         else if(data.type==='approval'){ addApproval(data.item); }
       };
     }
@@ -686,7 +614,7 @@
 
     inputEl.addEventListener('input', checkLimit);
 
-    /* 接通后端: hello 推送 cards/chat/log 快照, approval 由 /approval 推送 */
+    /* 接通后端: hello 推送 cards/chat 快照, approval 由 /approval 推送 */
     connect();
   </script>
 </body>

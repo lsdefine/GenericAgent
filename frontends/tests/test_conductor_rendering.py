@@ -56,7 +56,7 @@ def test_paged_history_follow_read_and_reconnect(page):
     }""")
 
 
-def test_card_identity_and_legacy_log_panel_removed(page):
+def test_card_identity_and_lazy_logs(page):
     result=page.evaluate("""() => {
       const cards=[{id:'a',status:'running',reply:'one'},{id:'b',status:'idle',reply:'two'}];
       renderCards(cards);flushRender();const first=cardsEl.firstElementChild;first.classList.add('expanded');
@@ -65,10 +65,8 @@ def test_card_identity_and_legacy_log_panel_removed(page):
       const mutations=observer.takeRecords().length;observer.disconnect();
       renderCards([...cards].reverse());flushRender();
       const identity=cardsEl.lastElementChild===first && first.classList.contains('expanded');
-      return {mutations,identity,
-        legacy:document.getElementById('console')||document.querySelector('.console'),
-        chatNav:!!messagesEl.previousElementSibling?.classList.contains('history-nav')};
+      for(let i=0;i<500;i++)appendLog({ts:i,turn:i,event:'test',text:'entry '+i});flushRender();
+      const closed=consoleBody.children.length;consoleBar.click();flushRender();
+      return {mutations,identity,closed,opened:consoleBody.children.length};
     }""")
-    assert result == dict(mutations=0, identity=True, legacy=None, chatNav=True)
-    assert page.evaluate("typeof appendLog") == 'undefined'
-    assert page.evaluate("typeof logFeed") == 'undefined'
+    assert result == dict(mutations=0, identity=True, closed=0, opened=50)

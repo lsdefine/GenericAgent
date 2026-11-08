@@ -202,7 +202,11 @@
     /* ---------- 聊天框 ---------- */
     .chat { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
     .messages { flex: 1; min-width: 0; overflow: auto; padding: 20px; display: flex; flex-direction: column; gap: 13px; }
-    .msg { max-width: 80%; padding: 13px 15px; border-radius: 18px; line-height: 1.45; font-size: 14px;
+    .history-nav { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 6px 10px; flex-shrink: 0; font-size: 12px; color: var(--muted); }
+    .history-nav[hidden] { display: none; }
+    .history-nav button { height: 28px; min-width: 0; padding: 0 9px; border-radius: 8px; box-shadow: none; font-size: 12px; }
+    .history-nav button:disabled { opacity: .4; cursor: default; }
+    .msg { flex-shrink: 0; max-width: 80%; padding: 13px 15px; border-radius: 18px; line-height: 1.45; font-size: 14px;
            overflow-wrap: anywhere; box-shadow: 0 8px 22px rgba(30,45,80,.055); }
     .msg :is(p, ul, ol, pre, table, img) { max-width: 100%; }
     .msg pre { white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -415,22 +419,38 @@
     }
 
     /* ---------- subagent 卡片 ---------- */
-    function renderCards(items){
-      if(!items || !items.length){ cardsEl.innerHTML = '<div class="empty">暂无 subagent。</div>'; return; }
-      // 重建前记录展开状态(按卡片顺序索引)，避免刷新后用户手动展开的卡片被收起
-      const expandedIdx = new Set();
-      cardsEl.querySelectorAll('.card').forEach((c,i)=>{ if(c.classList.contains('expanded')) expandedIdx.add(i); });
-      cardsEl.innerHTML = items.map((it,i)=>{
-        const status = it.status || 'stopped';
-        return `<article class="card ${esc(status)}${expandedIdx.has(i)?' expanded':''}">
-          <div class="status-row">
-            <span class="dot-text"><span class="dot"></span>${esc(status)}</span>
-            <span class="chev">▾</span>
-          </div>
-          <div class="prompt">${esc(it.prompt)}</div>
-          <div class="reply">${renderMd(it.reply || '等待输出……')}</div>
-        </article>`;
-      }).join('');
+    const cardNodes = new Map();
+    let pendingCards = null;
+    function renderCards(items){ pendingCards = items || []; scheduleRender(); }
+    function flushCards(){
+      if(pendingCards === null) return;
+      const items = pendingCards; pendingCards = null;
+      const ids = new Set(items.map(it=>it.id));
+      for(const [id, entry] of cardNodes){
+        if(!ids.has(id)){ entry.node.remove(); cardNodes.delete(id); }
+      }
+      if(!items.length){
+        if(!cardsEl.querySelector('.empty')) cardsEl.innerHTML = '<div class="empty">暂无 subagent。</div>';
+        return;
+      }
+      cardsEl.querySelector('.empty')?.remove();
+      items.forEach((it,i)=>{
+        let entry = cardNodes.get(it.id);
+        if(!entry){
+          const node = document.createElement('article');
+          node.className = 'card'; node.dataset.id = it.id;
+          node.innerHTML = '<div class="status-row"><span class="dot-text"><span class="dot"></span><span class="status-label"></span></span><span class="chev">▾</span></div><div class="prompt"></div><div class="reply"></div>';
+          entry = {node, reply:Symbol()}; cardNodes.set(it.id, entry);
+        }
+        const {node} = entry, status = it.status || 'stopped';
+        if(entry.status !== status){
+          if(entry.status) node.classList.remove(entry.status);
+          node.classList.add(status); node.querySelector('.status-label').textContent = status; entry.status = status;
+        }
+        if(entry.prompt !== it.prompt){ node.querySelector('.prompt').textContent = it.prompt || ''; entry.prompt = it.prompt; }
+        if(entry.reply !== it.reply){ node.querySelector('.reply').innerHTML = renderMd(it.reply || '等待输出……'); entry.reply = it.reply; }
+        if(cardsEl.children[i] !== node) cardsEl.insertBefore(node, cardsEl.children[i] || null);
+      });
     }
     cardsEl.addEventListener('click', e=>{
       const card = e.target.closest('.card'); if(card) card.classList.toggle('expanded');
@@ -474,8 +494,79 @@
       }
     });
 
+    /* ---------- 按帧刷新与分页历史 ---------- */
+    let renderFrame = 0;
+    function scheduleRender(){
+      if(!renderFrame && !document.hidden) renderFrame = requestAnimationFrame(flushRender);
+    }
+    function flushRender(){
+      cancelAnimationFrame(renderFrame); renderFrame = 0;
+      flushCards(); chatFeed.render(); logFeed.render();
+    }
+    document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) scheduleRender(); });
+
+    function createFeed(el, makeNode, keyOf, visible=()=>true, onCount=()=>{}){
+      const pageSize = 50, items = [], nodes = new Map();
+      let end = null, dirty = false, navigation = false;
+      const nav = document.createElement('div'); nav.className = 'history-nav'; nav.hidden = true;
+      nav.innerHTML = '<button type="button">更早</button><span></span><button type="button">更新</button><button type="button">回到最新</button>';
+      el.before(nav);
+      const [older, newer, latest] = nav.querySelectorAll('button'), label = nav.querySelector('span');
+      const tail = ()=>end === null ? items.length : end;
+      const nearBottom = ()=>el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+      function go(value){ end = value; navigation = true; dirty = true; scheduleRender(); }
+      older.onclick = ()=>go(Math.max(pageSize, tail()-pageSize));
+      newer.onclick = ()=>go(tail()+pageSize >= items.length ? null : tail()+pageSize);
+      latest.onclick = ()=>go(null);
+      function append(item){
+        if(!item) return;
+        if(end === null && visible() && items.length && !dirty && !nearBottom()) end = items.length;
+        items.push(item); dirty = true; scheduleRender();
+      }
+      function snapshot(incoming){
+        const indices = new Map(items.map((item,i)=>[keyOf(item), i]));
+        for(const item of incoming || []){
+          const index = indices.get(keyOf(item));
+          if(index === undefined){ indices.set(keyOf(item), items.length); append(item); }
+          else if(JSON.stringify(items[index]) !== JSON.stringify(item)){ items[index] = item; dirty = true; }
+        }
+        dirty = true; scheduleRender();
+      }
+      function render(){
+        if(!dirty) return;
+        onCount(items.length);
+        nav.hidden = !visible() || items.length <= pageSize;
+        if(!visible()) return;
+        const stop = tail(), start = Math.max(0, stop-pageSize);
+        const follow = end === null && (navigation || nearBottom());
+        for(const [index, entry] of nodes){
+          if(index < start || index >= stop){ entry.node.remove(); nodes.delete(index); }
+        }
+        for(let i=start; i<stop; i++){
+          let entry = nodes.get(i);
+          if(!entry || entry.item !== items[i]){
+            const node = makeNode(items[i]);
+            if(entry) entry.node.replaceWith(node);
+            entry = {item:items[i], node}; nodes.set(i, entry);
+          }
+          const position = i-start;
+          if(el.children[position] !== entry.node) el.insertBefore(entry.node, el.children[position] || null);
+        }
+        label.textContent = `${start+1}–${stop} / ${items.length}`;
+        older.disabled = start === 0; newer.disabled = stop === items.length;
+        latest.disabled = end === null;
+        latest.textContent = stop < items.length ? `最新（${items.length-stop}）` : '回到最新';
+        if(follow) el.scrollTop = el.scrollHeight;
+        else if(navigation) el.scrollTop = 0;
+        dirty = false; navigation = false;
+      }
+      return {append, snapshot, render, refresh(){ dirty = true; scheduleRender(); },
+        markRead(){ for(const item of items) if(item.role === 'user') item.read = true;
+          el.querySelectorAll('.msg.me.unread').forEach(node=>node.classList.remove('unread')); }};
+    }
+
     /* ---------- 聊天 ---------- */
-    function addMsg(item){
+    function messageNode(item){
       const role = item.role || 'system';
       const cls = role==='user' ? 'me' : (role==='conductor' ? 'ai' : 'system');
       const div = document.createElement('div');
@@ -483,10 +574,11 @@
       if(item.id) div.dataset.id = item.id;
       div.innerHTML = renderMd(item.msg || '');
       (item.files||[]).forEach(f=>{ const code=[...div.querySelectorAll('code')].find(x=>x.textContent===(f.ref||f.path)); if(code){ const a=document.createElement('a'); a.className='file-link'; a.href=fileUrl(f.path); a.dataset.path=f.path; code.replaceWith(a); a.append(code); } });
-      messagesEl.appendChild(div);
-      messagesEl.scrollTop = messagesEl.scrollHeight;
+      return div;
     }
-    function markAllRead(){ messagesEl.querySelectorAll('.msg.me.unread').forEach(el=>el.classList.remove('unread')); }
+    const chatFeed = createFeed(messagesEl, messageNode, item=>item.id || JSON.stringify([item.ts,item.role,item.msg]));
+    function addMsg(item){ chatFeed.append(item); }
+    function markAllRead(){ chatFeed.markRead(); }
 
     document.getElementById('fileOpen').onclick=()=>{ fileDialog.showModal(); browseFiles().catch(e=>fileBody.textContent=e); };
     document.getElementById('fileClose').onclick=()=>fileDialog.close();
@@ -509,21 +601,15 @@
     function logItemHtml(r){
       return `<div class="log-rec"><span class="log-ts">[${fmtTs(r.ts)}]</span> <span class="log-evt">${esc(r.event)} · t${r.turn}</span>${renderMd(r.text)}</div>`;
     }
-    function renderLog(items){           // 全量重建(hello 快照)
-      items = items || [];
-      logCount.textContent = items.length ? `· ${items.length} 条` : '';
-      consoleBody.innerHTML = items.map(logItemHtml).join('');
-      if(consoleEl.classList.contains('open')) consoleBody.scrollTop = consoleBody.scrollHeight;
-    }
-    function appendLog(item){            // 增量追加一轮(完整 markdown)
-      if(!item) return;
-      consoleBody.insertAdjacentHTML('beforeend', logItemHtml(item));
-      logCount.textContent = `· ${consoleBody.querySelectorAll('.log-rec').length} 条`;
-      if(consoleEl.classList.contains('open')) consoleBody.scrollTop = consoleBody.scrollHeight;
-    }
+    const logFeed = createFeed(consoleBody, item=>{
+      const template = document.createElement('template'); template.innerHTML = logItemHtml(item);
+      return template.content.firstElementChild;
+    }, item=>JSON.stringify([item.ts,item.event,item.turn,item.text]),
+    ()=>consoleEl.classList.contains('open'), count=>{ logCount.textContent = count ? `· ${count} 条` : ''; });
+    function renderLog(items){ logFeed.snapshot(items); }
+    function appendLog(item){ logFeed.append(item); }
     consoleBar.addEventListener('click', ()=>{
-      consoleEl.classList.toggle('open');
-      if(consoleEl.classList.contains('open')) consoleBody.scrollTop = consoleBody.scrollHeight;
+      consoleEl.classList.toggle('open'); logFeed.refresh();
     });
 
     /* ---------- WS ---------- */
@@ -537,7 +623,7 @@
         const data = JSON.parse(ev.data);
         if(data.type==='hello'){
           renderCards(data.subagents||[]);
-          messagesEl.innerHTML=''; (data.chat||[]).forEach(addMsg);
+          chatFeed.snapshot(data.chat||[]);
           renderLog(data.log||[]);
           llmEl.innerHTML=(data.llms||[]).map(x=>`<option value="${x[0]}">${esc(x[1])}</option>`).join(''); llmEl.value=data.llm; llmEl.disabled=!llmEl.options.length;
         } else if(data.type==='model_selected'){ llmEl.value=String(data.llm); }

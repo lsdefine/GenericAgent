@@ -70,3 +70,25 @@ def test_card_identity_and_lazy_logs(page):
       return {mutations,identity,closed,opened:consoleBody.children.length};
     }""")
     assert result == dict(mutations=0, identity=True, closed=0, opened=50)
+
+
+def test_logs_keep_panel_without_pagination(page):
+    result = page.evaluate("""() => {
+      for(let i=0;i<51;i++) appendLog({ts:i,turn:i,event:'test',text:'entry '+i});
+      flushRender(); consoleBar.click(); flushRender();
+      const first = consoleBody.firstElementChild.textContent;
+      consoleBody.scrollTop=0;
+      appendLog({ts:51,turn:51,event:'test',text:'entry 51'}); flushRender();
+      consoleBar.click(); flushRender(); consoleBar.click(); flushRender();
+      return {panel:!!document.getElementById('console'),
+        logNav:consoleEl.querySelectorAll('.history-nav').length,
+        chatNav:messagesEl.previousElementSibling.classList.contains('history-nav'),
+        totalNav:document.querySelectorAll('.history-nav').length,
+        count:consoleBody.children.length, first,
+        last:consoleBody.lastElementChild.textContent, retained:logCount.textContent};
+    }""")
+    assert result['panel'] and result['chatNav']
+    assert result['logNav'] == 0 and result['totalNav'] == 1
+    assert result['count'] == 50 and result['retained'] == '· 50 条'
+    assert result['first'].endswith('entry 1')
+    assert result['last'].endswith('entry 51')

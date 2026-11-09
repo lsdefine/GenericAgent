@@ -505,12 +505,12 @@
     }
     document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) scheduleRender(); });
 
-    function createFeed(el, makeNode, keyOf, visible=()=>true, onCount=()=>{}){
+    function createFeed(el, makeNode, keyOf, visible=()=>true, onCount=()=>{}, paginated=true){
       const pageSize = 50, items = [], nodes = new Map();
       let end = null, dirty = false, navigation = false;
       const nav = document.createElement('div'); nav.className = 'history-nav'; nav.hidden = true;
       nav.innerHTML = '<button type="button">更早</button><span></span><button type="button">更新</button><button type="button">回到最新</button>';
-      el.before(nav);
+      if(paginated) el.before(nav);
       const [older, newer, latest] = nav.querySelectorAll('button'), label = nav.querySelector('span');
       const tail = ()=>end === null ? items.length : end;
       const nearBottom = ()=>el.scrollHeight - el.scrollTop - el.clientHeight < 48;
@@ -520,7 +520,7 @@
       latest.onclick = ()=>go(null);
       function append(item){
         if(!item) return;
-        if(end === null && visible() && items.length && !dirty && !nearBottom()) end = items.length;
+        if(paginated && end === null && visible() && items.length && !dirty && !nearBottom()) end = items.length;
         items.push(item); dirty = true; scheduleRender();
       }
       function snapshot(incoming){
@@ -534,6 +534,15 @@
       }
       function render(){
         if(!dirty) return;
+        if(!paginated && items.length > pageSize){
+          const removed = items.length - pageSize;
+          items.splice(0, removed);
+          const retained = [...nodes]; nodes.clear();
+          for(const [index, entry] of retained){
+            if(index < removed) entry.node.remove();
+            else nodes.set(index-removed, entry);
+          }
+        }
         onCount(items.length);
         nav.hidden = !visible() || items.length <= pageSize;
         if(!visible()) return;
@@ -605,7 +614,7 @@
       const template = document.createElement('template'); template.innerHTML = logItemHtml(item);
       return template.content.firstElementChild;
     }, item=>JSON.stringify([item.ts,item.event,item.turn,item.text]),
-    ()=>consoleEl.classList.contains('open'), count=>{ logCount.textContent = count ? `· ${count} 条` : ''; });
+    ()=>consoleEl.classList.contains('open'), count=>{ logCount.textContent = count ? `· ${count} 条` : ''; }, false);
     function renderLog(items){ logFeed.snapshot(items); }
     function appendLog(item){ logFeed.append(item); }
     consoleBar.addEventListener('click', ()=>{

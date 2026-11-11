@@ -464,8 +464,24 @@ class GenericAgentHandler(BaseHandler):
         return StepOutcome({"result": "working key_info updated"}, next_prompt=next_prompt)
 
     def _retry_or_exit(self, prompt):
+        """Give up after 3 consecutive unusable replies — but say so first.
+
+        Returning `StepOutcome({}, should_exit=True)` with nothing printed makes the
+        front end go quiet mid-task: the user sees the turn stop with no error and no
+        explanation.  That is the same "silent stop" the guards above are meant to
+        prevent, so the give-up path must be visible too.
+        """
         self._empty_ct = getattr(self, '_empty_ct', 0) + 1
-        if self._empty_ct >= 3: return StepOutcome({}, should_exit=True)
+        if self._empty_ct >= 3:
+            note = (f"\n[任务中止] 模型连续 {self._empty_ct} 次未产出有效回复"
+                    f"(空响应/仅 <summary>/工具格式无效)，已停止本轮任务。\n"
+                    f"建议: 重发该任务，或为该渠道降低 reasoning_effort / 提高 max_tokens。\n")
+            try:
+                self.history_info.append('[Agent] ' + note.strip().replace('\n', ' '))
+            except Exception:
+                pass
+            yield note
+            return StepOutcome({}, should_exit=True)
         return StepOutcome({}, next_prompt=prompt)
 
     def do_no_tool(self, args, response):
@@ -484,6 +500,33 @@ class GenericAgentHandler(BaseHandler):
             return self._retry_or_exit("[ERROR] Tool call format invalid; no tool was called. Regenerate using proper tool calls.")
         if 'max_tokens !!!]' in content[-100:]:
             return self._retry_or_exit("[ERROR] max_tokens limit reached. Use multi small steps to do it.")
+
+        # 2026-11-11: 伪 XML 工具块冒充最终回答。
+        #   llmcore 认得出来的(成对闭合 + 参数可重建 + 脚本能通过语法校验)已在
+        #   `_parse_text_tool_calls` 里还原成真 tool_calls, 走到这里的一定是「想调工具但没调成」:
+        #     unclosed = 流被掐断在半截(max_tokens / 流中断);
+        #     empty    = 块闭合但一个参数都没有(用户看到的 `</code_run><code_run></code_run>`);
+        #     orphan   = 只有 <parameter> 没有工具名(`<type>` 包裹的那种);
+        #     invalid  = 块闭合但重建出来的调用不可安全执行(半截脚本 / 语法错)。
+        #   任何一条都不能当最终回答交付, 否则本轮任务静默结束且不报错。
+        _residue = None
+        try:
+            import llmcore as _llmcore
+            _residue = _llmcore.textual_tool_residue(content)
+        except Exception:
+            _residue = None
+        if _residue:
+            _why = {
+                'unclosed': 'an unterminated textual tool block (the stream was cut mid-call)',
+                'empty': 'a textual tool block with no arguments',
+                'orphan': 'textual parameters without a tool name',
+                'invalid': 'a textual tool block that cannot be executed safely',
+            }.get(_residue, 'a textual tool block')
+            yield f"[Info] Detected {_why}. Regenerating.\n"
+            return self._retry_or_exit(
+                "[ERROR] Your tool call was emitted as plain XML text (%s) and no tool was executed. "
+                "Regenerate using the native tool-call interface — not <code_run>/<parameter>/<function=>/DSML text, "
+                "and make sure the whole call is emitted in one piece." % _why)
         
         # 2. 检测"包含较大代码块但未调用工具"的情况
         # 关键特征：恰好1个大代码块 + 代码块直接结尾（后面只有空白）

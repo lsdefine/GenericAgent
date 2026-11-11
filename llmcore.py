@@ -1153,7 +1153,8 @@ def textual_tool_residue(content):
     """正文里是否残留**调不成**的伪工具块。
 
     返回 'unclosed'(有开无闭, 通常是流被掐断) / 'empty'(块闭合但没参数) /
-    'orphan'(有 <parameter> 却没有工具名) / None。一旦命中就绝不能当最终回答交付:
+    'orphan'(有 <parameter> 却没有工具名) / 'invalid'(块闭合但重建的调用不可安全执行) / None。
+    一旦命中就绝不能当最终回答交付:
     用户看到的「冒出一坨标签然后对话自己中断了」就是这条路径。
     """
     try:

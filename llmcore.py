@@ -934,7 +934,273 @@ def _parse_text_tool_calls(content):
             if name: tcs.append(MockToolCall(name, args))
         except: pass
     if tcs: content = re.sub(_xp, "", content, flags=re.DOTALL).strip()
+    if not tcs:
+        tcs, content = _parse_pseudo_xml_tool_calls(content)
     return tcs, content
+
+# ==== 伪 XML 工具调用兜底 (2026-11-11) ==================================
+# 现象: 部分上游不用原生 tool_calls, 而是把工具调用写成**伪 XML 正文**:
+#       <code_run>\n<script>print(1)</script>\n</code_run>
+#       <code_run>\n<parameter name="script">print(1)</parameter>\n</code_run>
+#       <file_read">\n<parameter name="path">a.py</parameter>\n</file_read>   (名字后多一个引号)
+#       <function=code_run><parameter=script>print(1)</parameter></function>   (Qwen 风格)
+#       <｜｜DSML｜｜tool_calls><｜｜DSML｜｜invoke name="code_run"><｜｜DSML｜｜parameter name="script">…  (DeepSeek DSML)
+#   `_parse_text_tool_calls` 只认 `<tool_use>`/`<tool_call>` + JSON, 这些一个都认不出
+#   ⇒ tool_calls 为空 ⇒ `ga.do_no_tool` 又一条判据都不命中 ⇒ 被当成**最终回答**
+#   ⇒ 本轮任务结束。用户观感 = 「冒出一坨标签然后对话自己中断了, 且不报错」。
+#
+# 安全约束(宁可不解析, 不可乱执行):
+#   * 工具名必须在白名单内(assets/tools_schema.json + 常见别名), 正文里的任意 <xxx> 不猜;
+#   * 只认**成对闭合**的块 —— 流被掐断在半截时不猜参数;
+#   * ``` 围栏 / `行内代码` 内的内容不参与匹配 —— 模型讲解/写文档时提到这些标签不应被真执行;
+#   * 解析结果还要过 `salvaged_call_problem`(python 语法等) —— 压平成一行/半截的脚本
+#     宁可让模型重发, 也不能直接跑起来。
+#
+# ★ 2026-11-11 PR #853 review 修复的三处缺口:
+#   C 参数名被写成 dsml_parameter —— 参数名解析与工具标签的引号风格解耦;
+#   F `<function=name><parameter=k>` 还原(此前直接静默终答);
+#   H 截断的调用被当真正调用执行 —— 安全闸门挪到 `_parse_text_tool_calls` 返回之前,
+#     而不是等 do_no_tool; 另外 `textual_tool_residue` 把「想调但调不成」的残渣
+#     (unclosed/empty/orphan) 交给 ga 重试, 不再冒充最终回答。
+import ast
+
+_PSEUDO_XML_ALIASES = frozenset({
+    'code_run', 'file_read', 'file_write', 'file_patch', 'web_scan', 'web_execute_js',
+    'web_search', 'web_fetch', 'update_working_checkpoint', 'start_long_term_update',
+    'ask_user', 'all_urls', 'bad_json', 'computer', 'bash', 'powershell',
+})
+_TOOL_NAMES_CACHE = None
+# `｜｜DSML｜｜` 前缀(全角/半角竖线都见过), 可选
+_DSML = r'(?:\s*[\uff5c|]{1,2}\s*DSML\s*[\uff5c|]{1,2}\s*)?'
+# 工具名与 '>' 之间的杂音: 多余引号/空白(实测 `<file_read">`)
+_NOISE = r'[ \t"\']{0,4}'
+# 行首锚定 —— 正文里顺手提到 `<code_run>` 不算泄漏, 真的泄漏总是独立成行
+_BOL = r'(?m)^[ \t]*'
+
+
+def _known_tool_names():
+    """白名单: 内置别名 ∪ assets/tools_schema.json 里声明的工具名。"""
+    global _TOOL_NAMES_CACHE
+    if _TOOL_NAMES_CACHE is not None: return _TOOL_NAMES_CACHE
+    names = set(_PSEUDO_XML_ALIASES)
+    try:
+        with open(os.path.join(_ROOT, 'assets', 'tools_schema.json'), encoding='utf-8') as f:
+            for t in json.load(f):
+                fn = t.get('function', t) or {}
+                if fn.get('name'): names.add(fn['name'])
+    except Exception:
+        pass
+    _TOOL_NAMES_CACHE = frozenset(names)
+    return _TOOL_NAMES_CACHE
+
+
+def _mask_code(text):
+    """把 ``` 围栏 / `行内代码` 换成等长空格(保持偏移不变)。
+
+    ★哨兵不能用 0: 围栏正好从第 0 个字符开始时, `pos == 0` 会被误判成「还没开」,
+      于是永远不闭合 —— 负例(整段被 ``` 包住)反而会被当真调用执行。
+    """
+    out = list(text)
+    for m in re.finditer(r'```[\s\S]*?(?:```|$)', text):
+        for i in range(m.start(), m.end()): out[i] = ' '
+    for m in re.finditer(r'`[^`\n]*`', text):
+        for i in range(m.start(), m.end()): out[i] = ' '
+    return ''.join(out)
+
+
+class _Scan:
+    __slots__ = ('blocks', 'unclosed', 'orphans')
+
+    def __init__(self):
+        self.blocks = []      # dict(start, end, name, body, attrs)
+        self.unclosed = []    # 有开无闭的块/参数(通常是流被掐断)
+        self.orphans = []     # 落在任何工具块之外的 <parameter>(想调工具但没调成)
+
+
+def _scan_pseudo_xml(content):
+    """扫描正文里的伪工具块。
+
+    只看**行首**开标签(正文里 inline 提到标签不算), 围栏/行内代码内全部忽略。
+    """
+    sc = _Scan()
+    if not content: return sc
+    text = _mask_code(content)
+    names = _known_tool_names()
+    alt = '|'.join(sorted((re.escape(n) for n in names if n), key=len, reverse=True))
+
+    # 三种开标签: <工具名 ...> / <function=工具名> / <invoke name="工具名">
+    opens = []
+    for m in re.finditer(_BOL + r'<' + _DSML + r'(' + alt + r')\b' + _NOISE + r'([^<>]{0,200})>', text, re.I):
+        opens.append((m.start(), m.end(), m.group(1), m.group(2) or '', 'tag'))
+    for m in re.finditer(_BOL + r'<function\s*=\s*["\']?([A-Za-z_]\w*)["\']?\s*>', text, re.I):
+        opens.append((m.start(), m.end(), m.group(1), '', 'function'))
+    for m in re.finditer(_BOL + r'<' + _DSML + r'invoke\s+name\s*=\s*["\']?([A-Za-z_]\w*)["\']?\s*>', text, re.I):
+        opens.append((m.start(), m.end(), m.group(1), '', 'invoke'))
+    opens.sort()
+
+    spans = []
+    for start, end, name, attrs, form in opens:
+        if name not in names: continue
+        if any(a <= start < b for a, b in spans): continue     # 嵌套在外层块里
+        if form == 'function':
+            close_re = re.compile(r'</function\s*>', re.I)
+        elif form == 'invoke':
+            close_re = re.compile(r'</' + _DSML + r'invoke\s*>', re.I)
+        else:
+            close_re = re.compile(r'</' + _DSML + re.escape(name) + r'\s*>', re.I)
+        c = close_re.search(text, end)
+        if c is None:
+            sc.unclosed.append(name); continue
+        body = content[end:c.start()]
+        spans.append((start, c.end()))
+        sc.blocks.append({'start': start, 'end': c.end(), 'name': name, 'body': body, 'attrs': attrs})
+
+    spans.sort()
+    # 落在所有工具块之外的 <parameter> = 形状 D(<type> 包 parameter): 没有任何工具名,
+    # 重建不了, 只能当残渣重试 —— 绝不能当最终回答交付。
+    for m in re.finditer(r'<' + _DSML + r'parameter\b[^<>]*>', text, re.I):
+        if any(a <= m.start() < b for a, b in spans): continue
+        sc.orphans.append('parameter')
+    # 块内参数有开无闭 = 截断(例如 </code_run> 到了但 </parameter> 没到)
+    for b in sc.blocks:
+        if b['body'].count('<parameter') > b['body'].count('</parameter'):
+            sc.unclosed.append(b['name'])
+    return sc
+
+
+def _coerce(k, v):
+    """参数值按名字收敛类型: timeout 等转 int, 布尔开关转 bool。"""
+    if not isinstance(v, str): return v
+    s = v.strip()
+    if k in ('timeout', 'start', 'count', 'maxlen') and re.fullmatch(r'-?\d+', s): return int(s)
+    if k in ('show_linenos', 'tabs_only', 'text_only', 'no_monitor', 'inline_eval'):
+        return s.lower() in ('true', '1', 'yes')
+    return v
+
+
+def _pseudo_xml_args(body, name, attrs=''):
+    """从块体/开标签属性里抽参数。抽不出返回 {}。"""
+    args = {}
+    for k, v in re.findall(r'([A-Za-z_][\w-]*)\s*=\s*["\']([^"\']*)["\']', attrs or ''):
+        args[k] = _coerce(k, v)
+    m = re.search(r'<' + _DSML + r'script[^<>]*>(.*?)</' + _DSML + r'script\s*>', body, re.DOTALL | re.I)
+    if m: args.setdefault('script', m.group(1).strip('\n'))
+    # 参数名解析与工具标签的引号风格解耦: `parameter name="k"` / `parameter name='k'` /
+    # `parameter=k` / `parameter name=k` 全部认。标签上的 `string="true"` 等属性不参与。
+    for pm in re.finditer(r'<' + _DSML + r'parameter\s*(?:name\s*)?=\s*["\']?([\w.-]+)["\']?[^<>]*>'
+                          r'(.*?)</' + _DSML + r'parameter\s*>', body, re.DOTALL | re.I):
+        k = pm.group(1)
+        if k and k.lower() not in ('string', 'true', 'false', 'type'):
+            args.setdefault(k, _coerce(k, pm.group(2).strip('\n')))
+    if args: return args
+    b = (body or '').strip()
+    if not b: return {}
+    if b[0] in '{[':
+        try:
+            d = json.loads(b)
+            if isinstance(d, dict): return d
+        except Exception:
+            pass
+    if name in ('code_run', 'bash', 'powershell') and '<' not in b:
+        return {'script': b}
+    return {}
+
+
+_SHELL_HEAD = re.compile(
+    r'^\s*(ls|cd|pwd|dir|echo|cat|git|pip|pip3|npm|curl|wget|ssh|scp|mkdir|rm|cp|mv|chmod|'
+    r'python3?|bash|sh|zsh|node|docker|kubectl)\b')
+
+
+def salvaged_call_problem(call):
+    """抢救出来的调用能不能安全执行。返回问题描述, '' 表示没问题。
+
+    宁可让模型重发, 也不能把半截/压平成一段的脚本直接跑起来。
+    """
+    fn = getattr(call, 'function', None)
+    name = getattr(fn, 'name', '') or ''
+    if not name: return 'tool name is empty'
+    try:
+        args = json.loads(getattr(fn, 'arguments', '') or '{}')
+    except Exception as e:
+        return 'arguments are not valid JSON: %s' % e
+    if not isinstance(args, dict): return 'arguments are not an object'
+    if name in ('code_run', 'code_exec', 'bash', 'powershell'):
+        code = args.get('script') or args.get('code') or ''
+        if not str(code).strip(): return 'script is empty'
+        ctype = str(args.get('type') or '').lower()
+        if not ctype: ctype = 'shell' if _SHELL_HEAD.match(str(code)) else 'python'
+        if ctype in ('python', 'py'):
+            try:
+                ast.parse(str(code))
+            except SyntaxError as e:
+                return 'python syntax error (line %s: %s)' % (e.lineno, e.msg)
+    elif name in ('file_read', 'file_write', 'file_patch'):
+        if not args.get('path'): return 'path is empty'
+    return ''
+
+
+def leaked_markup_incomplete(text):
+    """伪工具块是否被截断(流中断 / max_tokens)。True = 残块, 绝不能执行。"""
+    try:
+        if not text: return False
+        return bool(_scan_pseudo_xml(text).unclosed)
+    except Exception:
+        return False
+
+
+def textual_tool_residue(content):
+    """正文里是否残留**调不成**的伪工具块。
+
+    返回 'unclosed'(有开无闭, 通常是流被掐断) / 'empty'(块闭合但没参数) /
+    'orphan'(有 <parameter> 却没有工具名) / None。一旦命中就绝不能当最终回答交付:
+    用户看到的「冒出一坨标签然后对话自己中断了」就是这条路径。
+    """
+    try:
+        if not content: return None
+        sc = _scan_pseudo_xml(content)
+        if sc.unclosed: return 'unclosed'
+        if sc.orphans: return 'orphan'
+        for b in sc.blocks:
+            args = _pseudo_xml_args(b['body'], b['name'], b['attrs'])
+            if not args: return 'empty'
+            # 块是闭合的, 但重建出来的调用不可安全执行(半截脚本/语法错) —— 同样是残渣。
+            # 这类不能在 `_parse_pseudo_xml_tool_calls` 里静默丢掉(那样会被当最终回答)。
+            if salvaged_call_problem(MockToolCall(b['name'], args)): return 'invalid'
+        return None
+    except Exception:
+        return None
+
+
+def _parse_pseudo_xml_tool_calls(content):
+    """把伪 XML 工具块还原成 MockToolCall。返回 (tcs, 去掉块后的正文)。
+
+    ★ 安全闸门放在**这个函数内部**(即 `_parse_text_tool_calls` 返回之前), 而不是
+      `ga.do_no_tool`: 半截调用一旦变成真 tool_calls, 就会先走执行路径 ——
+      PR #853 的 H 正是这样被执行的。`leaked_markup_incomplete` 和
+      `salvaged_call_problem` 在这里就把它们拦下, 宁可让模型重发。
+    """
+    try:
+        sc = _scan_pseudo_xml(content)
+        if not sc.blocks: return [], content
+        if textual_tool_residue(content): return [], content      # unclosed / empty / orphan
+        found = []
+        for b in sorted(sc.blocks, key=lambda x: x['start']):
+            args = _pseudo_xml_args(b['body'], b['name'], b['attrs'])
+            if not args: return [], content
+            call = MockToolCall(b['name'], args)
+            if salvaged_call_problem(call): return [], content    # 半截/坏脚本不许执行
+            found.append(call)
+        rest, last = [], 0
+        for b in sorted(sc.blocks, key=lambda x: x['start']):
+            if b['start'] < last: continue
+            rest.append(content[last:b['start']]); last = b['end']
+        rest.append(content[last:])
+        tail = ''.join(rest)
+        tail = re.sub(r'</?' + _DSML + r'(?:tool_calls|function_calls|invoke|function)\s*>', '', tail, flags=re.I)
+        return found, tail.strip()
+    except Exception as e:
+        print('[WARN] _parse_pseudo_xml_tool_calls failed: %s' % e)
+        return [], content
 
 def _ensure_text_block(blocks):
     """If response has thinking but no text block, inject a synthetic summary from thinking's first line."""

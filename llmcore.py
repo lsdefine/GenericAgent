@@ -1058,7 +1058,8 @@ def _scan_pseudo_xml(content):
     spans.sort()
     # 落在所有工具块之外的 <parameter> = 形状 D(<type> 包 parameter): 没有任何工具名,
     # 重建不了, 只能当残渣重试 —— 绝不能当最终回答交付。
-    for m in re.finditer(r'<' + _DSML + r'parameter\b[^<>]*>', text, re.I):
+    # 同样行首锚定: 正文里"用法: <parameter name=…>"这种说明句不该触发重试。
+    for m in re.finditer(_BOL + r'<' + _DSML + r'parameter\b[^<>]*>', text, re.I):
         if any(a <= m.start() < b for a, b in spans): continue
         sc.orphans.append('parameter')
     # 块内参数有开无闭 = 截断(例如 </code_run> 到了但 </parameter> 没到)

@@ -112,6 +112,20 @@ def test_fenced_block_is_never_executed_even_at_offset_zero():
     assert _calls(fenced) == []
 
 
+def test_inline_mention_of_parameter_syntax_is_not_residue():
+    """说明句里提到 `<parameter name=…>` 不该触发重试(只在行首才算泄漏)。"""
+    prose = '用法: <parameter name="path">a.py</parameter> 这样写。'
+    assert _calls(prose) == []
+    assert llmcore.textual_tool_residue(prose) is None
+
+
+def test_orphan_parameter_alone_still_retries():
+    """形状 D: 只有 <parameter> 没有工具名, 必须判残渣。"""
+    content = '<type>\n<parameter name="x">1</parameter>'
+    assert _calls(content) == []
+    assert llmcore.textual_tool_residue(content) == "orphan"
+
+
 if __name__ == "__main__":
     fails = []
     for name, fn in sorted(globals().items()):

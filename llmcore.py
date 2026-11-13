@@ -1098,11 +1098,16 @@ class NativeToolClient:
             elif isinstance(c, list): combined_content.extend(c)
             if msg['role'] == 'user' and msg.get('tool_results'): tool_results.extend(msg['tool_results'])
         tr_id_set = set();  tool_result_blocks = []
+        # 2026-11-13: 空 tool_use_id 的结果按出现顺序收集, 循环结束后统一追加。
+        # 原实现是每次往 combined_content 头部 insert, 导致多个空 id 结果顺序反转
+        # (实测 R1,R2 -> 发出 R2,R1), 且被插到用户正文之前。
+        orphan_results = []
         for tr in tool_results:
             tool_use_id, content = tr.get("tool_use_id", ""), tr.get("content", "")
             tr_id_set.add(tool_use_id)
             if tool_use_id: tool_result_blocks.append({"type": "tool_result", "tool_use_id": tool_use_id, "content": tr.get("content", "")})
-            else: combined_content = [{"type": "text", "text": f'<tool_result>{content}</tool_result>'}] + combined_content
+            else: orphan_results.append({"type": "text", "text": f'<tool_result>{content}</tool_result>'})
+        combined_content.extend(orphan_results)
         for tid in self._pending_tool_ids:
             if tid not in tr_id_set: tool_result_blocks.append({"type": "tool_result", "tool_use_id": tid, "content": ""})
         self._pending_tool_ids = []

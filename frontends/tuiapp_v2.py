@@ -7363,8 +7363,74 @@ class GenericAgentTUI(App[None]):
         except Exception:
             pass
 
-    def _refresh_sidebar(self):
+    def _sidebar_visible_sig(self):
+        """Everything `render_sidebar` actually draws, cheaply.
+
+        `render_sidebar` needs no more than the session id, name, status and the
+        Q/S preview lines.  The previews are read from the LLM-side history and
+        therefore only change at turn boundaries (a new prompt is appended, then
+        the assistant reply); while tokens stream the history is untouched.  So
+        this signature is stable during a stream and the 20x/s refresh calls from
+        the paint batches collapse into a single tuple comparison.
+
+        Deriving Q/S walks (and regexes) the history, so memoise it per session
+        keyed on the history list identity + length + last message: all three
+        only change when a message is appended, which is the only way these
+        previews can change in practice.
+        """
+        cache = getattr(self, "_sidebar_preview_cache", None)
+        if cache is None:
+            cache = self._sidebar_preview_cache = {}
+        rows = []
+        seen = set()
+        for sid, s in self.sessions.items():
+            seen.add(sid)
+            try:
+                hist = s.agent.llmclient.backend.history
+            except Exception:
+                hist = None
+            # Length alone would go stale when trim_messages_history drops
+            # messages in place and the list later grows back to the same size.
+            tail = hist[-1] if hist else None
+            hit = cache.get(sid)
+            if (hist is None or hit is None or hit[0] is not hist
+                    or hit[1] != len(hist) or hit[2] is not tail):
+                q = _sidebar_last_user(s)
+                sm = _sidebar_last_summary(s)
+                cache[sid] = (hist, len(hist) if hist is not None else -1, tail, q, sm)
+            else:
+                _, _, _, q, sm = hit
+            rows.append((sid, s.name, s.status, q, sm))
+        for sid in [k for k in cache if k not in seen]:
+            cache.pop(sid, None)
+        return tuple(rows)
+
+    def _refresh_sidebar(self, force: bool = False) -> None:
+        """Repaint the session sidebar, but only when what it draws changed.
+
+        The streaming path calls this on every 50ms paint batch.  Rebuilding the
+        whole table (and re-deriving the Q/S previews from the history) 20x/s is
+        pure waste, because during a stream nothing the sidebar shows changes.
+        Comparing `_sidebar_visible_sig()` costs a tuple compare and skips the
+        repaint entirely in that case.
+
+        It stays edge-triggered rather than throttled: the instant something
+        really changes — a task finishing (running->idle), a new prompt, a fresh
+        summary — the signature flips and the paint happens on that very frame,
+        with no timer in between.
+
+        Callers that know the view must be rebuilt regardless (switch/rename/
+        rewind/theme) pass force=True.
+        """
         if not self.is_mounted: return
+        if not force and self._sidebar_visible_sig() == getattr(
+                self, "_sidebar_painted_sig", None):
+            return
+        self._paint_sidebar()
+
+    def _paint_sidebar(self) -> None:
+        if not self.is_mounted: return
+        self._sidebar_painted_sig = self._sidebar_visible_sig()
         self.query_one("#sidebar", Static).update(render_sidebar(self.sessions, self.current_id))
         self._scroll_active_session_into_view()
 

@@ -93,6 +93,14 @@ def _hint_terminal_capabilities() -> None:
 _hint_terminal_capabilities()
 
 
+# Streaming paint coalescing window (seconds). Every token chunk used to be
+# painted on a 50ms timer; each paint re-arranged the whole transcript because
+# `Static.update()` defaults to `layout=True`. The layout cost is now avoided
+# (`_update_text`), and 100ms halves the remaining repaint traffic without a
+# visible difference in typing feel. Override: GA_TUI_PAINT_MS.
+STREAM_PAINT_INTERVAL = max(0.02, float(os.environ.get("GA_TUI_PAINT_MS", "100")) / 1000.0)
+
+
 # Strip terminal control sequences from subprocess stdout but keep SGR color codes,
 # otherwise Text.from_ansi loses color downstream.
 _ANSI_CONTROL_RE = re.compile(
@@ -6986,7 +6994,8 @@ class GenericAgentTUI(App[None]):
             # Keep data current for stop/copy/session switching; coalesce only paint.
             self._pending_stream_renders[(agent_id, task_id)] = found
             if self._stream_render_timer is None:
-                self._stream_render_timer = self.set_timer(0.05, self._flush_stream_renders)
+                self._stream_render_timer = self.set_timer(
+                    STREAM_PAINT_INTERVAL, self._flush_stream_renders)
             return
         self._pending_stream_renders.pop((agent_id, task_id), None)
         self._render_assistant_update(found)
@@ -7354,8 +7363,74 @@ class GenericAgentTUI(App[None]):
         except Exception:
             pass
 
-    def _refresh_sidebar(self):
+    def _sidebar_visible_sig(self):
+        """Everything `render_sidebar` actually draws, cheaply.
+
+        `render_sidebar` needs no more than the session id, name, status and the
+        Q/S preview lines.  The previews are read from the LLM-side history and
+        therefore only change at turn boundaries (a new prompt is appended, then
+        the assistant reply); while tokens stream the history is untouched.  So
+        this signature is stable during a stream and the 20x/s refresh calls from
+        the paint batches collapse into a single tuple comparison.
+
+        Deriving Q/S walks (and regexes) the history, so memoise it per session
+        keyed on the history list identity + length + last message: all three
+        only change when a message is appended, which is the only way these
+        previews can change in practice.
+        """
+        cache = getattr(self, "_sidebar_preview_cache", None)
+        if cache is None:
+            cache = self._sidebar_preview_cache = {}
+        rows = []
+        seen = set()
+        for sid, s in self.sessions.items():
+            seen.add(sid)
+            try:
+                hist = s.agent.llmclient.backend.history
+            except Exception:
+                hist = None
+            # Length alone would go stale when trim_messages_history drops
+            # messages in place and the list later grows back to the same size.
+            tail = hist[-1] if hist else None
+            hit = cache.get(sid)
+            if (hist is None or hit is None or hit[0] is not hist
+                    or hit[1] != len(hist) or hit[2] is not tail):
+                q = _sidebar_last_user(s)
+                sm = _sidebar_last_summary(s)
+                cache[sid] = (hist, len(hist) if hist is not None else -1, tail, q, sm)
+            else:
+                _, _, _, q, sm = hit
+            rows.append((sid, s.name, s.status, q, sm))
+        for sid in [k for k in cache if k not in seen]:
+            cache.pop(sid, None)
+        return tuple(rows)
+
+    def _refresh_sidebar(self, force: bool = False) -> None:
+        """Repaint the session sidebar, but only when what it draws changed.
+
+        The streaming path calls this on every 50ms paint batch.  Rebuilding the
+        whole table (and re-deriving the Q/S previews from the history) 20x/s is
+        pure waste, because during a stream nothing the sidebar shows changes.
+        Comparing `_sidebar_visible_sig()` costs a tuple compare and skips the
+        repaint entirely in that case.
+
+        It stays edge-triggered rather than throttled: the instant something
+        really changes — a task finishing (running->idle), a new prompt, a fresh
+        summary — the signature flips and the paint happens on that very frame,
+        with no timer in between.
+
+        Callers that know the view must be rebuilt regardless (switch/rename/
+        rewind/theme) pass force=True.
+        """
         if not self.is_mounted: return
+        if not force and self._sidebar_visible_sig() == getattr(
+                self, "_sidebar_painted_sig", None):
+            return
+        self._paint_sidebar()
+
+    def _paint_sidebar(self) -> None:
+        if not self.is_mounted: return
+        self._sidebar_painted_sig = self._sidebar_visible_sig()
         self.query_one("#sidebar", Static).update(render_sidebar(self.sessions, self.current_id))
         self._scroll_active_session_into_view()
 
@@ -7814,7 +7889,7 @@ class GenericAgentTUI(App[None]):
             if m.role == "assistant" and not m.done:
                 self._capture_stop_summary(m)
                 if m._spinner_widget is not None:
-                    try: m._spinner_widget.update(self._stopping_annotation(m))
+                    try: self._update_text(m._spinner_widget, self._stopping_annotation(m))
                     except Exception: pass
 
     def _has_streaming(self) -> bool:
@@ -7841,7 +7916,7 @@ class GenericAgentTUI(App[None]):
             if m.role == "assistant" and not m.done and m._spinner_widget is not None:
                 if m._stream_started_at is None:
                     self._mark_stream_start(m)
-                try: m._spinner_widget.update(self._spinner_annotation(m))
+                try: self._update_text(m._spinner_widget, self._spinner_annotation(m))
                 except Exception: pass
         if not self._has_streaming():
             self._ensure_spinner()
@@ -8010,7 +8085,7 @@ class GenericAgentTUI(App[None]):
                 else:               container.mount(w, after=anchor)
                 m._spinner_widget = w
             else:
-                try: m._spinner_widget.update(self._done_annotation(m))
+                try: self._update_text(m._spinner_widget, self._done_annotation(m))
                 except Exception: pass
             return
         if m._spinner_widget is None:
@@ -8022,6 +8097,42 @@ class GenericAgentTUI(App[None]):
             else:
                 container.mount(w, after=anchor)
             m._spinner_widget = w
+
+    @staticmethod
+    def _rendered_height(widget, rendered, width: int):
+        """Height `rendered` would occupy in `widget` at `width`, or None if unknown."""
+        try:
+            from textual.visual import visualize
+            visual = visualize(widget, rendered,
+                               markup=getattr(widget, "_render_markup", True))
+            return visual.get_height(widget.styles, width)
+        except Exception:
+            return None
+
+    def _update_text(self, widget, rendered, *, width: int | None = None) -> None:
+        """`Static.update()` that only asks for a layout pass when the rendered
+        height actually changes.
+
+        Why: `Static.update()` defaults to `layout=True`, which marks the whole
+        screen layout-dirty.  Textual then re-arranges the entire transcript on
+        the next frame — measured at 5-15ms for a 30-turn session and ~430ms on
+        long ones.  Streaming calls this 20x/s, so the TUI burned ~25% of the
+        main thread just recomputing positions for text that grew by three
+        characters on the same line.
+
+        `refresh(repaint=True)` (what `update()` does) already invalidates the
+        cached content height, so a skipped layout pass can never keep a stale
+        height: the very next real layout re-measures from the new visual.
+        """
+        if widget is None:
+            return
+        if width is None:
+            width = getattr(widget.size, "width", 0) or self._messages_width()
+        new_h = self._rendered_height(widget, rendered, width)
+        old_h = getattr(widget, "_ga_last_height", None)
+        widget._ga_last_height = new_h
+        widget.update(rendered, layout=(old_h is None or new_h is None
+                                        or new_h != old_h))
 
     def _stream_update_assistant(self, m: ChatMessage) -> None:
         """Cheap path for per-chunk streaming: if the fold topology is unchanged, only
@@ -8047,9 +8158,9 @@ class GenericAgentTUI(App[None]):
                 rendered = self._render_md(last_text, width)
                 if isinstance(rendered, _MdRender):
                     last_widget._ga_render = rendered
-                    last_widget.update(rendered.text)
+                    self._update_text(last_widget, rendered.text, width=width)
                 else:
-                    last_widget.update(rendered)
+                    self._update_text(last_widget, rendered, width=width)
             else:
                 last_widget._ga_render = None
                 # Normalise CRLF → LF before from_ansi. On Windows child stdout
@@ -8061,15 +8172,13 @@ class GenericAgentTUI(App[None]):
                 # Markdown to fold on completion. Lone `\r` (no `\n`) is kept so
                 # progress-bar overwrites still work.
                 display = last_text.replace("\r\n", "\n")
-                last_widget.update(Text.from_ansi(display, style=C_FG))
-            try:
-                self.query_one("#messages", VerticalScroll).refresh()
-            except Exception:
-                pass
+                self._update_text(last_widget,
+                                  Text.from_ansi(display, style=C_FG),
+                                  width=width)
             if m.done and m._spinner_widget is not None:
                 # Convert the live spinner into the post-turn ⠿ card in place.
                 self._capture_done_summary(m)
-                try: m._spinner_widget.update(self._done_annotation(m))
+                try: self._update_text(m._spinner_widget, self._done_annotation(m))
                 except Exception: pass
             return
         self._remount_assistant_message(m)

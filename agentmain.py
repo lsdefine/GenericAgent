@@ -240,6 +240,14 @@ if __name__ == '__main__':
     parser.add_argument('--llm_no', type=int, default=0)
     parser.add_argument('--verbose', action='store_true')
     parser.add_argument('--nobg', action='store_true')
+    # ★无人值守一次性任务开关（issue #866）。
+    #   --task 模式默认在第一轮 `[ROUND END]` 后继续等 reply.txt 最长 600s，
+    #   供**外部监督者**写 reply 续轮。没有监督者的场景（调度器/批处理/CI）下，
+    #   这 600s 是纯空转：报告早已写完，进程却要等到外层 runner 的硬超时
+    #   把整棵进程树杀掉（rc=-999）。传本开关则第一轮完成即退出。
+    #   默认关闭，既有监督者工作流行为不变。
+    parser.add_argument('--no-reply-wait', action='store_true',
+                        help='one-shot mode: exit right after round 1, do not wait for reply.txt')
     parser.add_argument('--nolog', action='store_true')
     parser.add_argument('--no-user-tools', action='store_true')
     args, _unknown = parser.parse_known_args()
@@ -288,6 +296,7 @@ if __name__ == '__main__':
                     with open(outfile, 'w', encoding='utf-8') as f: f.write(item.get('next', ''))
             with open(outfile, 'w', encoding='utf-8') as f: f.write(item['done'] + '\n\n[ROUND END]\n')
             if not args.task: break
+            if args.no_reply_wait: break  # issue #866: unattended one-shot, no supervisor will reply
             consume_file(d, '_stop')  # 已经成功停下来了，避免打断下次reply
             for _ in range(300):  # 等reply.txt，10分钟超时
                 time.sleep(2)

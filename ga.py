@@ -73,10 +73,13 @@ def code_run(code, code_type="python", timeout=60, cwd=None, code_cwd=None, stop
                 if istimeout: full_stdout.append("\n[Timeout Error] 超时强制终止")
                 else: full_stdout.append("\n[Stopped] 用户强制终止")
                 break
-            time.sleep(1)
+            t.join(0.05)  # 等 reader 退出, 不再固定 sleep(1)
 
         t.join(timeout=1)
         exit_code = process.poll()
+        if exit_code is None:  # reader 可能先于进程回收退出
+            try: exit_code = process.wait(timeout=5)
+            except subprocess.TimeoutExpired: exit_code = process.poll()
 
         stdout_str = "".join(full_stdout)
         status = "success" if exit_code == 0 else "error"

@@ -472,6 +472,24 @@ def _stamp_oai_cache_markers(messages, model):
             c = list(c); c[-1] = dict(c[-1], cache_control={'type': 'ephemeral'})
             messages[idx] = {**messages[idx], 'content': c}
 
+def _has_usable_output(blocks):
+    """True if the parsed response carries something the caller can act on.
+
+    A response made only of ``thinking`` blocks is **not** usable: it has no
+    answer text and no tool call, so the caller treats it as a successful empty
+    reply and no retry / failover ever happens (typical causes: the model burned
+    its whole token budget on reasoning, or the upstream swallowed the answer).
+    """
+    for b in blocks or []:
+        if not isinstance(b, dict):
+            continue
+        if b.get("type") == "tool_use":
+            return True
+        if b.get("type") == "text" and (b.get("text") or "").strip():
+            return True
+    return False
+
+
 def _stream_with_retry(sess, url, headers, payload, parse_fn):
     STATS['session'] = sess.name
     _RETRYABLE = {408, 409, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 527, 529}
@@ -524,18 +542,35 @@ def _stream_with_retry(sess, url, headers, payload, parse_fn):
                         if chunk and STATS.get('t_ttft') is None: STATS['t_ttft'] = time.time()
                         streamed = True; yield chunk
                 except StopIteration as e:
-                    if not e.value and not streamed: raise requests.ConnectionError("empty response")
+                    blocks = e.value or []
+                    if not _has_usable_output(blocks):
+                        # 2026-11-04: 空正文 / 仅 thinking 不算成功——渠道会静默返回空白,
+                        # 上层既不会重试也不会换渠(用户只看到"什么都没有")。
+                        if not streamed:
+                            raise requests.ConnectionError("empty response: no text and no tool_use")
+                        trail = "\n\n[!!! 流异常中断: 响应无正文（仅思考/空）!!!]"
+                        print("[WARN] stream produced no usable output (thinking-only or empty)")
+                        blocks = list(blocks) + [{"type": "text", "text": trail}]
+                        STATS['t_end'] = time.time()
+                        yield trail; return blocks
                     STATS['t_end'] = time.time()
                     STATS['tps'] = STATS.get('out', 0) / max(1e-9, STATS['t_end'] - max(STATS['t_ttft'] or 0, STATS['t_start']))
                     return e.value or []
         except (requests.Timeout, requests.ConnectionError, requests.exceptions.ChunkedEncodingError) as e:
             err = f"!!!Error: {type(e).__name__}: {e}" if str(e) else f"!!!Error: {type(e).__name__}"
             if getattr(sess, 'should_stop', None) and sess.should_stop(): return []
-            if attempt < sess.max_retries:
+            # 2026-11-04: 已经向下游吐过内容后再重试 = 把前半截正文重放一遍
+            # (实证: 用户看到 "AAABBBAAABBBAAABBB")。已交付内容不可撤回, 只能标记中断,
+            # 并把"下一次调用换渠"交给 MixinSession 处理。
+            if not streamed and attempt < sess.max_retries:
                 d = _delay(None, attempt)
                 print(f"[LLM Retry] {type(e).__name__}, retry in {d:.1f}s ({attempt+1}/{sess.max_retries+1})")
                 if _sleep(d): return []
                 continue
+            if streamed:
+                trail = f"\n\n[!!! 流异常中断 {type(e).__name__}: {e} !!!]"
+                print(f"[WARN] stream broke after partial output, not retrying ({type(e).__name__})")
+                yield trail; return [{"type": "text", "text": trail}]
             yield err; return [{"type": "text", "text": err}]
         except Exception as e:
             err = f"\n\n[!!! 流异常中断 {type(e).__name__}: {e} !!!]" if streamed else f"!!!Error: {type(e).__name__}: {e}"
@@ -1310,9 +1345,17 @@ class MixinSession:
                 while True:
                     chunk = next(gen); last_chunk = chunk
                     if not yielded and test_error(chunk): continue
-                    yield chunk; yielded = True
+                    yield chunk
+                    if not test_error(chunk): yielded = True
             except StopIteration as e: return_val = e.value or []
             is_err = test_error(last_chunk)
+            # 2026-11-04: 正文已经交付给调用方之后再换渠重试, 只会把前半截重放一遍
+            # (用户看到 "AAABBB" + "AAABBB")。保持本轮输出, 仅把下一次调用指到别的渠道。
+            if is_err and yielded:
+                if n > 1:
+                    self._cur_idx = (idx + 1) % n; self._switched_at = time.time(); self._lease_rebind()
+                    print(f'[MixinSession] {str(last_chunk)[:80]}, partial output kept, next call → s{self._cur_idx} ({self.current.name})')
+                return return_val
             if not is_err:
                 if attempt > 0: self._cur_idx = idx; self._switched_at = time.time()
                 elif isinstance(last_chunk, str) and '[!!! 流异常中断' in last_chunk and n > 1:

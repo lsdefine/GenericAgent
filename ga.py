@@ -73,10 +73,13 @@ def code_run(code, code_type="python", timeout=60, cwd=None, code_cwd=None, stop
                 if istimeout: full_stdout.append("\n[Timeout Error] 超时强制终止")
                 else: full_stdout.append("\n[Stopped] 用户强制终止")
                 break
-            time.sleep(1)
+            t.join(0.05)  # 等 reader 退出, 不再固定 sleep(1)
 
         t.join(timeout=1)
         exit_code = process.poll()
+        if exit_code is None:  # reader 可能先于进程回收退出
+            try: exit_code = process.wait(timeout=5)
+            except subprocess.TimeoutExpired: exit_code = process.poll()
 
         stdout_str = "".join(full_stdout)
         status = "success" if exit_code == 0 else "error"
@@ -464,8 +467,24 @@ class GenericAgentHandler(BaseHandler):
         return StepOutcome({"result": "working key_info updated"}, next_prompt=next_prompt)
 
     def _retry_or_exit(self, prompt):
+        """Give up after 3 consecutive unusable replies — but say so first.
+
+        Returning `StepOutcome({}, should_exit=True)` with nothing printed makes the
+        front end go quiet mid-task: the user sees the turn stop with no error and no
+        explanation.  That is the same "silent stop" the guards above are meant to
+        prevent, so the give-up path must be visible too.
+        """
         self._empty_ct = getattr(self, '_empty_ct', 0) + 1
-        if self._empty_ct >= 3: return StepOutcome({}, should_exit=True)
+        if self._empty_ct >= 3:
+            note = (f"\n[任务中止] 模型连续 {self._empty_ct} 次未产出有效回复"
+                    f"(空响应/仅 <summary>/工具格式无效)，已停止本轮任务。\n"
+                    f"建议: 重发该任务，或为该渠道降低 reasoning_effort / 提高 max_tokens。\n")
+            try:
+                self.history_info.append('[Agent] ' + note.strip().replace('\n', ' '))
+            except Exception:
+                pass
+            yield note
+            return StepOutcome({}, should_exit=True)
         return StepOutcome({}, next_prompt=prompt)
 
     def do_no_tool(self, args, response):
@@ -477,13 +496,50 @@ class GenericAgentHandler(BaseHandler):
         if not response or (not content.strip() and not thinking.strip()):
             yield "[Warn] LLM returned an empty response. Retrying...\n"
             return self._retry_or_exit("[ERROR] Blank response, regenerate and tooluse")
-        if '[!!! 流异常中断' in content[-100:] or '!!!Error:' in content[50:][-100:] or (content.endswith('</summary>') and len(content) < 100):
+        # 2026-11-06: 原判据是「响应末尾窗口内**包含** marker」。
+        # 模型在正文中引用这些标记时(排查该 bug / 写文档 / 写测试), 会被误判为真中断 ->
+        # 整条回复被丢弃并插入 [ERROR] 重试, 用户观感为「回复写到一半停住不动」;
+        # 连续 3 次还会触发 _retry_or_exit 的任务中止。
+        # llmcore 追加 marker 时一定在响应最末尾, 故改为**结尾精确匹配**;
+        # 同时补齐 llmcore 实际会产出的另外两类截断标记(原代码只认「流异常中断」)。
+        _tail = content.rstrip()
+        _MARK_TAIL = re.compile(r'\[!!!\s*(?:流异常中断|Response truncated|output truncated).*?!!!\]\s*$')
+        if (_MARK_TAIL.search(_tail)
+                or _tail.endswith('!!!Error:') or _tail.startswith('!!!Error:')
+                or (_tail.endswith('</summary>') and len(_tail) < 100)):
             return self._retry_or_exit("[ERROR] Incomplete response. Regenerate and tooluse.")
         tail = content.rstrip()[-50:]
         if 'DSML' in tail and '｜' in tail and tail.endswith('>'):
             return self._retry_or_exit("[ERROR] Tool call format invalid; no tool was called. Regenerate using proper tool calls.")
-        if 'max_tokens !!!]' in content[-100:]:
+        if _tail.endswith('max_tokens !!!]'):
             return self._retry_or_exit("[ERROR] max_tokens limit reached. Use multi small steps to do it.")
+
+        # 2026-11-11: 伪 XML 工具块冒充最终回答。
+        #   llmcore 认得出来的(成对闭合 + 参数可重建 + 脚本能通过语法校验)已在
+        #   `_parse_text_tool_calls` 里还原成真 tool_calls, 走到这里的一定是「想调工具但没调成」:
+        #     unclosed = 流被掐断在半截(max_tokens / 流中断);
+        #     empty    = 块闭合但一个参数都没有(用户看到的 `</code_run><code_run></code_run>`);
+        #     orphan   = 只有 <parameter> 没有工具名(`<type>` 包裹的那种);
+        #     invalid  = 块闭合但重建出来的调用不可安全执行(半截脚本 / 语法错)。
+        #   任何一条都不能当最终回答交付, 否则本轮任务静默结束且不报错。
+        _residue = None
+        try:
+            import llmcore as _llmcore
+            _residue = _llmcore.textual_tool_residue(content)
+        except Exception:
+            _residue = None
+        if _residue:
+            _why = {
+                'unclosed': 'an unterminated textual tool block (the stream was cut mid-call)',
+                'empty': 'a textual tool block with no arguments',
+                'orphan': 'textual parameters without a tool name',
+                'invalid': 'a textual tool block that cannot be executed safely',
+            }.get(_residue, 'a textual tool block')
+            yield f"[Info] Detected {_why}. Regenerating.\n"
+            return self._retry_or_exit(
+                "[ERROR] Your tool call was emitted as plain XML text (%s) and no tool was executed. "
+                "Regenerate using the native tool-call interface — not <code_run>/<parameter>/<function=>/DSML text, "
+                "and make sure the whole call is emitted in one piece." % _why)
         
         # 2. 检测"包含较大代码块但未调用工具"的情况
         # 关键特征：恰好1个大代码块 + 代码块直接结尾（后面只有空白）

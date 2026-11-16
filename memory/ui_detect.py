@@ -25,10 +25,13 @@ import json, urllib.request, subprocess, sys, time
 
 DEFAULT_MODEL = str(Path(__file__).resolve().parent.parent / 'temp' / 'weights' / 'icon_detect' / 'model.pt')
 
-try:
-    from rapidocr_onnxruntime import RapidOCR
-    _ocr = RapidOCR(det_use_cuda=True, rec_use_cuda=True, cls_use_cuda=True)
-except ImportError: _ocr = None
+# YOLO daemon 只跑 torch：不能先建 CUDA OCR(onnxruntime-gpu 先载 cuDNN 会令 torch 的 cudnn_cnn64_9.dll 报 WinError 127)
+_ocr = None
+if '--yolo-daemon' not in sys.argv:
+    try:
+        from rapidocr_onnxruntime import RapidOCR
+        _ocr = RapidOCR(det_use_cuda=True, rec_use_cuda=True, cls_use_cuda=True)
+    except ImportError: pass
 
 _YOLO = None
 _YOLO_PORT = 31876
@@ -62,7 +65,8 @@ def _yolo(image_path, conf=0.25):
     try:
         data = json.dumps({'path': str(image_path), 'conf': conf}).encode('utf-8')
         req = urllib.request.Request(f'http://127.0.0.1:{_YOLO_PORT}/yolo', data=data, headers={'Content-Type': 'application/json'})
-        return json.loads(urllib.request.urlopen(req, timeout=3).read().decode('utf-8'))['boxes']
+        # 首次请求含 daemon 加载 torch/模型(数秒)；勿短超时回退本地：主进程已载 OCR 的 cuDNN，本地 torch 会 DLL 冲突
+        return json.loads(urllib.request.urlopen(req, timeout=60).read().decode('utf-8'))['boxes']
     except Exception: return _yolo_local(image_path, conf)
 
 def _ocr_full(image_path):

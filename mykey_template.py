@@ -35,6 +35,7 @@
 #     'thinking_type': 'adaptive',      # Claude 思考：adaptive / enabled / disabled
 #     'thinking_budget_tokens': 32768,  # thinking_type='enabled' 时需要
 #     'claude_compat': 'half',          # 需要 Claude Code 请求格式/指纹校验的透传渠道（simple=仅身份行，half=含 CC 主提示）
+#     'show_thinking': True,            # Claude：流式显示思考过程（默认按 Claude Code 隐藏）
 #     'api_key_header': 'x-api-key',    # Claude 鉴权头不匹配时指定；也支持 bearer
 #     'api_mode': 'responses',          # OAI：默认 chat_completions，按渠道要求修改
 # 运行中也可临时调整，例如：/session.reasoning_effort=high

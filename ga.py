@@ -480,8 +480,8 @@ class GenericAgentHandler(BaseHandler):
         if '[!!! 流异常中断' in content[-100:] or '!!!Error:' in content[50:][-100:] or (content.endswith('</summary>') and len(content) < 100):
             return self._retry_or_exit("[ERROR] Incomplete response. Regenerate and tooluse.")
         tail = content.rstrip()[-50:]
-        if 'DSML' in tail and '｜' in tail and tail.endswith('>'):
-            return self._retry_or_exit("[ERROR] Tool call format invalid; no tool was called. Regenerate using proper tool calls.")
+        if 'DSML' in tail or tail.endswith('>'):
+            return self._retry_or_exit("[ERROR] No tool was called and the response ended with DSML or an XML-like tag. If action is needed, use proper tool calls; otherwise, finish with a plain-language explanation rather than a tag.")
         if 'max_tokens !!!]' in content[-100:]:
             return self._retry_or_exit("[ERROR] max_tokens limit reached. Use multi small steps to do it.")
         

@@ -25,6 +25,20 @@ _IGNORE_DIRS = {
 _IGNORE_EXT = {".pyc", ".pyo", ".so", ".o", ".class", ".lock", ".dll", ".exe"}
 _MAX_FILES = 50_000          # 超大目录宁缺毋卡：到上限就停
 
+# Windows resolves these names to devices, never to the file on disk:
+# ntpath.abspath("NUL") -> "\\.\NUL", so os.path.relpath() raises
+# ValueError("path is on mount '\\\\.\\NUL'").  A real file named NUL can
+# still exist (bash's `cmd > NUL` creates one), and os.scandir lists it.
+_DEVICE_NAMES = {"CON", "PRN", "AUX", "NUL"}
+
+
+def _is_device_name(name: str) -> bool:
+    """True for CON/PRN/AUX/NUL and COM1-9 / LPT1-9 (also with extension)."""
+    base = name.split(".")[0].upper().rstrip(" ")
+    if base in _DEVICE_NAMES:
+        return True
+    return len(base) == 4 and base[:3] in ("COM", "LPT") and base[3].isdigit()
+
 
 def scan_files(root: str, max_files: int = _MAX_FILES) -> list[str]:
     """Collect relative file paths under root, '/'-normalized.
@@ -40,6 +54,8 @@ def scan_files(root: str, max_files: int = _MAX_FILES) -> list[str]:
             with os.scandir(d) as it:
                 for e in it:
                     try:
+                        if _is_device_name(e.name):
+                            continue
                         if e.is_dir(follow_symlinks=False):
                             if e.name not in _IGNORE_DIRS and not e.name.startswith("."):
                                 stack.append(e.path)
@@ -49,7 +65,8 @@ def scan_files(root: str, max_files: int = _MAX_FILES) -> list[str]:
                                 out.append(rel)
                                 if len(out) >= max_files:
                                     return out
-                    except OSError:
+                    except (OSError, ValueError):
+                        # ValueError: relpath() across devices (e.g. "\\.\NUL")
                         continue
         except OSError:
             continue
@@ -76,10 +93,13 @@ class FileIndexCache:
         def _build():
             try:
                 files = scan_files(self.root)
+            except Exception:      # never let the index thread die silently
+                files = []
+            try:
                 with self._lock:
                     self._files = files
-                self.ready.set()
             finally:
+                self.ready.set()
                 with self._lock:
                     self._building = False
 

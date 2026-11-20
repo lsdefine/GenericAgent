@@ -120,17 +120,12 @@ def _iou(a, b):
     area_b = (b[2]-b[0]) * (b[3]-b[1])
     return inter / area_b if area_b > 0 else 0
 
-_ICON_LABELER = None
-
-def detect(image_path, mode='match', conf=0.25, iou_thresh=0.5, icon_labels=True):
+def detect(image_path, mode='match', conf=0.25, iou_thresh=0.5):
     """
     统一检测入口，返回元素列表:
     [{'bbox':[x1,y1,x2,y2], 'type':'icon'|'text', 'label':str|None, 'confidence':float}]
     mode: 'match' = YOLO+全图OCR空间匹配(推荐, 快) | 'crop' = YOLO+拼接OCR(备选, 更精确)
     支持 image_path: str 路径 或 PIL.Image 对象
-    icon_labels=True: 轻量模板补充 icon_name/icon_score/icon_margin/icon_source；
-    保留已有OCR label，仅空label补图标名称。False恢复原结果；分数不是概率。
-    模板覆盖search/settings/close/back/menu/refresh，未知或低分不标注。
     """
     # 归一化：PIL Image → 临时文件
     if isinstance(image_path, Image.Image):
@@ -168,16 +163,7 @@ def detect(image_path, mode='match', conf=0.25, iou_thresh=0.5, icon_labels=True
         for i, (ox1, oy1, ox2, oy2, text, oc) in enumerate(ocr_items):
             if i not in matched_ocr:
                 elements.append({'bbox': [ox1,oy1,ox2,oy2], 'type': 'text', 'label': text, 'confidence': oc})
-    if icon_labels:
-        global _ICON_LABELER
-        try:
-            if _ICON_LABELER is None:
-                from ui_icon_label import IconLabeler
-                _ICON_LABELER = IconLabeler()
-            elements = _ICON_LABELER.enhance(img, elements)
-        except (ImportError, OSError, ValueError) as exc:
-            import warnings
-            warnings.warn(f'Icon labeling unavailable; returning base detections: {exc}', RuntimeWarning)
+    #if [x for x in elements if x['label'] is None]: print('[TIPS] crop grid + VLM to identify target no text icon if needed')
     print('[TIPS] UI DETECT contains OCR, no need to run OCR again!')
     return elements
 

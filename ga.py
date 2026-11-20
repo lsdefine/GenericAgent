@@ -515,6 +515,7 @@ class GenericAgentHandler(BaseHandler):
         prompt = get_global_memory() + '''【记忆提纯】任务完成或到达重要检查点后，按L0提取最近一次任务中【事实验证成功且长期有效】的环境事实、用户偏好、重要步骤；已在整理则不重复启动。
 先读后patch，将已验证、长期有用且难以重建的新知识融入旧条目，合并重复、压缩冗述，不堆叠流水账。以更少文字保留更高复用价值；无提纯价值则跳过，索引按需同步，非必要不可增加触发词。
 禁止：临时状态、推理过程、未验证信息、通用常识、易重建细节；不得将模型推测或建议记作用户要求。
+**只允许记忆未来会复用的信息，需要高度概括，禁止无脑追加。**
 记忆整理仅是内部收尾；完成或跳过后，仍须向用户报告原任务结果。'''
         yield "[Info] Start distilling good memory for long-term storage.\n"
         path = os.path.join(script_dir, 'memory', 'memory_management_sop.md')

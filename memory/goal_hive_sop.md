@@ -1,5 +1,7 @@
 # Goal Hive Mode SOP
 
+现有会话操控见 `hub.py`。
+
 ## 定义
 
 Goal Hive = Goal Mode 的多 worker 协作协议

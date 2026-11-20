@@ -544,7 +544,7 @@
           }
         }
         onCount(items.length);
-        nav.hidden = !visible() || items.length <= pageSize;
+        nav.hidden = !visible() || (items.length <= pageSize && end === null);
         if(!visible()) return;
         const stop = tail(), start = Math.max(0, stop-pageSize);
         const follow = end === null && (navigation || nearBottom());
@@ -570,6 +570,7 @@
         dirty = false; navigation = false;
       }
       return {append, snapshot, render, refresh(){ dirty = true; scheduleRender(); },
+        toLatest(){ go(null); },
         markRead(){ for(const item of items) if(item.role === 'user') item.read = true;
           el.querySelectorAll('.msg.me.unread').forEach(node=>node.classList.remove('unread')); }};
     }
@@ -651,6 +652,7 @@
       const msg = inputEl.value.trim();
       if(!msg || !ws || ws.readyState!==WebSocket.OPEN) return;
       ws.send(JSON.stringify({msg})); inputEl.value=''; inputEl.focus();
+      chatFeed.toLatest();  /* 自己发的消息必须立刻可见 */
     }
     sendBtn.addEventListener('click', send);
     llmEl.addEventListener('change', ()=>{ if(ws?.readyState===1) ws.send(JSON.stringify({llm:+llmEl.value})); });

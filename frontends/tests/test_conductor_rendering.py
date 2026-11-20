@@ -92,3 +92,48 @@ def test_logs_keep_panel_without_pagination(page):
     assert result['count'] == 50 and result['retained'] == '· 50 条'
     assert result['first'].endswith('entry 1')
     assert result['last'].endswith('entry 51')
+
+
+def test_sending_always_shows_own_message(page):
+    result = page.evaluate("""() => {
+      const atBottom = () => messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < 2;
+      const sent = [];
+      ws = {readyState: 1, send: text => sent.push(text)};
+      const say = (id, text) => {
+        inputEl.value = text; send(); flushRender();
+        addMsg({id, role: 'user', msg: text}); flushRender();
+        return {last: messagesEl.lastElementChild.dataset.id, bottom: atBottom()};
+      };
+      messagesEl.scrollTop = 100;
+      const scrolledUp = say('own1', 'first');
+      messagesEl.previousElementSibling.querySelector('button').click(); flushRender();
+      const oldPage = say('own2', 'second');
+      addMsg({id: 'reply', role: 'conductor', msg: 'reply'}); flushRender();
+      const reply = {last: messagesEl.lastElementChild.dataset.id, bottom: atBottom()};
+      return {scrolledUp, oldPage, reply, sent: sent.length, input: inputEl.value};
+    }""")
+    ok = dict(bottom=True)
+    assert result == dict(scrolledUp=dict(last='own1', **ok), oldPage=dict(last='own2', **ok),
+                          reply=dict(last='reply', **ok), sent=2, input='')
+
+
+def test_reader_is_not_interrupted_but_can_reach_new_messages(page):
+    result = page.evaluate("""() => {
+      const el = document.createElement('div');
+      el.style.cssText = 'height:120px;overflow:auto';
+      document.body.append(el);
+      const feed = createFeed(el, messageNode, item => item.id);
+      for(let i=0;i<10;i++) feed.append({id:'s'+i, role:'conductor', msg:'line '+i+'<br>'.repeat(6)});
+      feed.render();
+      const nav = el.previousElementSibling, hiddenAtStart = nav.hidden;
+      el.scrollTop = 0;
+      feed.append({id:'incoming', role:'conductor', msg:'incoming'}); feed.render();
+      const undisturbed = el.scrollTop === 0 && el.lastElementChild.dataset.id === 's9';
+      const button = nav.querySelectorAll('button')[2];
+      const offered = !nav.hidden && !button.disabled && button.textContent;
+      button.click(); feed.render();
+      return {hiddenAtStart, undisturbed, offered, last: el.lastElementChild.dataset.id,
+        bottom: el.scrollHeight - el.scrollTop - el.clientHeight < 2, hiddenAfter: nav.hidden};
+    }""")
+    assert result == dict(hiddenAtStart=True, undisturbed=True, offered='最新（1）',
+                          last='incoming', bottom=True, hiddenAfter=True)

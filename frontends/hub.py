@@ -5,6 +5,8 @@ HTTP (errors = {'error','code'} + status: offline/gone 404, busy 409, timeout 50
     GET peers -> [{name,title,n_msgs,sig}] | {name}/messages?detail=1&sig= -> {title,tasks:[{i,input,steps:
     [{j,title,n}]}],sig} or {same:1,sig} | {name}/seg/{i}/{j}?off=N -> {content,off,n} (step bodies, tailable)
     POST {name}/put {"text":..} -> {ok:1} | {name}/abort -> {ok:1}
+    POST {name}/intervene {"text":..} | {name}/keyinfo {"text":..} -> {ok:1}
+        (steer a running turn; idle 409 -> use put)
     GET {name}/llms -> {cur,items:[name]} | POST {name}/llm {"no":N} -> {ok:1,cur} (switch LLM channel, busy 409)
 """
 import os, re, sys, json, time, asyncio, threading, random, hmac, hashlib

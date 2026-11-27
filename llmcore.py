@@ -1,4 +1,4 @@
-import os, json, re, time, requests, sys, threading, urllib3, base64, importlib, uuid, pathlib, copy
+import os, json, re, time, requests, sys, threading, urllib3, base64, importlib, uuid, pathlib, copy, platform
 from datetime import datetime
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 _INFLIGHT = {}  # thread ident -> live socket; lets abort() close it even before response headers arrive
@@ -7,6 +7,9 @@ def _conn_request_hook(self, *a, **k):  # after request() the socket is connecte
     r = _orig_conn_request(self, *a, **k); _INFLIGHT[threading.get_ident()] = self.sock; return r
 urllib3.connection.HTTPConnection.request = _conn_request_hook
 _RESP_CACHE_KEY = str(uuid.uuid4()); _RESP_CODEX_KEY = str(uuid.uuid4())
+# Codex 指纹随真实平台走：sandbox 与 UA 的 OS 段必须一致，否则自相矛盾
+_CODEX_SANDBOX = {"win32": "windows_sandbox", "darwin": "macos_seatbelt"}.get(sys.platform, "linux_seccomp")
+_CODEX_UA_OS = f"{platform.system()} {platform.version()}; {'x86_64' if platform.machine().lower() in ('amd64', 'x86_64') else platform.machine().lower()}"
 _ROOT = os.path.dirname(os.path.abspath(__file__))
 if _ROOT not in sys.path: sys.path.append(_ROOT)
 
@@ -541,6 +544,19 @@ def _stream_with_retry(sess, url, headers, payload, parse_fn):
             err = f"\n\n[!!! 流异常中断 {type(e).__name__}: {e} !!!]" if streamed else f"!!!Error: {type(e).__name__}: {e}"
             yield err; return [{"type": "text", "text": err}]
 
+def _codex_client_metadata(sess, model, headers):
+    """Codex CLI 指纹：session 级 ID 固定，turn 级 ID 每次请求新生成；同时写入 headers。"""
+    wid, tid, iid = f"{_RESP_CACHE_KEY}:0", str(uuid.uuid4()), _RESP_CODEX_KEY
+    meta = {"installation_id": iid, "session_id": _RESP_CACHE_KEY, "thread_id": _RESP_CACHE_KEY, "agent_name": "/root", "turn_id": tid,
+            "window_id": wid, "window_number": 0, "context_window_id": _RESP_CACHE_KEY, "request_kind": "turn", "history_initialization": "new",
+            "root_turn_id": tid, "thread_source": "user", "turn_trigger": "exec", "sandbox": _CODEX_SANDBOX, "sandbox_mode": "workspace-write",
+            "auto_review_enabled": False, "node_repl_auto_review_required": False, "node_repl_disabled": False, "analytics_enabled": True,
+            "turn_started_at_unix_ms": int(time.time()*1000), "model": model, "reasoning_effort": sess.reasoning_effort or "medium"}
+    headers.update({"x-codex-beta-features": "remote_compaction_v2", "x-codex-window-id": wid, "session-id": _RESP_CACHE_KEY,
+                    "thread-id": _RESP_CACHE_KEY, "x-client-request-id": tid})
+    return {"x-codex-window-id": wid, "x-codex-installation-id": iid, "session_id": _RESP_CACHE_KEY, "thread_id": _RESP_CACHE_KEY,
+            "turn_id": tid, "root_turn_id": tid, "x-codex-turn-metadata": json.dumps(meta, separators=(',', ':'))}
+
 def _openai_stream(sess, messages):
     model, api_mode = sess.model, sess.api_mode
     ml = model.lower()
@@ -551,9 +567,8 @@ def _openai_stream(sess, messages):
     headers["User-Agent"] = sess.user_agent
     if api_mode == "responses":
         url = auto_make_url(sess.api_base, "responses")
-        payload = {"model": model, "input": _to_responses_input(messages), "stream": sess.stream, 
-                   "prompt_cache_key": _RESP_CACHE_KEY, "instructions": sess.system or "You are an Omnipotent Executor.",
-                   "client_metadata": {"x-codex-window-id": f"{_RESP_CACHE_KEY}:0","x-codex-installation-id": _RESP_CODEX_KEY},
+        payload = {"model": model, "input": _to_responses_input(messages), "stream": sess.stream, "store": False, "prompt_cache_key": _RESP_CACHE_KEY,
+                   "instructions": sess.system or "You are an Omnipotent Executor.", "client_metadata": _codex_client_metadata(sess, model, headers),
                    'include': ['reasoning.encrypted_content']}
         if sess.reasoning_effort: payload["reasoning"] = {"effort": sess.reasoning_effort}
         if sess.max_tokens: payload["max_output_tokens"] = sess.max_tokens
@@ -695,7 +710,7 @@ class BaseSession:
             v = cfg.get(key); v = None if v is None else str(v).strip().lower()
             return v if not v or v in valid else print(f"[WARN] Invalid {key} {v!r}, ignored.")
         self.reasoning_effort = _enum('reasoning_effort', {'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'})
-        self.service_tier = _enum('service_tier', {'auto', 'default', 'priority', 'flex'})
+        self.service_tier = _enum('service_tier', {'auto', 'default', 'priority', 'flex', 'fast', 'ultrafast'})
         self.thinking_type = _enum('thinking_type', {'adaptive', 'enabled', 'disabled'})
         self.thinking_budget_tokens = cfg.get('thinking_budget_tokens')
         self.omit_thinking = cfg.get('omit_thinking', False)  # Exclude thinking from session history
@@ -882,7 +897,7 @@ class NativeClaudeSession(BaseSession):
         return MockResponse(thinking, content, tool_calls, raw)
 
 class NativeOAISession(NativeClaudeSession):
-    native_ua = "codex_exec/0.139.0 (Windows 10.0.26200; x86_64) unknown (codex_exec; 0.139.0)"
+    native_ua = f"codex_exec/0.172.0 ({_CODEX_UA_OS}) unknown (codex_exec; 0.172.0)"
     def raw_ask(self, messages):
         messages = _fix_messages(messages)
         messages = _ensure_thinking_blocks(messages, self.model)

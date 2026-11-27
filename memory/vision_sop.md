@@ -4,7 +4,8 @@
 
 1. **截图前先枚举窗口**：macOS用 `macljqCtrl.ListWindows()` / `ActivateApp()`，Windows用 `pygetwindow`；确认目标窗口存在且已激活到前台。已有图片文件无需枚举窗口。
 2. **🚫 禁止全屏截图**：必须先利用ljqCtrl截取窗口区域。能截局部（如标题栏）就不截整窗口，能截窗口就绝不全屏。全屏截图在任何场景下都不允许。
-3. **能不用 vision 就不用**：如果窗口标题/本地 OCR（`ocr_utils.py`）能获取所需信息，就不要调用 vision API，省 token 且更可靠。Vision 是最后手段。
+3. **判渲染缺陷禁只凭VLM**：VLM 会把正常暗部/背光面夸张成"全黑、渲染异常"。结论须用像素统计（区域RGB均值）+ 同页面既有资产做对照；新资产不差于旧资产即为场景光照特性，非缺陷。
+4. **能不用 vision 就不用**：如果窗口标题/本地 OCR（`ocr_utils.py`）能获取所需信息，就不要调用 vision API，省 token 且更可靠。Vision 是最后手段。
 
 ## 快速用法
 

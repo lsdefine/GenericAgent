@@ -1,4 +1,5 @@
-import sys, os, re, json, time, threading, importlib, webbrowser
+import sys, os, re, json, time, threading, importlib, webbrowser, hashlib, weakref
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 import tempfile, traceback, subprocess, itertools, collections, difflib, shutil
@@ -209,15 +210,46 @@ def file_patch(path: str, old_content: str, new_content: str):
     path = str(Path(path).resolve())
     try:
         if not os.path.exists(path): return {"status": "error", "msg": "file not found"}
-        with open(path, 'r', encoding='utf-8') as f: full_text = f.read()
         if not old_content: return {"status": "error", "msg": "old_content is blank"}
-        count = full_text.count(old_content)
-        if count == 0: return {"status": "error", "msg": "old_content is not found. Suggestion: use file_read to check current file content, make more small patches. Don't huge overwrite (even with code)"}
-        if count > 1: return {"status": "error", "msg": f"find {count} matches, unable to determine unique position. Provide a longer, more specific old_content to ensure uniqueness. Suggestion: include context lines to enhance features, or modify in smaller segments."}
-        updated_text = full_text.replace(old_content, new_content)
-        with open(path, 'w', encoding='utf-8', newline=_file_newline(path)) as f: f.write(updated_text)
-        return {"status": "success", "msg": "file patched successfully"}
+        with _file_patch_lock(path):
+            with open(path, 'r', encoding='utf-8') as f: full_text = f.read()
+            count = full_text.count(old_content)
+            if count == 0: return {"status": "error", "msg": "old_content is not found. Suggestion: use file_read to check current file content, make more small patches. Don't huge overwrite (even with code)"}
+            if count > 1: return {"status": "error", "msg": f"find {count} matches, unable to determine unique position. Provide a longer, more specific old_content to ensure uniqueness. Suggestion: include context lines to enhance features, or modify in smaller segments."}
+            updated_text = full_text.replace(old_content, new_content)
+            with open(path, 'w', encoding='utf-8', newline=_file_newline(path)) as f: f.write(updated_text)
+            return {"status": "success", "msg": "file patched successfully"}
     except Exception as e: return {"status": "error", "msg": str(e)}
+
+_file_patch_thread_locks = weakref.WeakValueDictionary()
+_file_patch_thread_locks_guard = threading.Lock()
+
+def _file_patch_thread_lock(path):
+    with _file_patch_thread_locks_guard:
+        return _file_patch_thread_locks.setdefault(path, threading.Lock())
+
+@contextmanager
+def _file_patch_lock(path):
+    lock_dir = os.path.join(tempfile.gettempdir(), 'genericagent-file-locks')
+    os.makedirs(lock_dir, exist_ok=True)
+    lock_path = os.path.join(lock_dir, hashlib.sha256(path.encode('utf-8')).hexdigest() + '.lock')
+    with _file_patch_thread_lock(path):
+        with open(lock_path, 'a+b') as lock:
+            if not os.path.getsize(lock_path): lock.write(b'0'); lock.flush()
+            lock.seek(0)
+            if os.name == 'nt':
+                import msvcrt
+                msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                if os.name == 'nt':
+                    lock.seek(0); msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
 _read_dirs = set()
 def _scan_files(base, depth=2):
